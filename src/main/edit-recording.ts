@@ -1297,7 +1297,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
         }
       }
       const already = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
-      let customOutcome: { ran: boolean; made: number; tried: number; reason: string | null } = { ran: false, made: already, tried: 0, reason: null }
+      let customOutcome: { ran: boolean; made: number; tried: number; reason: string | null; failed?: EditCustomResult['reasons'] } = { ran: false, made: already, tried: 0, reason: null }
       if (!directed) customOutcome.reason = 'not a directed reel'
       else if (explained) customOutcome.reason = 'designed in the review: the Explainer style drew the sections'
       else if (decisions.customGraphics === false) customOutcome.reason = 'Custom graphics were switched off in the review.'
@@ -1310,7 +1310,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
           const made = await designCustomGraphics(current, decisions)
           if (!made) customOutcome.reason = 'Add your OpenRouter key in Settings → API keys to design custom graphics.'
           else {
-            customOutcome = { ran: true, made: made.made, tried: made.tried, reason: made.made ? null : (made.notes[0] ?? 'No key moment needed one.') }
+            customOutcome = { ran: true, made: made.made, tried: made.tried, reason: made.made ? null : (made.notes[0] ?? 'No key moment needed one.'), ...(made.reasons?.length ? { failed: made.reasons } : {}) }
             if (made.made > 0) {
               decisions.graphics = made.graphics
               ;(config as { editor?: { graphics?: unknown } }).editor!.graphics = editorGraphicsFor(decisions, images, current.status.folder)

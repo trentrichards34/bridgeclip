@@ -269,7 +269,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       const problems = checkComposition(html, expect)
       if (problems.length) {
         reason = problems.join(' ')
-        logger.info('custom.rejected', { problems: problems.slice(0, 4) })
+        logger.info('custom.rejected', { problems: plainForLog(problems.slice(0, 4).join(' | ')) })
         previous = { html: html.slice(0, MAX_COMPOSITION_CHARS), fixes: problems }
         continue
       }
@@ -284,7 +284,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   // Only the motion check failed every try: the best is kept (it passed the review and our hard checks), its flat stretches noted.
   if (kept && !kept.grade.pass && kept.motionOnly) kept = { ...kept, grade: { ...kept.grade, pass: true, score: Math.max(7, kept.grade.score) } }
   if (!kept?.grade.pass) {
-    logger.info('custom.fallback', { tries, reason: reason.slice(0, 200) })
+    logger.info('custom.fallback', { tries, reason: plainForLog(reason) })
     // The best try is kept in the library as Retired, with the check's reason (never offered again).
     if (kept && deps.library) deps.library.keep({ id: compositionId(kept.html), html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs,
       idea: customIdea(brief.kind, brief.frame), runId, stills: [], stillData: kept.stills, status: 'retired', reason: reason || 'It did not pass the review.' })
@@ -441,3 +441,7 @@ export async function customModel(): Promise<CustomModel | null> {
   return { model, price, vision, key, endpoint }
 }
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions'
+/** A check's words as the log keeps them (it leaves out any value with a slash, a link or a line break). */
+export function plainForLog(text: string): string {
+  return text.replace(/https?:\/\/\S+/g, '(link)').replace(/[\\/]/g, ' ').replace(/[\r\n]+/g, ' ').replace(/(token|secret|key)\s*[:=]/gi, '$1 ').slice(0, 160)
+}

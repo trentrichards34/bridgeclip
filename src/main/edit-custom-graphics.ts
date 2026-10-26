@@ -156,6 +156,8 @@ export interface EditCustomResult {
   costUsd: number
   /** Plain notes for the member (what stayed a template and why). */
   notes: string[]
+  /** Why each one that didn't pass fell back (the checks' own words), kept in the run for review. */
+  reasons?: { word: number; kind: string; tries: number; reason: string }[]
 }
 
 /** The fallback a custom graphic keeps (its template graphic, to swap back to). */
@@ -232,9 +234,11 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     return { hero, durationMs, result }
   })
   const notes: string[] = []
+  const reasons: { word: number; kind: string; tries: number; reason: string }[] = []
   let made = 0
   for (const { hero, durationMs, result } of results) {
     if (!result.meta) {
+      reasons.push({ word: hero.word, kind: hero.kind, tries: result.tries, reason: (result.reason ?? '').slice(0, 1200) })
       notes.push(`${hero.graphic ? `The ${graphicName(hero.graphic).toLowerCase()}` : 'The opening line'} stays as it was: its custom graphic didn’t pass the check.`)
       continue
     }
@@ -247,7 +251,7 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     else graphics.push(base)
   }
   graphics.sort((a, b) => a.word - b.word)
-  return { graphics, made, tried: heroes.length, costUsd, notes: notes.slice(0, 4) }
+  return { graphics, made, tried: heroes.length, costUsd, notes: notes.slice(0, 4), reasons }
 }
 
 /** The run's visual world as the beat sheet shows it (null: none yet). */
