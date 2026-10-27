@@ -262,9 +262,10 @@ test('external URLs reject executable schemes and embedded credentials', () => {
   for (const url of ['file:///tmp/run', 'javascript:alert(1)', 'https://user:pass@example.com', null]) assert.equal(security.isWebUrl(url), false)
   assert.equal(security.isWebUrl('https://example.com/video'), true)
   assert.equal(security.isTrustedExternalUrl('https://example.com/video'), false)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases/releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip'), false, 'the private source repository is not a member-facing link')
 })
 
 test('source video links normalize supported YouTube forms and allow only canonical browser URLs', () => {

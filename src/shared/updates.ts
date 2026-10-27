@@ -4,7 +4,7 @@
 export type UpdatesOffReason =
   /** Running from source (`npm run dev`) or an unpackaged build. */
   | 'development'
-  /** A local package build: not signed by BridgeMind, so the signed update would be rejected. */
+  /** Not signed by the release team (a local package, or an unsigned Windows build): it can't verify updates. */
   | 'unofficial'
   /** macOS is running the app from the disk image or a quarantined download, which can't be replaced. */
   | 'move-to-applications'

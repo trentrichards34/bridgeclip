@@ -1,6 +1,6 @@
 # Changelog
 
-What's new in each version of CreatorClips, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/trentrichards34/bridgeclip/releases).
+What's new in each version of CreatorClips, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/trentrichards34/creatorclips-releases/releases).
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Maintainers: see [Changelog](CONTRIBUTING.md#changelog) in the contributing guide before editing.
 
@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Mai
 
 ### Changed
 
+- CreatorClips is now released and signed by Wealthery. Downloads and automatic updates come from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases), and **Settings → About** and the Help menu link there.
 - Smart framing ignores weak background faces, stays on a speaker who briefly looks away, follows talking heads inside 4:3 video, and analyzes footage faster.
 - Screen + webcam clips fill the top panel again.
 - Editor previews use much less disk space, and downloaded sources are moved into the project instead of copied.

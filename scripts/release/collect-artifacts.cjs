@@ -13,6 +13,8 @@ const targets = {
 }
 const platformTargets = {
   all: Object.keys(targets),
+  // What Wealthery's release workflow ships: both Macs and Windows.
+  desktop: ['mac-arm64', 'mac-x64', 'windows-x64'],
   macos: ['mac-arm64', 'mac-x64'],
   windows: ['windows-x64'],
   linux: ['linux-x64']
@@ -60,7 +62,7 @@ async function collect(root, output, version, sourceSha, platform = 'all') {
     const data = fs.readFileSync(path.join(output, name))
     entries.push({ name, size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') })
   }
-  fs.writeFileSync(path.join(output, 'release-manifest.json'), JSON.stringify({ version, platform, sourceRepository: 'trentrichards34/bridgeclip', sourceSha, files: entries }, null, 2) + '\n')
+  fs.writeFileSync(path.join(output, 'release-manifest.json'), JSON.stringify({ version, platform, sourceRepository: process.env.SOURCE_REPOSITORY || 'trentrichards34/bridgeclip', sourceSha, files: entries }, null, 2) + '\n')
   const manifest = fs.readFileSync(path.join(output, 'release-manifest.json'))
   fs.writeFileSync(path.join(output, 'SHA256SUMS.txt'), entries.map(entry => `${entry.sha256}  ${entry.name}\n`).join('') + `${crypto.createHash('sha256').update(manifest).digest('hex')}  release-manifest.json\n`)
 }

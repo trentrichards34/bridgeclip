@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
-  <a href="https://github.com/trentrichards34/bridgeclip/releases"><img src="https://img.shields.io/github/v/release/trentrichards34/bridgeclip?label=download" alt="Latest release" /></a>
+  <a href="https://github.com/trentrichards34/creatorclips-releases/releases/latest"><img src="https://img.shields.io/github/v/release/trentrichards34/creatorclips-releases?label=download" alt="Latest release" /></a>
 </p>
 
 <p align="center">
@@ -28,17 +28,16 @@
 
 ## Download
 
-Get CreatorClips from **[bridgeclip.ai](https://www.bridgeclip.ai)** or [GitHub Releases](https://github.com/trentrichards34/bridgeclip/releases).
+Get CreatorClips from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases/latest).
 
 | Platform | Architecture | Install |
 | --- | --- | --- |
 | macOS | Apple silicon, Intel | Open the matching DMG and drag CreatorClips to Applications. |
-| Windows | x64 | Run the signed EXE installer. |
-| Linux | x64 | Install the DEB, or make the AppImage executable and open it. |
+| Windows | x64 | Run the EXE installer. |
 
-Packages include Python, FFmpeg and yt-dlp. macOS builds are signed and notarized; Linux needs an unlocked desktop secret service to save API keys. Installed releases support [automatic updates](docs/usage.md#automatic-updates).
+Packages include Python, FFmpeg and yt-dlp. macOS builds are signed and notarized by Wealthery. Linux packages can be built from source (`npm run dist:linux-x64`) but are not published. Installed releases support [automatic updates](docs/usage.md#automatic-updates).
 
-This README describes the current source. Check the [release notes](https://github.com/trentrichards34/bridgeclip/releases) for features available in your downloaded version, and the [verification guide](docs/RELEASING.md#verify-a-download) for signatures and checksums. The [changelog](CHANGELOG.md) lists what changed in each version; in the app, open **Settings → About → Changelog**.
+This README describes the current source. Check the [release notes](https://github.com/trentrichards34/creatorclips-releases/releases) for features available in your downloaded version, and the [verification guide](docs/RELEASING.md#verify-a-download) for signatures and checksums. The [changelog](CHANGELOG.md) lists what changed in each version; in the app, open **Settings → About → Changelog**.
 
 ## Quick start
 

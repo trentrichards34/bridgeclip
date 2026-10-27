@@ -118,3 +118,17 @@ test('notarization metadata uses final ZIP bytes and removes stale DMG blockmaps
   assert.equal(metadata.sha512, metadata.files[0].sha512)
   assert.equal(fs.existsSync(blockmap), false)
 })
+
+test('a desktop release (both Macs and Windows) needs no Linux build and ships no Linux feed', async t => {
+  const root = fixture(t), output = path.join(root, 'publish')
+  fs.rmSync(path.join(root, 'linux-x64'), { recursive: true })
+  await collect(root, output, '1.2.3', 'a'.repeat(40), 'desktop')
+  const manifest = JSON.parse(fs.readFileSync(path.join(output, 'release-manifest.json')))
+  assert.equal(manifest.platform, 'desktop')
+  assert.equal(manifest.files.filter(file => /\.(dmg|zip|exe)$/.test(file.name)).length, 5)
+  assert.equal(yaml.load(fs.readFileSync(path.join(output, 'latest-mac.yml'), 'utf8')).files.length, 4)
+  assert.ok(fs.existsSync(path.join(output, 'latest.yml')))
+  assert.equal(fs.existsSync(path.join(output, 'latest-linux.yml')), false)
+  fs.rmSync(path.join(root, 'windows-x64'), { recursive: true })
+  await assert.rejects(collect(root, path.join(root, 'again'), '1.2.3', 'a'.repeat(40), 'desktop'))
+})

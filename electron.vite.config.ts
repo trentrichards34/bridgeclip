@@ -5,6 +5,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { effectModule } from './src/shared/fx-html'
+import { releaseIdentityFromEnv } from './src/shared/release-identity'
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }
 
@@ -16,6 +17,13 @@ function displayVersion(): string {
     return /^[0-9a-f]{7,12}$/.test(commit) ? `${version}+${commit}` : version
   } catch { return version }
 }
+
+/**
+ * Who publishes and signs this build (src/shared/release-identity.ts). Release
+ * CI sets the CREATORCLIPS_* variables; a local build has no trusted signer,
+ * so it never updates itself.
+ */
+const releaseDefine = { __CREATORCLIPS_RELEASE__: JSON.stringify(releaseIdentityFromEnv(process.env)) }
 
 /** Renderer dependencies are bundled from devDependencies, outside npm's runtime inventory. */
 function bundledLicenseNotices(): Plugin {
@@ -69,6 +77,7 @@ function hyperframesEffects(): Plugin {
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    define: releaseDefine,
     build: {
       rollupOptions: {
         input: {
@@ -79,6 +88,7 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    define: releaseDefine,
     build: {
       rollupOptions: {
         input: {
@@ -115,7 +125,8 @@ export default defineConfig({
       }
     ],
     define: {
-      __APP_VERSION__: JSON.stringify(displayVersion())
+      __APP_VERSION__: JSON.stringify(displayVersion()),
+      ...releaseDefine
     },
     resolve: {
       alias: {

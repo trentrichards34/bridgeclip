@@ -52,7 +52,7 @@ Keep essential account, cost and data-sharing requirements visible in the README
 [CHANGELOG.md](CHANGELOG.md) is bundled into the app and shown under **Settings → About → Changelog** and **Help → Changelog**, so write it for users.
 
 - **Every user-visible change:** add a bullet under `## [Unreleased]` in the matching group: `### Added`, `### Changed`, `### Fixed` or `### Removed` (`Deprecated` and `Security` also work). Say what people can now do or what works better, and name the screen or setting. Leave out tests, CI, refactors and other internal changes. The app shows **bold** and `code`; links show as plain text.
-- **Each release:** in the PR that bumps `package.json` and `package-lock.json` to `X.Y.Z`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and add an empty `## [Unreleased]` above it. At the bottom, point `[Unreleased]` at `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: https://github.com/trentrichards34/bridgeclip/releases/tag/vX.Y.Z`. Tag `vX.Y.Z` after the PR merges, and reuse the section as the GitHub Release notes.
+- **Each release:** run `npm run release:patch` (or `release:minor` / `release:major`). It bumps `package.json` and `package-lock.json`, renames `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` with an empty `## [Unreleased]` above it, updates the links at the bottom (`[X.Y.Z]: https://github.com/trentrichards34/creatorclips-releases/releases/tag/vX.Y.Z`), commits and tags `vX.Y.Z`. Pushing the tag builds the release; the section becomes the GitHub Release notes. See [docs/RELEASING.md](docs/RELEASING.md).
 
 `npm run test:release` fails when the `package.json` version has no dated section, versions are out of order, or a group isn't one of those types.
 

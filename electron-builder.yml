@@ -70,7 +70,8 @@ mac:
   category: public.app-category.video
   hardenedRuntime: true
   gatekeeperAssess: false
-  # Set to your Apple Developer ID ("Name (TEAMID)") to sign; null builds an unsigned local app.
+  # Local builds are unsigned. Release CI signs with Wealthery's Developer ID
+  # through scripts/release/builder-config.cjs (identity = team ID, notarize).
   identity: null
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
@@ -83,8 +84,8 @@ mac:
   target:
     - dmg
     - zip
-  # Credentials and APPLE_TEAM_ID are supplied by the protected release job.
-  # Notarizing needs a Developer ID identity above; turn on once one is set.
+  # Turned on by scripts/release/builder-config.cjs for signed release builds,
+  # with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID from CI secrets.
   notarize: false
 
 dmg:
@@ -99,9 +100,9 @@ dmg:
       path: /Applications
 
 win:
+  # The publisher whose signature updates must carry is set only for signed
+  # release builds (scripts/release/builder-config.cjs, CREATORCLIPS_WIN_PUBLISHER).
   verifyUpdateCodeSignature: true
-  signtoolOptions:
-    publisherName: Wealthery
   target:
     - target: nsis
       arch:
@@ -142,9 +143,12 @@ deb:
     - libuuid1
     - libsecret-1-0
 
-# Auto-updates come from GitHub Releases: electron-updater reads
-# latest-mac.yml / latest.yml / latest-linux.yml from the published release.
+# Auto-updates come from GitHub Releases in Wealthery's PUBLIC, installers-only
+# repository (the source repository is private, and installed apps have no
+# GitHub token). electron-updater reads latest-mac.yml / latest.yml from the
+# release GitHub marks as latest. Keep in step with DEFAULT_RELEASES_REPOSITORY
+# in src/shared/release-identity.ts; CI may override both with RELEASES_REPO.
 publish:
   provider: github
   owner: trentrichards34
-  repo: bridgeclip
+  repo: creatorclips-releases

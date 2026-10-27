@@ -3,7 +3,19 @@
 export const APP_NAME = 'CreatorClips'
 export const APP_TAGLINE = 'Open-source AI video clipping'
 
-export const REPO_URL = 'https://github.com/trentrichards34/bridgeclip'
+/**
+ * Release identity compiled in by electron.vite.config.ts (see
+ * src/shared/release-identity.ts). Undefined when the source runs without that
+ * build step (unit tests): then nothing is trusted to update the app.
+ */
+declare const __CREATORCLIPS_RELEASE__: { releasesRepository: string; macTeamId: string; windowsPublisher: string } | undefined
+export const RELEASE_IDENTITY: Readonly<{ releasesRepository: string; macTeamId: string; windowsPublisher: string }> =
+  typeof __CREATORCLIPS_RELEASE__ === 'object' && __CREATORCLIPS_RELEASE__
+    ? __CREATORCLIPS_RELEASE__
+    : { releasesRepository: 'trentrichards34/creatorclips-releases', macTeamId: '', windowsPublisher: '' }
+
+/** The public page members download from. The source repository is private. */
+export const REPO_URL = `https://github.com/${RELEASE_IDENTITY.releasesRepository}`
 export const ISSUES_URL = `${REPO_URL}/issues`
 export const RELEASES_URL = `${REPO_URL}/releases`
 export const LICENSE_NAME = 'MIT'

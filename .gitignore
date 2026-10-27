@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# Generated per release build by scripts/release/builder-config.cjs
+release-*.json
 .env
 .env.local
 .env.*

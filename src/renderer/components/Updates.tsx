@@ -62,7 +62,7 @@ function describe(update: UpdateState): string {
     case 'off':
       return {
         development: 'Updates are off when running from source. Pull the latest code to update.',
-        unofficial: 'Updates are off for unsigned local builds. Download the official CreatorClips release to get updates.',
+        unofficial: 'This copy of CreatorClips isn’t signed, so it can’t update itself. Download the newest version from the CreatorClips releases page.',
         'move-to-applications': 'Move CreatorClips to your Applications folder to get updates.',
         disabled: 'Updates are turned off (BRIDGECLIP_DISABLE_AUTO_UPDATE).'
       }[update.reason]
