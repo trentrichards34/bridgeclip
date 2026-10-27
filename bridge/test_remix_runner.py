@@ -415,7 +415,7 @@ class PaidFailureTest(unittest.TestCase):
         from clip_engine.services import remix_service
 
         class FakeRemixer:
-            def __init__(self, config, progress):
+            def __init__(self, config, progress, presenter=None):
                 self.cost_usd = 0.0
                 self.media = type("Media", (), {"cost_usd": 0.0})()
 

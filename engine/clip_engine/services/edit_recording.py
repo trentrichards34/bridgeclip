@@ -2158,8 +2158,11 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         avoid = ed.screen_windows(timed, config["words"], screens or set(), offset_ms)
         if said_cta:
             avoid.append((said_cta["at_ms"], said_cta["at_ms"] + said_cta["duration_ms"]))
-        # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll).
-        faceless = await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
+        # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll). Not on a YouTube
+        # picture-in-picture video: the webcam has its own card there (always on screen, and too small in the landscape
+        # frame for the face pass, which then found the whole video faceless and dropped every graphic).
+        pip = youtube is not None and bool(youtube.get("pip"))
+        faceless = [] if pip else await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
         avoid += faceless
         filmed = ed.screen_windows(timed, config["words"], screens or set(), offset_ms) + faceless
         # Cards over a filmed screen take a darker look; with Stage layouts a long screen gets a framed moment (edit_direction).
