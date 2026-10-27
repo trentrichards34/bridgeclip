@@ -2,7 +2,7 @@
 
 **Bug reports and focused bug-fix pull requests are welcome. Feature and other change pull requests require an explicit maintainer greenlight before implementation.** Unapproved feature or change PRs will be closed.
 
-CreatorClips is open source and maintained by [@matthewmiller2925](https://github.com/matthewmiller2925), who reviews and merges every change and publishes official builds. Anyone can open a pull request from a fork.
+CreatorClips is open source and maintained by Wealthery ([@trentrichards34](https://github.com/trentrichards34)), who reviews and merges every change and publishes official builds. Anyone can open a pull request from a fork.
 
 ## What we accept
 

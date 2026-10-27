@@ -115,7 +115,7 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
   try {
     response = await fetchImpl(endpoint, {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90_000),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({ model: SCRIPT_MODEL, temperature: 0.8, max_tokens: 2500, provider: { require_parameters: true },
         response_format: { type: 'json_schema', json_schema: { name: 'avatar_script', strict: true, schema: SCRIPT_SCHEMA } },
         messages: [{ role: 'system', content: scriptSystemPrompt() + (brand ? '\n' + BRAND_RULES : '') }, { role: 'user', content: user }] })

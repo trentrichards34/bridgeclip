@@ -83,7 +83,7 @@ function openRouterModelCallOnce(key: string, endpoint: string, price: { input: 
     try {
       response = await fetchImpl(endpoint, {
         method: 'POST', redirect: 'error', signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(callTimeoutMs(request.maxTokens))]) : AbortSignal.timeout(callTimeoutMs(request.maxTokens)),
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
         body: JSON.stringify({ model: request.model, max_tokens: request.maxTokens, temperature: request.temperature, usage: { include: true },
           messages: [{ role: 'system', content: [{ type: 'text', text: request.system, cache_control: { type: 'ephemeral' } }] }, { role: 'user', content: user }] })
       })

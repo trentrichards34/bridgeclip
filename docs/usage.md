@@ -129,4 +129,4 @@ Recovery also works when local post history was removed or aged out, provided Ze
 - Open a job’s **Details** to inspect its saved transcript and edit trace, including failed runs. Inspecting saved results makes no provider calls. See [saved reviews and diagnostics](ai-and-privacy.md#inspect-saved-reviews).
 - Logs omit raw provider responses and private source details, but review logs and run files before sharing them. See [local storage and cleanup](ai-and-privacy.md#local-storage-and-cleanup).
 
-For help, use [GitHub Issues](https://github.com/trentrichards34/bridgeclip/issues) or [Discord](https://www.bridgemind.ai/discord). Report security issues using [SECURITY.md](../SECURITY.md).
+For help, use [GitHub Issues](https://github.com/trentrichards34/creatorclips-releases/issues) (Help → Report an Issue… in the app). Report security issues using [SECURITY.md](../SECURITY.md).

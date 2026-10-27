@@ -61,7 +61,7 @@ export function openRouterBase(): string {
 
 function headers(key: string, json = true): Record<string, string> {
   return {
-    Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips Avatar Studio',
+    Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips Avatar Studio',
     ...(json ? { 'Content-Type': 'application/json' } : {})
   }
 }

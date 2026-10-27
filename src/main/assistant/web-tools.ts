@@ -176,7 +176,7 @@ export async function searchWeb(query: string, options: WebToolOptions, signal: 
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({
         model: SEARCH_MODEL,
         max_tokens: 2000,

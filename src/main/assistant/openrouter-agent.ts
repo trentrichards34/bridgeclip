@@ -116,7 +116,7 @@ async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMess
         Authorization: `Bearer ${options.apiKey}`,
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
-        'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip',
+        'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases',
         'X-Title': 'CreatorClips'
       },
       body: JSON.stringify({

@@ -528,7 +528,7 @@ export async function transcribeWithScribe(audio: { bytes: Uint8Array; name: str
     response = await (options.fetch ?? fetch)(`${openRouterBase()}/audio/transcriptions`, {
       method: 'POST', redirect: 'error', body: form,
       signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10 * 60_000)]) : AbortSignal.timeout(10 * 60_000),
-      headers: { Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' }
+      headers: { Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' }
     })
   } catch (error) {
     if (options.signal?.aborted) throw new ScribeUnavailable('Canceled.', true)
@@ -1609,7 +1609,7 @@ export async function filmIdeas(value: unknown, fetcher: typeof fetch = fetch): 
   try {
     response = await fetcher(`${openRouterBase()}/chat/completions`, {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90_000),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({
         model: IDEAS_MODEL, temperature: 0.7, max_tokens: 2500, provider: { require_parameters: true }, usage: { include: true },
         response_format: { type: 'json_schema', json_schema: { name: 'film_ideas', strict: true, schema: IDEAS_SCHEMA } },

@@ -131,7 +131,7 @@ See the [development guide](docs/development.md) for macOS, Linux and Windows se
 
 Bug reports and focused bug-fix PRs are welcome. Feature and other change PRs need an explicit maintainer greenlight before implementation. Discuss those proposals in [GitHub Issues](https://github.com/trentrichards34/bridgeclip/issues) and wait for approval before starting work.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy and follow the [code of conduct](CODE_OF_CONDUCT.md). Join [Discord](https://www.bridgemind.ai/discord) for community help, and report security concerns through [SECURITY.md](SECURITY.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy and follow the [code of conduct](CODE_OF_CONDUCT.md). Report bugs on the [issues page](https://github.com/trentrichards34/creatorclips-releases/issues) and report security concerns through [SECURITY.md](SECURITY.md).
 
 ## License
 

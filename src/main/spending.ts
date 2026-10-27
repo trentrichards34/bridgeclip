@@ -189,7 +189,7 @@ function hash(key: string): string { return createHash('sha256').update(key).dig
 async function getJson(path: string, key: string, timeoutMs: number, fetchImpl: typeof fetch): Promise<{ status: number; body: Record<string, unknown> | null }> {
   const response = await fetchImpl(`${openRouterBase()}${path}`, {
     redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
-    headers: { Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' }
+    headers: { Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' }
   })
   if (!response.ok) { await response.body?.cancel().catch(() => undefined); return { status: response.status, body: null } }
   const text = await response.text()

@@ -79,7 +79,7 @@ export async function writeListicleScript(value: unknown, fetchImpl: typeof fetc
   try {
     response = await fetchImpl(endpoint, {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90_000),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({
         model: SCRIPT_MODEL, temperature: 0.7, max_tokens: 2500, provider: { require_parameters: true }, usage: { include: true },
         response_format: { type: 'json_schema', json_schema: { name: 'listicle_script', strict: true, schema: SCRIPT_SCHEMA } },

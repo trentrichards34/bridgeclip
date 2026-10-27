@@ -553,7 +553,7 @@ export async function lookAtShot(frames: Buffer[], reference: Buffer | null, con
   try {
     response = await (options.fetch ?? fetch)(`${openRouterBase()}/chat/completions`, {
       method: 'POST', redirect: 'error', signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips B-roll library' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips B-roll library' },
       body: JSON.stringify({
         model: BROLL_VISION_MODEL, temperature: 0, max_tokens: 700, usage: { include: true }, provider: { require_parameters: true },
         response_format: { type: 'json_schema', json_schema: { name: 'broll_shot', strict: true, schema: ANALYSIS_SCHEMA } },

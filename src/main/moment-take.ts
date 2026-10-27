@@ -41,7 +41,7 @@ async function complete(key: string, body: Record<string, unknown>, fetcher: typ
   try {
     response = await fetcher(endpoint(), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({ model: MOMENT_HELPER_MODEL, temperature: 0, provider: { require_parameters: true }, usage: { include: true }, ...body })
     })
   } catch { throw new Error('OpenRouter could not be reached. Check your connection and try again.') }
