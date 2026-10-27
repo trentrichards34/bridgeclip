@@ -139,6 +139,86 @@ test('Scenes amount: each choice\'s estimate (8 / 6 / 4 scenes and 3 pop-ups in 
   assert.ok(full > 9 && full < 10.5, String(full)); assert.ok(standard > 7 && standard < 8.2, String(standard)); assert.ok(light > 5 && light < 6.2, String(light))
 })
 
+// Words with times from a sentence list: one word every 330 ms, a 1 s pause after each sentence.
+function wordsOf(sentences) {
+  const words = []
+  let t = 0
+  for (const sentence of sentences) {
+    for (const w of sentence.split(' ')) { words.push({ word: w, start_ms: t, end_ms: t + 300 }); t += 330 }
+    t += 1000
+  }
+  return words
+}
+
+test('numbered items: "number one / two", "first ... second", "step 1 / 2" and "One. Two. Three." lists, never a lone "first time"', () => {
+  const said = (sentences) => scenes.numberedItems(wordsOf(sentences)).map((x) => `${x.n}/${x.of} ${x.cue}`)
+  assert.deepEqual(said(['Here is how it works.', 'Number one, find the problem people pay for.', 'Number two, build the offer.', 'Number three: sell it.']),
+    ['1/3 Number one', '2/3 Number two', '3/3 Number three'])
+  assert.deepEqual(said(['First, you pick a niche.', 'Second, you make the product.', 'And third you run the ads.']), ['1/3 First', '2/3 Second', '3/3 third'])
+  assert.deepEqual(said(['Step 1 is the offer.', 'Step 2 is the page.']), ['1/2 Step 1', '2/2 Step 2'])
+  assert.deepEqual(said(['It comes down to three things.', 'One.', 'The offer.', 'Two.', 'The audience.', 'Three.', 'The follow up.']), ['1/3 One', '2/3 Two', '3/3 Three'])
+  // Not a list: a lone ordinal, "the first time", one item, numbers out of order, "number two" without a one.
+  assert.deepEqual(said(['The first time I tried it I lost money.', 'It was my second business.']), [])
+  assert.deepEqual(said(['Number two is the only one that matters.', 'Number three is a bonus.']), [])
+  assert.deepEqual(said(['I made one sale.', 'Then two more.']), [])
+  // The stretches carry their items.
+  const words = wordsOf(['You do not need a big audience to sell online.', ...Array(8).fill('Here is the thing most coaches never tell you about it.'), 'Number one, find the problem people pay for.', ...Array(8).fill('That is where the money is for a small creator.'),
+    'Number two, build the offer around it.', ...Array(8).fill('Keep it simple and make it easy to say yes to.'), 'Number three, sell it with short videos.', ...Array(8).fill('Post every day and answer every comment you get.')])
+  const list = scenes.sceneStretches(words, words[words.length - 1].end_ms + 500)
+  const carrying = list.filter((x) => x.items)
+  assert.equal(carrying.reduce((n, x) => n + x.items.length, 0), 3)
+  assert.match(scenes.scenePlanUserPrompt(list, 'dark'), /\[item 2 of 3: "Number two"\]/)
+  assert.match(scenes.scenePlanSystemPrompt(), /NUMBERED ITEMS/); assert.match(scenes.scenePlanSystemPrompt(), /CONTRAST RHYTHM/)
+  // Each item's stretch becomes a scene (Full), even when the planner skipped them; Light picks them first.
+  const said2 = shared.saidIndex(words)
+  const shy = JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map((x, i) => ({ scene: i === 1, frame: 'stage', label: '', idea: '', kind: 'teaching' })) })
+  const full = scenes.parseScenePlan(shy, list, said2)
+  for (const x of carrying) if (scenes.sceneEligible(x, list.length)) assert.equal(full.stretches[x.index].scene, true, `item stretch ${x.index}`)
+  const light = scenes.parseScenePlan(JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map(() => ({ scene: false, frame: 'stage', kind: 'teaching' })) }), list, said2, 'light')
+  const picked = light.stretches.map((x, i) => x.scene ? i : -1).filter((i) => i >= 0)
+  assert.ok(picked.some((i) => list[i].items), JSON.stringify(picked))
+  // The brief: one item in a scene anchors it; several are beats; the cue times count from the scene's start.
+  const one = carrying[0]
+  const lines = scenes.numberedLines(one, one.endMs - one.startMs, one.startMs)
+  assert.match(lines[0], /item 1 of 3/); assert.match(lines[0], /big number "1"/)
+  const both = { ...one, items: [one.items[0], { n: 2, of: 3, atMs: one.items[0].atMs + 4000, cue: 'Number two' }] }
+  assert.match(scenes.numberedLines(both, 16000, one.startMs)[0], /NUMBERED BEATS: .*1 on "Number one" at .* s, 2 on "Number two" at/)
+  const brief = scenes.sceneBriefLines({ stretch: one, count: list.length, scenes: 4, order: 1, frame: 'stage', plan: full, theme: 'dark', durationMs: one.endMs - one.startMs, atMs: one.startMs })
+  assert.ok(brief.lines.some((l) => /NUMBERED ITEM/.test(l))); assert.match(brief.grade, /big number/)
+})
+
+test('contrast rhythm (Dark product UI): scenes alternate dark spotlight and light paper-grid grounds; the light look and its backdrop', () => {
+  const end = RUN.words[RUN.words.length - 1].end_ms
+  const list = scenes.sceneStretches(RUN.words, end)
+  const said = shared.saidIndex(RUN.words)
+  const grounds = (plan) => plan.stretches.filter((x) => x.scene).map((x) => x.ground === 'light' ? 'L' : 'D').join('')
+  // The planner asks for none: our rhythm puts one in after two dark scenes; never more than two of either in a row; the first is dark.
+  const none = JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map((_, i) => ({ scene: i > 0, frame: 'stage', kind: 'teaching' })) })
+  const dark = scenes.parseScenePlan(none, list, said, 'full', 'dark')
+  const g = grounds(dark)
+  assert.ok(g.length >= 5 && g[0] === 'D' && !/DDD/.test(g) && !/LLL/.test(g) && /L/.test(g), g)
+  // The planner's own choice is kept where it fits (light on the 2nd scene), and all-light is broken up.
+  const all = JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map((_, i) => ({ scene: i > 0, frame: 'stage', kind: 'teaching', ground: 'light' })) })
+  const g2 = grounds(scenes.parseScenePlan(all, list, said, 'full', 'dark'))
+  assert.ok(g2[0] === 'D' && g2[1] === 'L' && !/LLL/.test(g2), g2)
+  // Other themes have one ground; the fallback plan follows the rhythm too.
+  assert.ok(!/L/.test(grounds(scenes.parseScenePlan(all, list, said, 'full', 'paper'))))
+  assert.ok(/L/.test(grounds(scenes.fallbackScenePlan(list, 'full', 'dark'))))
+  // The brief and the grade say which ground; the light look reads (dark ink, accent deepened) and is saved with the meta.
+  const lightAt = dark.stretches.findIndex((x) => x.scene && x.ground === 'light')
+  const brief = scenes.sceneBriefLines({ stretch: list[lightAt], count: list.length, scenes: 6, order: 2, frame: 'stage', plan: dark, theme: 'dark', durationMs: 15000 })
+  assert.ok(brief.lines.some((l) => /^GROUND: LIGHT/.test(l))); assert.match(brief.grade, /LIGHT paper-grid/)
+  const darkAt = dark.stretches.findIndex((x) => x.scene && x.ground !== 'light')
+  assert.ok(scenes.sceneBriefLines({ stretch: list[darkAt], count: list.length, scenes: 6, order: 0, frame: 'stage', plan: dark, theme: 'dark', durationMs: 15000 }).lines.some((l) => /^GROUND: DARK/.test(l)))
+  assert.ok(!scenes.sceneBriefLines({ stretch: list[darkAt], count: list.length, scenes: 6, order: 0, frame: 'stage', plan: dark, theme: 'paper', durationMs: 15000 }).lines.some((l) => /^GROUND/.test(l)))
+  const look = shared.customLook({ kind: 'stage', theme: 'dark', ground: 'light', brandColor: '#F5D90A' })
+  assert.equal(look.ground, shared.LIGHT_UI_GROUND); assert.equal(look.variant, 'light'); assert.equal(look.ink, '#14111A')
+  assert.notEqual(look.accent, '#F5D90A', 'a light brand color is deepened to read on the light ground')
+  assert.equal(shared.parseLook(JSON.parse(JSON.stringify(look))).variant, 'light')
+  assert.equal(shared.customLook({ kind: 'card', theme: 'dark', ground: 'light' }).ground, 'video', 'a card over the video has no ground')
+  assert.match(shared.THEME_RULES, /LIGHT SCENES/)
+})
+
 test('a scene\'s brief: one continuous composition with beats, density, the hero object; graded as a scene', () => {
   const end = RUN.words[RUN.words.length - 1].end_ms
   const list = scenes.sceneStretches(RUN.words, end)
@@ -268,6 +348,9 @@ test('the review: scenes over half the reel or more, templates inside them repla
   const sceneGraphics = made.filter((g) => g.duration_ms > 12000)
   assert.equal(result.scenes, sceneGraphics.length); assert.ok(sceneGraphics.length >= 3)
   assert.ok(sceneGraphics.every((g) => g.size === 'stage' && ['stage', 'visual'].includes(g.fields.scene)))
+  // The contrast rhythm: some scenes are light (marked for the engine's light backdrop), designed on the light look.
+  assert.ok(sceneGraphics.some((g) => g.fields.ground === 'light') && sceneGraphics.some((g) => !g.fields.ground), JSON.stringify(sceneGraphics.map((g) => g.fields.ground ?? 'dark')))
+  assert.ok(sceneWrites.some((c) => /GROUND: LIGHT/.test(c.user) && new RegExp(shared.LIGHT_UI_GROUND).test(c.user)))
   // Half the reel or more in scenes.
   // On the reel's own clock (long pauses tightened).
   const timeline = m.editReelTimeline(ctx)

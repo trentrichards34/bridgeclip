@@ -712,13 +712,39 @@ def is_custom_scene(g: dict) -> bool:
     return g.get('template') == 'custom' and (g.get('fields') or {}).get('scene') in ('stage', 'visual')
 
 
+# A light scene of the Dark product UI's contrast rhythm (custom-graphics.ts LIGHT_SCENE_BACKDROP): the backdrop under it.
+LIGHT_SCENE_BACKDROP = 'light'
+
+
+def scene_backdrop(g: dict, theme: Optional[str]) -> Optional[str]:
+    """The backdrop a custom scene was designed on: the theme's, or (Dark product UI) the light one for its light scenes."""
+    if theme == 'dark' and (g.get('fields') or {}).get('ground') == 'light':
+        return LIGHT_SCENE_BACKDROP
+    return THEME_BACKDROPS.get(theme or '')
+
+
 def themed_scenes(scenes: list[dict], graphics: Sequence[dict], theme: Optional[str]) -> list[dict]:
-    """The scenes a custom stage or visual graphic plays in take the theme's backdrop (what it was designed on)."""
-    backdrop = THEME_BACKDROPS.get(theme or '')
-    if not backdrop:
+    """The scenes a custom stage or visual graphic plays in take the backdrop it was designed on (the theme's; the light
+    one under a light scene of the Dark product UI's contrast rhythm). A scene that holds custom scenes on different
+    grounds is split where the ground changes (at the start of the custom scene on the new ground)."""
+    if not THEME_BACKDROPS.get(theme or ''):
         return scenes
-    custom = [g for g in graphics if is_custom_scene(g)]
-    return [{**s, 'backdrop': backdrop} if any(g['at_ms'] < s['end_ms'] and s['start_ms'] < g['at_ms'] + g['duration_ms'] for g in custom) else s for s in scenes]
+    custom = sorted((g for g in graphics if is_custom_scene(g)), key=lambda g: g['at_ms'])
+    out: list[dict] = []
+    for s in scenes:
+        inside = [g for g in custom if g['at_ms'] < s['end_ms'] and s['start_ms'] < g['at_ms'] + g['duration_ms']]
+        if not inside:
+            out.append(s)
+            continue
+        lo, current = s['start_ms'], scene_backdrop(inside[0], theme)
+        for g in inside[1:]:
+            ground = scene_backdrop(g, theme)
+            cut = int(g['at_ms'])
+            if ground != current and lo < cut < s['end_ms']:
+                out.append({**s, 'start_ms': lo, 'end_ms': cut, 'backdrop': current})
+                lo, current = cut, ground
+        out.append({**s, 'start_ms': lo, 'end_ms': s['end_ms'], 'backdrop': current})
+    return out
 
 
 def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str], avoid: Sequence[tuple[int, int]] = (),

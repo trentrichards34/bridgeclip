@@ -461,6 +461,26 @@ def test_custom_scenes_take_the_themes_backdrop():
     assert max(top) < 0x20 and max(bottom) < 0x10
 
 
+def test_light_scenes_of_the_dark_theme_take_the_light_backdrop():
+    # The Dark product UI's contrast rhythm: a scene designed on the light paper-grid ground (fields.ground 'light') plays
+    # on the light backdrop; back to back with a dark one, the stage is split where the ground changes. Other themes
+    # ignore it.
+    dark = {'id': 'g-scene00011', 'template': 'custom', 'at_ms': 8000, 'duration_ms': 16000, 'placement': 'top', 'size': 'stage', 'origin': 'auto',
+            'fields': {'comp': 'c' * 16, 'idea': 'Designed scene', 'scene': 'stage'}}
+    light = {**dark, 'id': 'g-scene00012', 'at_ms': 24000, 'fields': {**dark['fields'], 'comp': 'd' * 16, 'ground': 'light'}}
+    later = {**dark, 'id': 'g-scene00013', 'at_ms': 60000, 'fields': {**dark['fields'], 'comp': 'e' * 16, 'ground': 'light', 'scene': 'visual'}}
+    scenes = ed.editor_scenes([dark, light, later], 90000, None, theme='dark')
+    by = lambda at: next(s for s in scenes if s['start_ms'] <= at < s['end_ms'])  # noqa: E731
+    # (The light backdrop is the scenes' default: a saved scene leaves it out.)
+    ground = lambda at: by(at).get('backdrop', 'light')  # noqa: E731
+    assert ground(12000) == 'dark' and ground(30000) == 'light' and ground(65000) == 'light'
+    assert by(12000)['end_ms'] == 24000 and by(30000)['start_ms'] == 24000, 'split where the ground changes'
+    assert by(65000)['scene'] == 'visual'
+    assert all(s['backdrop'] == 'paper' for s in ed.editor_scenes([dark, light], 90000, None, theme='paper') if s['scene'] != 'face')
+    from clip_engine.services.stage_scenes import caption_mode
+    assert caption_mode('light') == 'light', 'dark captions on the light scenes'
+
+
 def test_a_scene_over_a_filmed_screen_keeps_the_screen_in_the_card():
     # A custom scene designed over a filmed screen (fields.card 'screen'): its stage scene shows the screen in the card,
     # is not cut around the screen (the screen is not covered: it is in the card), and other scenes give way to it.

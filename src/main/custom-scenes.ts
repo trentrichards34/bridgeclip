@@ -33,6 +33,8 @@ export interface PlannedScene {
   order: number
   /** Over a filmed screen: the screen stays in the card under it (the card 'screen'). */
   screen?: boolean
+  /** A light scene of the Dark product UI's contrast rhythm (the plan's ground). */
+  ground?: 'light'
   /** Back to back with the scene before / after: it hands over directly (no exit, no empty stage between). */
   follows?: boolean
   followed?: boolean
@@ -48,7 +50,7 @@ export async function planScenes(input: { model: string; theme: CustomTheme; str
   const target = n ? sceneTarget(amount, input.stretches[n - 1].endMs - input.stretches[0].startMs, input.stretches.filter((s) => sceneEligible(s, n)).length) : null
   try {
     const reply = await call({ model: input.model, system: scenePlanSystemPrompt(), user: scenePlanUserPrompt(input.stretches, input.theme, input.note, target), maxTokens: 8000, temperature: 0.4, purpose: 'scenes', signal })
-    const plan = parseScenePlan(reply.text, input.stretches, input.said, amount)
+    const plan = parseScenePlan(reply.text, input.stretches, input.said, amount, input.theme)
     if (!plan) logger.info('scenes.plan.unreadable', { chars: reply.text.length })
     return { plan, costUsd: reply.costUsd }
   } catch (error) {
@@ -80,7 +82,7 @@ export function plannedScenes(stretches: readonly SceneStretch[], plan: ScenePla
     // It ends a little before the next stretch's first word (the move back to the face lands before it is said).
     const durationMs = Math.round(Math.min(CUSTOM_SECTION_MAX_MS, next - first.start_ms - 150, endMs - first.start_ms))
     if (durationMs < SCENE_MIN_KEPT_MS) return
-    out.push({ stretch: s, word: first.index, atMs: first.start_ms, durationMs, frame: overScreen ? 'stage' : own.frame, order: 0, ...(overScreen ? { screen: true } : {}) })
+    out.push({ stretch: s, word: first.index, atMs: first.start_ms, durationMs, frame: overScreen ? 'stage' : own.frame, order: 0, ...(overScreen ? { screen: true } : {}), ...(own.ground === 'light' ? { ground: 'light' as const } : {}) })
   })
   // Back to back: the first runs exactly to the second's start (never overlapping, never an empty stage between).
   for (let i = 0; i + 1 < out.length; i++) {
@@ -95,7 +97,7 @@ export function plannedScenes(stretches: readonly SceneStretch[], plan: ScenePla
 }
 
 /** The plan to use: the model's, else ours (every other eligible stretch; Light and Standard: their count). */
-export const usablePlan = (plan: ScenePlan | null, stretches: readonly SceneStretch[], amount: SceneAmount = DEFAULT_SCENE_AMOUNT): ScenePlan => plan ?? fallbackScenePlan(stretches, amount)
+export const usablePlan = (plan: ScenePlan | null, stretches: readonly SceneStretch[], amount: SceneAmount = DEFAULT_SCENE_AMOUNT, theme: CustomTheme = 'dark'): ScenePlan => plan ?? fallbackScenePlan(stretches, amount, theme)
 
 /** The plan's hero object and motif as the video's world note (what the pop-ups and the beat sheet use). */
 export function planWorld(plan: ScenePlan): VisualWorld | null {
@@ -113,8 +115,8 @@ export function sceneBrief(input: { scene: PlannedScene; scenes: number; count: 
   const before = words.filter((w) => w.start_ms >= scene.atMs - 9000 && w.start_ms < scene.atMs).map((w) => w.word).join(' ')
   const after = words.filter((w) => w.start_ms >= scene.atMs + scene.durationMs && w.start_ms < scene.atMs + scene.durationMs + 5000).map((w) => w.word).join(' ')
   const geometry = customGeometry(scene.frame, {})
-  const look = customLook({ kind: scene.frame, brandColor: input.brandColor, font: input.font, logo: input.logo, theme: input.theme })
-  const lines = sceneBriefLines({ stretch: scene.stretch, count: input.count, scenes: input.scenes, order: scene.order, frame: scene.frame, plan: input.plan, theme: input.theme, durationMs: scene.durationMs, screen: scene.screen === true, follows: scene.follows === true, followed: scene.followed === true })
+  const look = customLook({ kind: scene.frame, brandColor: input.brandColor, font: input.font, logo: input.logo, theme: input.theme, ...(scene.ground === 'light' ? { ground: 'light' as const } : {}) })
+  const lines = sceneBriefLines({ stretch: scene.stretch, count: input.count, scenes: input.scenes, order: scene.order, frame: scene.frame, plan: input.plan, theme: input.theme, durationMs: scene.durationMs, atMs: scene.atMs, screen: scene.screen === true, follows: scene.follows === true, followed: scene.followed === true })
   return {
     kind: 'process', frame: scene.frame, durationMs: scene.durationMs, geometry, look, cues, before, after, planned: '',
     // A scene builds on more words than a pop-up: every stressed word of the stretch (stressedWords keeps one every ~0.6 s).

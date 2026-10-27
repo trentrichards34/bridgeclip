@@ -279,7 +279,7 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
       const amount = sceneAmountOf(ctx.decisions)
       const result = await planScenes({ model: ctx.model, theme, stretches, said, amount }, options.call, options.signal)
       costUsd += result.costUsd
-      planned = usablePlan(result.plan, stretches, amount)
+      planned = usablePlan(result.plan, stretches, amount, theme)
       scenes = plannedScenes(stretches, planned, timeline.words, timeline.endMs)
       sceneCount = stretches.length
     }
@@ -362,7 +362,7 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     // The template graphics (and earlier custom graphics) that start inside the scene give way to it.
     out = out.filter((g) => { const t = reelStart.get(g.word); return t === undefined || t < a || t >= b || SCENE_KEEPS.has(g.template) })
     out.push({ id: newId(taken), template: 'custom', word: scene.word, duration_ms: scene.durationMs, placement: 'top', size: 'stage', origin: 'auto',
-      fields: { comp: result.meta.comp, idea: 'Designed scene', scene: scene.frame, ...(scene.screen ? { card: 'screen' } : {}) } })
+      fields: { comp: result.meta.comp, idea: 'Designed scene', scene: scene.frame, ...(scene.screen ? { card: 'screen' } : {}), ...(scene.ground === 'light' && theme === 'dark' ? { ground: 'light' } : {}) } })
   }
   for (const r of results) {
     if (r.type !== 'hero') continue

@@ -297,6 +297,8 @@ export interface CustomLook {
   logo: boolean
   /** The video's theme (stage and visual scenes): a raised panel on the ground and the accent's glow. Absent on looks made before themes. */
   theme?: CustomTheme
+  /** A light scene of the Dark product UI's contrast rhythm (the light paper-grid ground; the engine's light backdrop under it). */
+  variant?: 'light'
   panel?: string
   glow?: string
 }
@@ -323,6 +325,10 @@ export const DARK_UI_ACCENT = '#E84BD8'
 /** The middle of the engine's backdrops (stage_scenes.BACKDROP_COLORS): what the composition's stills sit on. */
 export const DARK_UI_GROUND = '#100E15'
 export const PAPER_GROUND = '#F0ECE3'
+/** The Dark product UI's light scenes (its contrast rhythm): the middle of the engine's light backdrop (stage_scenes BACKDROP_COLORS "light"). */
+export const LIGHT_UI_GROUND = '#ECEEF1'
+/** Under a light scene of the Dark product UI, the engine's light backdrop. */
+export const LIGHT_SCENE_BACKDROP = 'light' as const
 export const isTheme = (value: unknown): value is CustomTheme => (CUSTOM_THEMES as readonly unknown[]).includes(value)
 
 const hex = (c: string): [number, number, number] => {
@@ -355,7 +361,9 @@ export const CUSTOM_FONT_FAMILIES = {
 } as const
 
 /** The video's one look for its custom graphics: the brand color (else the reel's calm accent), the hook's font as the display face. */
-export function customLook(options: { kind: CustomFrameKind; brandColor?: string | null; font?: string | null; logo?: boolean; backdrop?: string | null; worldAccent?: string | null; theme?: CustomTheme | null }): CustomLook {
+export function customLook(options: { kind: CustomFrameKind; brandColor?: string | null; font?: string | null; logo?: boolean; backdrop?: string | null; worldAccent?: string | null; theme?: CustomTheme | null
+  /** A light scene of the Dark product UI's contrast rhythm (stage and visual scenes only). */
+  ground?: 'light' }): CustomLook {
   if (options.theme && options.kind !== 'explainer') return themedLook(options.theme, options)
   const brand = options.brandColor && /^#[0-9a-f]{6}$/i.test(options.brandColor) ? options.brandColor.toUpperCase() : null
   const display = CUSTOM_FONT_FAMILIES[(options.font ?? 'clean') as keyof typeof CUSTOM_FONT_FAMILIES] ?? CUSTOM_FONT_FAMILIES.clean
@@ -377,7 +385,7 @@ export function customLook(options: { kind: CustomFrameKind; brandColor?: string
 }
 
 /** A theme's look for a frame (a card over the video keeps a solid panel for its words, in the theme's colors). */
-function themedLook(theme: CustomTheme, options: { kind: CustomFrameKind; brandColor?: string | null; font?: string | null; logo?: boolean }): CustomLook {
+function themedLook(theme: CustomTheme, options: { kind: CustomFrameKind; brandColor?: string | null; font?: string | null; logo?: boolean; ground?: 'light' }): CustomLook {
   const brand = options.brandColor && /^#[0-9a-f]{6}$/i.test(options.brandColor) ? options.brandColor.toUpperCase() : null
   const display = CUSTOM_FONT_FAMILIES[(options.font ?? 'clean') as keyof typeof CUSTOM_FONT_FAMILIES] ?? CUSTOM_FONT_FAMILIES.clean
   const fonts = { display, body: CUSTOM_FONT_FAMILIES.body, accentFont: CUSTOM_FONT_FAMILIES.accent, logo: !!options.logo, theme }
@@ -404,6 +412,12 @@ function themedLook(theme: CustomTheme, options: { kind: CustomFrameKind; brandC
     const accent = whiteInk ? readable('#FFE45C', middle, true) : contrast('#FFFFFF', middle) >= 3 ? '#FFFFFF' : readable(shade(base, .45), middle, false)
     return { ground, ink, muted: whiteInk ? 'rgba(255,255,255,.74)' : 'rgba(17,17,17,.64)', paper: '#FFFFFF', paperInk: '#0E1525', accent, accentInk: contrast(accent, '#FFFFFF') >= 4.5 ? accent : shade(base, .5),
       bad: '#FF5A4E', panel: whiteInk ? shade(base, .62) : tint(base, .55), glow: whiteInk ? 'rgba(255,255,255,.35)' : rgba(base, .45), ...fonts }
+  }
+  if (options.ground === 'light' && options.kind !== 'card') {
+    // The light paper-grid scene: the same product UI in white panels on a light ground, dark ink, the accent deepened to read.
+    const accent = readable(brand ?? DARK_UI_ACCENT, LIGHT_UI_GROUND, false)
+    return { ground: LIGHT_UI_GROUND, ink: '#14111A', muted: 'rgba(20,17,26,.62)', paper: '#FFFFFF', paperInk: '#14111A', accent, accentInk: contrast(accent, '#FFFFFF') >= 4.5 ? accent : shade(accent, .55),
+      bad: '#E0364A', panel: '#FFFFFF', glow: rgba(accent, .28), ...fonts, variant: 'light' }
   }
   const ground = options.kind === 'card' ? 'video' : DARK_UI_GROUND
   const accent = readable(brand ?? DARK_UI_ACCENT, DARK_UI_GROUND, true)
@@ -850,6 +864,7 @@ Timing: data-duration equals the graphic's length (in the brief). Cues are secon
 /** Each theme's own rules (the brief names the video's theme; its tokens are on the page). Written in our own words. */
 export const THEME_RULES = `THEME RULES (the brief names the video's theme; follow its block)
 DARK PRODUCT UI (the default): a dark stage like a product launch film. ASKED FOR: glossy panels in var(--cg-panel) (a soft diagonal gradient into the ground, a 2-3 px border of a faint ink or the accent), app windows with a title bar (three small dots and the title said), phone mockups, notification stacks, dashboards, tables and cards BUILT FROM THE SAID WORDS (their rows, tabs, chips and counters are what was said); perspective tilt and depth (perspective() rotateX/rotateY 6-14 degrees, a slow drift of the tilt over the whole scene, layered cards); the accent glowing (box-shadow and text-shadow in var(--cg-glow)); a spotlight cone from the top (a radial gradient of the accent at 30-40% fading out) and a subtle square grid (lines of the ink at 4-6%); rubber stamps that slam on a setback or contrast word (scale from 2 to 1 in 0.2 s, rotated -8 to -14 degrees, var(--cg-bad) or the accent, the panel shakes); counters and odometers INSIDE panels. Type: white ink, the accent for the one word or number that matters. Banned: flat clip-art, hand-drawn doodles, paper textures.
+DARK PRODUCT UI, LIGHT SCENES (its contrast rhythm: the brief says GROUND: LIGHT): the same product world on a light paper-grid stage. ASKED FOR: a square grid over the ground (lines of the ink at 6-8%, cells about 72 px), crisp white panels and app windows (var(--cg-panel)) with a 2 px border of the ink at 10-14% and one soft shadow (0 24px 60px of the ink at 12-16%), the same tilt and depth, dark ink, the accent for the one word or number that matters, stamps and counters as on the dark scenes. Banned: the spotlight cone, neon glow (at most a faint accent halo), a dark panel covering the ground.
 PAPER AND INK: a hand-made editorial explainer on warm paper. Flat ink drawings (strokes 8-12 px, round caps), sticky notes, stamps, cards with a hard offset shadow (4-8 px, var(--cg-glow)), arrows drawn on, crossed-out marks, one accent. Banned: glow, soft shadows, gradients, glossy UI, app chrome, perspective tilt.
 BRAND: the brand color is the stage (var(--cg-ground)); white ink, raised panels in var(--cg-panel), the accent for the one thing that matters, gentle depth (one soft shadow, slight tilt). App windows and dashboards built from the said words are welcome. Banned: neon glow on everything, more than one accent.`
 
@@ -1078,7 +1093,7 @@ export function parseLook(value: unknown): CustomLook | null {
   if (![v.display, v.body, v.accentFont].every((f) => typeof f === 'string' && FAMILIES.includes(f))) return null
   return { ground: v.ground as string, ink: v.ink as string, muted: v.muted as string, paper: v.paper as string, paperInk: v.paperInk as string, accent: v.accent as string,
     accentInk: v.accentInk as string, bad: v.bad as string, display: v.display as string, body: v.body as string, accentFont: v.accentFont as string, logo: v.logo === true,
-    ...(isTheme(v.theme) ? { theme: v.theme } : {}), ...(color(v.panel) ? { panel: v.panel } : {}), ...(color(v.glow) ? { glow: v.glow } : {}) }
+    ...(isTheme(v.theme) ? { theme: v.theme } : {}), ...(v.variant === 'light' ? { variant: 'light' as const } : {}), ...(color(v.panel) ? { panel: v.panel } : {}), ...(color(v.glow) ? { glow: v.glow } : {}) }
 }
 
 export function parseCustomMeta(value: unknown): CustomMeta | null {
