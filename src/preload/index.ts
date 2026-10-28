@@ -463,6 +463,15 @@ export interface BridgeClipAPI {
     /** Another library shot in one moment (null: the next best match); bake again in the editor to update the Library. */
     swapShot: (outputDir: string, slot: number, shotId: string | null) => Promise<BrollVideoShot[]>
   }
+  /** AI explainers: a skill members run in their own Claude. Main copies the bundled folder; nothing runs here. */
+  aiVideoSkill: {
+    /** Whether this copy of CreatorClips has the skill folder. */
+    info: () => Promise<{ available: boolean }>
+    /** Opens a folder dialog in main, saves a new "AI Video" folder there and shows it; its path, or null when cancelled. */
+    save: () => Promise<string | null>
+    /** Shows a folder saved this session in Finder; false when it is gone. */
+    reveal: (path: string) => Promise<boolean>
+  }
   /** Realistic talking avatars on the member's own HeyGen key (Beta). */
   heygen: {
     /** Checks the key: who it belongs to and what is left on the account. */
@@ -1016,6 +1025,11 @@ const api: BridgeClipAPI = {
     onStatus: (callback) => subscribe('brollVideo:status', callback),
     shots: (outputDir) => ipcRenderer.invoke('brollVideo:shots', outputDir),
     swapShot: (outputDir, slot, shotId) => ipcRenderer.invoke('brollVideo:swapShot', outputDir, slot, shotId)
+  },
+  aiVideoSkill: {
+    info: () => ipcRenderer.invoke('aiVideoSkill:info'),
+    save: () => ipcRenderer.invoke('aiVideoSkill:save'),
+    reveal: (path) => ipcRenderer.invoke('aiVideoSkill:reveal', path)
   },
   covers: {
     suggest: (videoPath) => ipcRenderer.invoke('covers:suggest', videoPath),

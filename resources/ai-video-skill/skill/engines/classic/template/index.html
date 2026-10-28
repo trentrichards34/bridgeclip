@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>classic reel</title>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+  html, body { margin: 0; background: #000; }
+  canvas { display: block; }
+  body.fit #c { height: 100vh; width: auto; margin: 0 auto; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<!-- engine core (shared, never edit per reel) -->
+<script src="/engine/core/lib.js"></script>
+<script src="/engine/core/ui.js"></script>
+<script src="/engine/core/media.js"></script>
+<script src="/engine/core/words.js"></script>
+<script src="/engine/core/lipsync.js"></script>
+<script src="/engine/core/captions.js"></script>
+<script src="/engine/core/acting.js"></script>
+<script src="/engine/core/presenter.js"></script>
+<script src="/engine/core/halftone.js"></script>
+<!-- prop kits -->
+<script src="/engine/kits/fx.js"></script>
+<script src="/engine/kits/devices.js"></script>
+<script src="/engine/kits/cards.js"></script>
+<script src="/engine/kits/charts.js"></script>
+<script src="/engine/kits/mechanics.js"></script>
+<script src="/engine/kits/illustrate.js"></script>
+<!-- boot: loads reel.json, build/words.json, timeline.js, then every file in SCENE_FILES (see timeline.js) -->
+<script src="/engine/core/engine.js"></script>
+</body>
+</html>

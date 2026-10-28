@@ -42,6 +42,7 @@ import { moreClipsInfo, startClipJobRequest, startClipJobRequests, startMoreClip
 import { MAX_CREATE_SOURCES } from '../shared/create-sources'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addMusic, listMusic, musicPreview, removeMusic, saveMusicSettings } from './music'
+import { aiVideoSkillInfo, revealAiVideoSkill, saveAiVideoSkill } from './ai-video-skill'
 import { addSoundsFromPicker, listSounds, removeSound, setSoundAction, soundPreview } from './sound-library'
 import { addLogoFromPicker, listLogos, removeLogo, updateLogo } from './logo-library'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
@@ -329,6 +330,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     selectedOutputDirectories.add(result.filePaths[0])
     return result.filePaths[0]
   })
+
+  // AI explainers: the folder dialog opens here and only the bundled skill is copied; reveal opens only folders saved here.
+  handle('aiVideoSkill:info', () => aiVideoSkillInfo())
+  handle('aiVideoSkill:save', () => saveAiVideoSkill(getMainWindow()))
+  handle('aiVideoSkill:reveal', (_event, path: unknown) => revealAiVideoSkill(path))
 
   handle('backgrounds:list', () => listBackgrounds())
   handle('backgrounds:remove', (_event, name: unknown) => removeBackground(name))

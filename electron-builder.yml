@@ -54,6 +54,12 @@ extraResources:
       - "THIRD_PARTY_NOTICES.md"
       - "!**/__pycache__"
       - "!**/*.pyc"
+  # The AI explainer skill members save to their computer and run in their own Claude
+  # (src/main/ai-video-skill.ts). Shipped whole and unchanged, dotfolders included.
+  - from: resources/ai-video-skill
+    to: ai-video-skill
+    filter:
+      - "**/*"
   - from: engine-venv
     to: engine-venv
     filter:

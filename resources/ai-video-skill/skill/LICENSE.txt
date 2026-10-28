@@ -1,0 +1,11 @@
+AI Video Editing Skill: license
+
+You may: use this skill to make videos for yourself, your business and your clients, including paid client work, and publish those videos anywhere. You may modify the skill for your own use.
+
+You may not: resell, share, sublicense, publish or redistribute the skill or any part of it (code, guides, scene library), alone or inside another product, template pack, course or tool.
+
+Videos you make are yours. Voices are subject to your ElevenLabs (or other provider) plan terms; logos, footage and trademarks you add are your responsibility.
+
+Bundled fonts are licensed under the SIL Open Font License (see fonts/). three.js and Playwright are under their own open-source licenses (MIT / Apache-2.0).
+
+Provided "as is", without warranty.

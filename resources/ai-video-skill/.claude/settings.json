@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node skill/tools/reel.mjs:*)",
+      "Bash(node skill/tools/doctor.mjs:*)",
+      "Bash(python3 skill/tools/tts.py:*)",
+      "Bash(python3 skill/tools/voices.py:*)",
+      "Bash(python3 skill/tools/mix.py:*)",
+      "Bash(python3 skill/tools/motion.py:*)",
+      "Bash(python3 skill/tools/craft.py:*)",
+      "Bash(python3 skill/tools/fonts.py:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(ffprobe:*)"
+    ]
+  }
+}

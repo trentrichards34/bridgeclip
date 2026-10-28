@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Clapperboard, Film, LayoutGrid, Link2, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Send, Shuffle, SlidersHorizontal, Star, UserRound, Video, Zap, type LucideIcon } from 'lucide-react'
+import { Activity, BookOpen, Clapperboard, Film, LayoutGrid, Link2, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Presentation, Send, Shuffle, SlidersHorizontal, Star, UserRound, Video, Zap, type LucideIcon } from 'lucide-react'
 import { cn, isMac, MOD_KEY, sourceLabel } from '../lib/utils'
 import { useIsWide, useSidebarExpanded, useSidebarStore } from '../store/use-sidebar-store'
 import { useActiveJobs } from '../store/use-job-store'
@@ -14,7 +14,7 @@ import { useLibrarySummaryStore } from '../store/use-library-summary-store'
 import { useDataVersion } from '../store/use-data-version-store'
 import { useEffect, useId } from 'react'
 
-export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'brand' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
+export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'aivideo' | 'brand' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
 /** Each tool's colour (see `--tool-*` in globals.css). */
 export type Tool = 'create' | 'edit' | 'remix' | 'avatar' | 'library' | 'jobs' | 'broll' | 'brand' | 'chat' | 'publish' | 'settings'
@@ -32,6 +32,8 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'avatar', label: 'Avatar Studio', icon: UserRound, shortcut: '8', group: 'make', tool: 'avatar' },
   // No shortcut is free: none shown.
   { id: 'brollvideo', label: 'B-roll video', icon: Clapperboard, shortcut: '', group: 'make', tool: 'broll', beta: true },
+  // Runs in the member's own Claude (no shortcut is free).
+  { id: 'aivideo', label: 'AI explainers', icon: Presentation, shortcut: '', group: 'make', tool: 'avatar' },
   { id: 'library', label: 'Library', icon: LayoutGrid, shortcut: '2', group: 'manage', tool: 'library' },
   { id: 'jobs', label: 'Jobs', icon: Activity, shortcut: '3', group: 'manage', tool: 'jobs' },
   { id: 'assistant', label: 'Chat', icon: MessageSquare, shortcut: '7', group: 'manage', tool: 'chat' },
