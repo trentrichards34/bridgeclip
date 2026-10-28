@@ -24,7 +24,7 @@ def test_the_manifest_lists_every_file_with_its_action_take_peak_source_and_a_fr
              for root, _, names in os.walk(SFX) for name in names if name.endswith(".ogg")}
     listed = [s["file"] for s in manifest["sounds"]]
     assert sorted(listed) == sorted(files) and len(set(listed)) == len(listed)
-    assert 30 <= len(listed) <= 50
+    assert 50 <= len(listed) <= 80
     for sound in manifest["sounds"]:
         assert sound["action"] in sd.ACTIONS and sound["file"].startswith(sound["action"] + "/")
         assert 0 <= sound["peak_ms"] <= sound["duration_ms"] <= 2500
@@ -32,16 +32,39 @@ def test_the_manifest_lists_every_file_with_its_action_take_peak_source_and_a_fr
         assert sound["license"].startswith("CC0-1.0") or sound["license"].startswith("Made for CreatorClips")
         assert ("kenney_" in sound["source"]) == sound["license"].startswith("CC0-1.0")
         assert "wow" not in sound["source"].lower()
-    # Two or three takes (or more) of every action, so repeats rotate.
+    # Four to eight takes of every action, so repeats rotate.
     for action in sd.ACTIONS:
         takes = sorted(s["take"] for s in manifest["sounds"] if s["action"] == action)
-        assert takes == list(range(len(takes))) and len(takes) >= 2 and manifest["actions"][action] == len(takes)
+        assert takes == list(range(len(takes))) and 4 <= len(takes) <= 8 and manifest["actions"][action] == len(takes)
     # No synthesized tones: the tone-only "ding" is gone, and the library is small.
     assert not any("ding" in name for name in listed)
     total = sum(os.path.getsize(os.path.join(SFX, name)) for name in listed)
     assert total < 3 * 1024 * 1024
     license_text = open(os.path.join(SFX, "LICENSE.txt"), encoding="utf-8").read()
     assert "CC0" in license_text and "Kenney" in license_text and "wow" in license_text
+
+
+def test_every_manifest_entry_is_a_real_file_the_engine_loads_with_its_peak_inside_and_a_free_license():
+    manifest = json.load(open(os.path.join(SFX, "manifest.json")))
+    lib = sd.library()
+    loaded = {sound.path for sounds in lib.values() for sound in sounds}
+    license_text = open(os.path.join(SFX, "LICENSE.txt"), encoding="utf-8").read()
+    for sound in manifest["sounds"]:
+        # The engine only loads names like "whoosh/air-short.ogg"; one that doesn't match would be silently dropped.
+        assert re.fullmatch(r"[a-z]+/[a-z0-9-]+\.ogg", sound["file"]), sound["file"]
+        path = os.path.join(SFX, sound["file"])
+        assert os.path.isfile(path) and not os.path.islink(path) and path in loaded
+        assert 0 <= sound["peak_ms"] < sound["duration_ms"] and sound["level_db"] < 0
+        # CC0 (Kenney) or our own.
+        assert sound["license"] in ("CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)",
+                                    "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine")
+        # LICENSE.txt names its pack (Kenney) or the files we made (whoosh/air-*, riser/air-rise-*).
+        if sound["license"].startswith("CC0"):
+            pack = re.match(r"Kenney, (.+?) \(kenney_", sound["source"]).group(1)
+            assert pack.lower() in license_text.lower(), pack
+        else:
+            assert sound["file"].startswith(("whoosh/air-", "riser/air-rise-"))
+    assert sum(len(sounds) for sounds in lib.values()) == len(manifest["sounds"])
 
 
 def test_each_bundled_file_is_48k_mono_opus_peaking_under_full_scale_with_its_peak_where_the_manifest_says():
@@ -124,6 +147,21 @@ def test_takes_rotate_so_the_same_file_never_plays_twice_in_a_row():
     assert len(files) == 6 and all(a != b for a, b in zip(files, files[1:]))
     # Numbers take turns between a soft pop and a key tick, each rotating through its takes: six different files.
     assert [p.action for p in plan] == ["pop", "tick"] * 3 and len(set(files)) == 6
+
+
+def test_a_long_run_of_one_action_uses_many_different_takes():
+    # Eight scene changes (each one a whoosh in and a whoosh out): sixteen whooshes, rotating through every take, so a
+    # busy video uses the whole library before any whoosh comes back, and never the same one twice in a row.
+    events = [{"kind": "scene", "at_ms": 2000 + i * 7000, "end_ms": 5000 + i * 7000} for i in range(8)]
+    plan = sd.plan_sounds(sd.cues_from_events(events, 60000), 60000)
+    whooshes = [p.sound.path for p in plan if p.action == "whoosh"]
+    files = [p.sound.path for p in plan]
+    assert len(whooshes) >= 8 and all(a != b for a, b in zip(files, files[1:]))
+    assert len(set(whooshes)) == min(len(whooshes), len(sd.library()["whoosh"])) >= 8
+    # Ticks and pops for numbers: more files in play than the four-take library had.
+    plan = sd.plan_sounds(_graphics(range(2000, 50000, 3000)), 60000)
+    numbers = [p.sound.path for p in plan if p.action in ("pop", "tick")]
+    assert len(set(numbers)) > 8
 
 
 def test_sounds_keep_apart_and_under_the_average_cap():

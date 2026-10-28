@@ -33,6 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Mai
 - **Create** is now **Clip** in the sidebar: the same tool for turning long videos into short clips, with a name that says what it does.
 - **Avatar Studio** is tucked away for now: it's gone from the sidebar, the setup steps, Today's 3, Guides, Chat and Remix (which offers the **You on camera** formats). Avatar videos you already made stay in your Library and still play.
 - CreatorClips is now released and signed by Wealthery. Downloads and automatic updates come from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases), and **Settings → About** and the Help menu link there.
+- More built-in sound effects: about twice as many takes of every whoosh, swipe, pop, tick, click, impact, riser and paper sound (all free to use: CC0 or our own), so videos with many moves sound less repetitive.
 - Smart framing ignores weak background faces, stays on a speaker who briefly looks away, follows talking heads inside 4:3 video, and analyzes footage faster.
 - Screen + webcam clips fill the top panel again.
 - Editor previews use much less disk space, and downloaded sources are moved into the project instead of copied.
