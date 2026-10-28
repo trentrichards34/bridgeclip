@@ -562,7 +562,7 @@ class IntelligencePlannerService:
                 timeout=httpx.Timeout(600.0, connect=30.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                    "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
                     "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )

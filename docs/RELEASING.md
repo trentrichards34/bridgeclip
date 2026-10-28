@@ -15,13 +15,13 @@ Installed apps check for updates without a GitHub token, and electron-updater ca
 
 | System | Architecture | Files | Built on | Trust |
 | --- | --- | --- | --- | --- |
-| macOS | Apple silicon | `CreatorClips-X.Y.Z-mac-arm64.dmg`, `.zip` | `macos-14` | Wealthery Developer ID; app and DMG notarized and stapled |
+| macOS | Apple silicon | `CreatorClips-X.Y.Z-mac-arm64.dmg`, `.zip` | `macos-14` | Signed with our Apple Developer ID certificate; app and DMG notarized and stapled |
 | macOS | Intel | `CreatorClips-X.Y.Z-mac-x64.dmg`, `.zip` | `macos-15-intel` | Same |
 | Windows | x64 | `CreatorClips-X.Y.Z-win-x64.exe` | `windows-latest` | Authenticode via Azure Trusted Signing when its secrets are set; otherwise **unsigned**, labeled in the release notes |
 
 Every release also carries `latest-mac.yml` (both Mac architectures merged), `latest.yml` (Windows), blockmaps, `release-manifest.json` and `SHA256SUMS.txt`.
 
-- The Mac app runs on the runner's macOS version or newer: FFmpeg links Homebrew's caption libraries, which Homebrew builds for the runner's OS. That makes Apple silicon builds need macOS 14+ and Intel builds macOS 15+. GitHub retired `macos-13`, the last older Intel image, in December 2025. When `macos-14` is retired, move Apple silicon to `macos-15`, which means macOS 15+.
+- The Mac app runs on the runner's macOS version or newer: FFmpeg links Homebrew's caption libraries, which Homebrew builds for the runner's OS. That makes Apple silicon builds need macOS 14+ and Intel builds macOS 15+. `builder-config.cjs mac <arch>` sets `mac.minimumSystemVersion` to match (14.0 / 15.0; `electron-builder.yml` has 14.0 for local builds), so macOS refuses to open the app on an older system instead of failing at FFmpeg. GitHub retired `macos-13`, the last older Intel image, in December 2025. When `macos-14` is retired, move Apple silicon to `macos-15`, which means macOS 15+.
 - Linux packages still build from source (`npm run dist:linux-x64`), but the workflow does not publish them. A Linux app has no update feed and reports "No release for this platform yet."
 
 ## Release identity
@@ -34,13 +34,13 @@ Who publishes and signs a build is compiled into it. `electron.vite.config.ts` r
 | `CREATORCLIPS_MAC_TEAM_ID` | none | Apple team whose Developer ID signature the Mac app requires before it updates itself |
 | `CREATORCLIPS_WIN_PUBLISHER` | none | Authenticode publisher the Windows app requires on every downloaded update |
 
-With no team ID or publisher, a build never updates itself (Settings → About says it isn't signed). Only Wealthery-signed builds self-update:
+With no team ID or publisher, a build never updates itself (Settings → About says it isn't signed). Only official builds, signed with our Apple Developer certificate, self-update:
 
 - **macOS** (`src/main/auto-updater.ts`): the updater starts only if `codesign` reports `TeamIdentifier=<CREATORCLIPS_MAC_TEAM_ID>` and a Developer ID Application authority. Squirrel.Mac then installs an update only if it satisfies the running app's designated requirement, so it must come from the same team.
 - **Windows**: the updater starts only if a publisher was compiled in, which happens only when CI signed the build. electron-updater checks each downloaded installer against `publisherName` in `app-update.yml` before running it.
 - The values sit in `app.asar`, which Electron's integrity fuse checks (`electron-builder.yml` `electronFuses`), and a modified Mac bundle fails its code signature.
 
-`scripts/release/builder-config.cjs <mac|windows|linux>` writes `release-<platform>.json` for electron-builder from `electron-builder.yml` and the same variables. It points `publish` at the releases repository. With `RELEASE_SIGNING=1` it requires every signing input and enables `forceCodeSigning`: on macOS, `mac.identity` is the team ID (it picks the `Developer ID Application: … (TEAM)` certificate from `CSC_LINK`), along with `notarize` and `dmg.sign`. On Windows it sets `azureSignOptions` with `publisherName = CREATORCLIPS_WIN_PUBLISHER`. Unsigned configs refuse a team ID or publisher, so an unsigned build can't claim one.
+`scripts/release/builder-config.cjs <mac|windows|linux> [arm64|x64]` writes `release-<platform>.json` for electron-builder from `electron-builder.yml` and the same variables. It points `publish` at the releases repository. With `RELEASE_SIGNING=1` it requires every signing input and enables `forceCodeSigning`: on macOS, `mac.identity` is the team ID (it picks the `Developer ID Application: … (TEAM)` certificate from `CSC_LINK`), along with `notarize` and `dmg.sign`. On Windows it sets `azureSignOptions` with `publisherName = CREATORCLIPS_WIN_PUBLISHER`. Unsigned configs refuse a team ID or publisher, so an unsigned build can't claim one.
 
 `electron-builder.yml` itself stays unsigned (`mac.identity: null`, no Windows publisher). That keeps local `npm run dist:*` builds off the update channel.
 
@@ -51,7 +51,7 @@ With no team ID or publisher, a build never updates itself (Settings → About s
 **On a pushed tag `vX.Y.Z`** (an official release):
 
 1. **Tests** (Ubuntu): checks the tag matches `package.json`, then runs `typecheck`, `lint`, `test:main` and `test:release`. `test:release` includes the changelog check: the version needs a dated `CHANGELOG.md` section.
-2. **Mac (arm64)** and **Mac (x64)**, each on its native runner: `brew install pkg-config libass` (plus `nasm` on Intel), then `scripts/prepare-resources.sh <arch>`, which builds LGPL FFmpeg, bundles Python and runs the engine smoke tests. Next `npm run build`, `builder-config.cjs mac` and `electron-builder --mac --<arch>` sign and notarize the app. The DMG is notarized and stapled with `xcrun notarytool`/`stapler`, and `refresh-metadata.cjs` rewrites `latest-mac.yml` for the final bytes (updates use the ZIP). Last come `verify-packaged-mac.sh`, the `codesign`, `spctl` and `stapler` checks, and the TeamIdentifier check.
+2. **Mac (arm64)** and **Mac (x64)**, each on its native runner: `brew install pkg-config libass` (plus `nasm` on Intel), then `scripts/prepare-resources.sh <arch>`, which builds LGPL FFmpeg, bundles Python and runs the engine smoke tests. Next `npm run build`, `builder-config.cjs mac <arch>` and `electron-builder --mac --<arch>` sign and notarize the app. The DMG is notarized and stapled with `xcrun notarytool`/`stapler`, and `refresh-metadata.cjs` rewrites `latest-mac.yml` for the final bytes (updates use the ZIP). Last come `verify-packaged-mac.sh`, the `codesign`, `spctl` and `stapler` checks, and the TeamIdentifier check.
 3. **Windows (x64)**: `stage-runtime.py`, then build, then `verify-runtime.py` on the unpacked resources. Signed builds also run `verify-windows.ps1`, which installs the real installer and checks the publisher and signatures.
 4. **Draft release**: downloads the build artifacts and runs `collect-artifacts.cjs … desktop`. That script checks every file against the updater SHA-512s and versions, merges the two Mac feeds, and writes the manifest and checksums. Release notes come from `release-notes.cjs` (download links plus the CHANGELOG section, and a warning if Windows is unsigned). `gh release create vX.Y.Z --draft --latest` then uploads to the releases repository with `GH_RELEASES_TOKEN`. It fails if that release already exists. It never overwrites one.
 

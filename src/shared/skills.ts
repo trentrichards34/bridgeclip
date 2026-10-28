@@ -34,7 +34,7 @@ export const SKILLS: Record<SkillId, SkillInfo> = {
   custom_graphics: { id: 'custom_graphics', label: 'Custom graphics', detail: 'Where you teach, your AI designs 15-20 s scenes built from what you say (app windows, dashboards, stamps), and a graphic for a few key moments; it looks at each over your video and fixes it before it’s used.', beta: true },
   explainer: { id: 'explainer', label: 'Explainer style', detail: 'You, cut out of your video, at the bottom of a paper page; above you your AI draws one continuous illustration that changes on every line you say.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
-  broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.' },
+  broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.', beta: true },
   sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'Soft whooshes, pops and clicks as your graphics and scenes come in, under your voice.' },
   music: { id: 'music', label: 'Music', detail: 'A background track, kept quiet under your voice.', beta: true },
   voice_cleanup: { id: 'voice_cleanup', label: 'Voice cleanup', detail: 'Reduces room echo and background noise in your voice.', beta: true }

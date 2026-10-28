@@ -88,7 +88,7 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Report an Issue…',
           click: (): void => {
-            // Copies the support report (no keys), then opens the member's support link if one is set.
+            // Copies the support report (no keys), then opens the member's support link, or the public issues page.
             void reportIssue(null, true).then(({ opened }) => {
               if (opened || mainWindow.isDestroyed()) return
               return dialog.showMessageBox(mainWindow, { type: 'info', message: 'Support report copied', detail: 'Paste it in your support chat. You can add a support link or email in Settings → About.' })

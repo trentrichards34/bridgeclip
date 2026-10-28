@@ -4,7 +4,7 @@ import { arch, homedir, release } from 'os'
 import { getLogFilePath, logger } from './logger'
 import { loadSettings, publicSettings } from './settings-store'
 import { listJobs } from './job-manager'
-import { supportTarget } from '../shared/member-prefs'
+import { effectiveSupportTarget } from '../shared/member-prefs'
 import { readMemberPrefs } from './member-prefs'
 
 /**
@@ -79,7 +79,7 @@ export function buildSupportReport(input: ReportInput, options: RedactOptions = 
   else {
     const r = input.toolCheck.result
     const rows: [string, unknown][] = [['Python', r.python], ['Clipping dependencies', r.pythonDeps], ['FFmpeg', r.ffmpeg], ['FFmpeg captions', r.ffmpegCaptions],
-      ['FFprobe', r.ffprobe], ['yt-dlp', r.ytdlp], ['Clipping engine', r.engine], ['Bridge runner', r.bridgeRunner]]
+      ['FFprobe', r.ffprobe], ['yt-dlp', r.ytdlp], ['Clipping engine', r.engine], ['Video engine', r.bridgeRunner]]
     lines.push(`  Checked: ${input.toolCheck.at}`)
     for (const [name, ok] of rows) lines.push(`  ${name}: ${ok === true ? 'found' : ok === false ? 'missing' : 'not checked'}`)
     if (r.pythonDeps === false && r.pythonError) lines.push(`  Dependencies problem: ${redact(String(r.pythonError).slice(0, 300), options)}`)
@@ -117,7 +117,7 @@ export function tailLines(path: string, count = 80): string[] {
   } catch { return [] } finally { if (fd !== undefined) closeSync(fd) }
 }
 
-/** Other long jobs that can fail (Remix, Avatar Studio), reported by the IPC layer. */
+/** Other long jobs that can fail (Remix and the other tools), reported by the IPC layer. */
 export type FailureSource = () => FailureSummary | null
 
 export function collectSupportReport(jobId: unknown, extraFailures: FailureSource[] = []): string {
@@ -127,7 +127,7 @@ export function collectSupportReport(jobId: unknown, extraFailures: FailureSourc
   const failed = (typeof jobId === 'string' ? jobs.find((job) => job.id === jobId && job.status === 'failed') : undefined) ??
     jobs.filter((job) => job.status === 'failed').sort((a, b) => (b.finishedAt ?? '').localeCompare(a.finishedAt ?? ''))[0]
   const jobFailure: FailureSummary | null = failed ? {
-    what: `Create (${failed.request.workflow === 'review' ? 'Review & edit' : 'Automatic'})`, message: failed.error, code: failed.failureCode, stage: failed.failureStage,
+    what: `Clip (${failed.request.workflow === 'review' ? 'Review & edit' : 'Automatic'})`, message: failed.error, code: failed.failureCode, stage: failed.failureStage,
     httpStatus: failed.httpStatus, at: failed.finishedAt
   } : null
   const others = extraFailures.map((source) => { try { return source() } catch { return null } }).filter((item): item is FailureSummary => item !== null)
@@ -158,13 +158,12 @@ export function collectSupportReport(jobId: unknown, extraFailures: FailureSourc
   return buildSupportReport(input, { secrets, home: homedir(), userData })
 }
 
-/** Copy the report; then open the member's support link or email, if one is set. */
+/** Copy the report; then open the member's support link or email, or the public issues page when none is set. */
 export async function reportIssue(jobId: unknown, open: boolean, extraFailures: FailureSource[] = []): Promise<{ copied: true; opened: 'email' | 'link' | null }> {
   clipboard.writeText(collectSupportReport(jobId, extraFailures))
   logger.info('support.report.copied', { open })
   if (!open) return { copied: true, opened: null }
-  const target = supportTarget(readMemberPrefs().supportLink)
-  if (!target) return { copied: true, opened: null }
+  const target = effectiveSupportTarget(readMemberPrefs().supportLink)
   await shell.openExternal(target.url)
   return { copied: true, opened: target.kind }
 }

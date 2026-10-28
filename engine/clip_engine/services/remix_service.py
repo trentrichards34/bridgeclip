@@ -815,7 +815,7 @@ class OpenRouterMedia:
         self.base = (base_url or get_settings().openrouter_base_url).rstrip("/")
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(180.0, connect=30.0), follow_redirects=False,
-            headers={"Authorization": f"Bearer {api_key}", "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+            headers={"Authorization": f"Bearer {api_key}", "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
                      "X-Title": "CreatorClips Remix"},
         )
         self.cost_usd = 0.0
@@ -2333,7 +2333,7 @@ class Remixer:
         return httpx.AsyncClient(
             base_url=self.settings.openrouter_base_url, timeout=httpx.Timeout(300.0, connect=30.0),
             headers={"Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                     "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip", "X-Title": title},
+                     "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases", "X-Title": title},
         )
 
     # -- source -----------------------------------------------------------

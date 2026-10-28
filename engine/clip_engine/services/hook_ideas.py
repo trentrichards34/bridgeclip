@@ -190,7 +190,7 @@ async def suggest_hooks(settings, title, text, client=None, voice="clipper"):
     if own:
         client = httpx.AsyncClient(base_url=settings.openrouter_base_url, timeout=httpx.Timeout(180.0, connect=30.0), headers={
             "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip", "X-Title": "CreatorClips Hook Ideas"})
+            "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases", "X-Title": "CreatorClips Hook Ideas"})
     cost, incomplete, model = 0.0, False, settings.planner_model
     try:
         for attempt in range(2):

@@ -16,7 +16,8 @@ export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
   create: 'Clip',
   edit: 'Edit my recording',
   remix: 'Remix',
-  avatar: 'Avatar Studio',
+  // Voice previews and AI media (pictures and video) made outside a tool's own run, plus avatar videos.
+  avatar: 'Voices & AI media',
   broll: 'B-roll library',
   posting: 'Post captions',
   chat: 'Chat'

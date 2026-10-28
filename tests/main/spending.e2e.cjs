@@ -16,7 +16,7 @@ test('Settings → Spending: totals, balance, monthly limit, the check before a 
   // A ledger from earlier sessions (backfill already done).
   fs.mkdirSync(path.join(userData, 'spending'), { recursive: true })
   const ledger = [
-    { at: iso(thisMonth(1)), kind: 'create', provider: 'openrouter', usd: 0.5, label: 'Create run', runId: '11111111-1111-4111-8111-111111111111' },
+    { at: iso(thisMonth(1)), kind: 'create', provider: 'openrouter', usd: 0.5, label: 'Clip run', runId: '11111111-1111-4111-8111-111111111111' },
     { at: iso(thisMonth(2)), kind: 'remix', provider: 'openrouter', usd: 1.25, label: 'Remix videos', runId: 'remix-abc' },
     { at: iso(thisMonth(2)), kind: 'avatar', provider: 'openrouter', usd: 0.16, label: 'Avatar pictures', estimated: true },
     { at: iso(lastMonth(10)), kind: 'chat', provider: 'openrouter', usd: 0.04, label: 'Chat message' },
@@ -72,7 +72,7 @@ test('Settings → Spending: totals, balance, monthly limit, the check before a 
   await page.getByText('These are the app’s estimates from what each provider reported', { exact: false }).waitFor()
 
   const byKind = page.getByRole('region', { name: 'Spending by kind' })
-  await byKind.getByRole('row', { name: /Avatar Studio \$0\.16 \$2\.16/ }).waitFor()
+  await byKind.getByRole('row', { name: /Voices & AI media \$0\.16 \$2\.16/ }).waitFor()
   await byKind.getByRole('row', { name: /Remix \$1\.25 \$1\.25/ }).waitFor()
 
   const recent = page.getByRole('region', { name: 'Recent spending' })

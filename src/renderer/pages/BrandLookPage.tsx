@@ -640,7 +640,7 @@ function CreateDefaults(): React.JSX.Element {
         <p className="text-xs font-medium text-ink">Style</p>
         <Segmented label="Style" size="sm" value={register ?? 'auto'} onChange={(value) => update({ register: value === 'auto' ? null : value })}
           options={[{ value: 'auto', label: 'Auto' }, ...REGISTERS.map((id) => ({ value: id, label: REGISTER_INFO[id].label }))]} />
-        <p className="text-2xs text-ink-subtle">{register ? REGISTER_INFO[register].detail : 'Picked from what you say: a lesson gets more graphics and sound, a personal story fewer.'} Sets how many graphics and how much sound, on Create and Edit my recording.</p>
+        <p className="text-2xs text-ink-subtle">{register ? REGISTER_INFO[register].detail : 'Picked from what you say: a lesson gets more graphics and sound, a personal story fewer.'} Sets how many graphics and how much sound, on Clip and Edit my recording.</p>
       </div>
       <p className="text-2xs text-ink-subtle">Extras use your accent color when the look has one. Zoom is in Clip’s Skills.</p>
     </Section>

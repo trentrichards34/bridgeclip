@@ -2414,7 +2414,7 @@ class LayoutAnalyzer:
                 timeout=httpx.Timeout(120.0, connect=20.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                    "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
                     "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )

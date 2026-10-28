@@ -176,8 +176,8 @@ test('recording: append-only JSON lines, nothing secret, runs recorded once, ear
   await main.flushSpending()
   const lines = fs.readFileSync(path.join(userData, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.deepEqual(lines.map((line) => [line.kind, line.usd, line.label, line.backfilled === true]), [
-    ['create', 0.5, 'Create run', false],
-    ['create', 0.31, 'Create run (earlier run)', true],
+    ['create', 0.5, 'Clip run', false],
+    ['create', 0.31, 'Clip run (earlier run)', true],
     ['remix', 1.2, 'Remix videos (earlier run)', true]
   ])
   assert.ok(!fs.readFileSync(path.join(userData, 'spending', 'ledger.jsonl'), 'utf8').includes('sk-or'))

@@ -147,7 +147,7 @@ async function backfillOnce(): Promise<void> {
       if (run.jobId.startsWith('avatar-') || run.jobId.startsWith('listicle-') || recordedRunIds.has(run.jobId)) continue
       const kind: SpendKind = run.jobId.startsWith('remix-') ? 'remix' : run.jobId.startsWith('edit-') ? 'edit' : 'create'
       await recordSpend({
-        kind, provider: 'openrouter', usd: run.totalCostUsd, label: kind === 'remix' ? 'Remix videos (earlier run)' : kind === 'edit' ? 'Edit my recording (earlier run)' : 'Create run (earlier run)',
+        kind, provider: 'openrouter', usd: run.totalCostUsd, label: kind === 'remix' ? 'Remix videos (earlier run)' : kind === 'edit' ? 'Edit my recording (earlier run)' : 'Clip run (earlier run)',
         runId: run.jobId, backfilled: true, at: run.finishedAt ?? run.date
       }, true)
     }
@@ -359,7 +359,7 @@ export function trackAvatarStatus(status: AvatarRenderStatus): void {
 }
 
 // ---------------------------------------------------------------------------
-// Engine runs: Create jobs and Remix (their costs come back with the result)
+// Engine runs: Clip jobs and Remix (their costs come back with the result)
 // ---------------------------------------------------------------------------
 
 export function trackJobSnapshot(snapshot: JobSnapshot): void {
@@ -368,7 +368,7 @@ export function trackJobSnapshot(snapshot: JobSnapshot): void {
   const costs = snapshot.output.metrics?.api_costs as { total_estimated_cost_usd?: unknown; cost_incomplete?: unknown } | undefined
   const usd = finite(costs?.total_estimated_cost_usd)
   if (usd === null || usd <= 0) return
-  void recordSpend({ kind: 'create', provider: 'openrouter', usd, label: costs?.cost_incomplete === true ? 'Create run (cost partly reported)' : 'Create run', runId: snapshot.id }, true)
+  void recordSpend({ kind: 'create', provider: 'openrouter', usd, label: costs?.cost_incomplete === true ? 'Clip run (cost partly reported)' : 'Clip run', runId: snapshot.id }, true)
 }
 
 const remixRecorded = new Map<string, number>()

@@ -2,21 +2,20 @@
 
 [Overview](../README.md) · [Editor](editor.md) · [AI and privacy](ai-and-privacy.md)
 
-Install CreatorClips, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/trentrichards34/bridgeclip/releases) for the features in your installed version.
+Install CreatorClips, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/trentrichards34/creatorclips-releases/releases) for the features in your installed version.
 
 ## Install and update
 
-Choose your platform on [bridgeclip.ai](https://www.bridgeclip.ai) or [GitHub Releases](https://github.com/trentrichards34/bridgeclip/releases). Packages include Python, FFmpeg and yt-dlp.
+Download CreatorClips from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases). It's Mac only for now. Packages include Python, FFmpeg and yt-dlp.
 
-- **macOS (Apple silicon or Intel):** open the matching DMG and drag CreatorClips to Applications. Official builds are Developer ID signed and notarized by Apple.
-- **Windows x64:** run the signed EXE installer.
-- **Linux x64:** install the DEB with your package manager, or make the AppImage executable before opening it. An unlocked desktop secret service is required to save API keys.
+- **macOS:** open the DMG for your Mac and drag CreatorClips to Applications. Apple silicon needs macOS 14 Sonoma or newer; Intel needs macOS 15 Sequoia or newer. Official builds are signed with our Apple Developer certificate and notarized by Apple.
+- **Linux x64 (build from source only):** install the DEB with your package manager, or make the AppImage executable before opening it. An unlocked desktop secret service is required to save API keys.
 
 See [release verification](RELEASING.md#verify-a-download) for signatures and checksums.
 
 ### Automatic updates
 
-CreatorClips keeps itself up to date. It checks [Releases](https://github.com/trentrichards34/creatorclips-releases/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. Only builds signed by Wealthery update themselves: macOS installs an update only when it carries the same Developer ID, Windows checks the installer's publisher, and every download is checked against the SHA-512 published with the release.
+CreatorClips keeps itself up to date. It checks [Releases](https://github.com/trentrichards34/creatorclips-releases/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. Only official builds, signed and notarized by Apple, update themselves: macOS installs an update only when it carries the same Developer ID signature, Windows checks the installer's publisher, and every download is checked against the SHA-512 published with the release.
 
 Copies run from source, local package builds, unsigned Windows builds and apps opened straight from the disk image don't update themselves; **Settings → About** says why. To turn updates off, start CreatorClips with `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
 

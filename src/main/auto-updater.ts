@@ -49,7 +49,7 @@ function macBundlePath(): string {
   return posix.resolve(app.getPath('exe'), '..', '..', '..')
 }
 
-/** Official builds carry Wealthery's Developer ID; a local `npm run dist:mac` build doesn't. */
+/** Official builds carry our Apple Developer ID signature; a local `npm run dist:mac` build doesn't. */
 function signedByReleaseTeam(): Promise<boolean> {
   if (!/^[A-Z0-9]{10}$/.test(MAC_TEAM_ID)) return Promise.resolve(false)
   return new Promise((done) => {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Bell, ClipboardCopy, LifeBuoy } from 'lucide-react'
-import { MAX_SUPPORT_LINK, supportTarget } from '../../shared/member-prefs'
+import { MAX_SUPPORT_LINK, effectiveSupportTarget, supportTarget } from '../../shared/member-prefs'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { getApi } from '../lib/ipc'
 import { errorMessage } from '../lib/utils'
@@ -18,10 +18,11 @@ export function reportNotice(opened: 'email' | 'link' | null): string {
 
 /**
  * "Report an issue" copies the support report, then opens the member's
- * support link or email when one is set. "Copy support report" only copies.
+ * support link or email when one is set, or else the public CreatorClips
+ * issues page. "Copy support report" only copies.
  */
 export function ReportButtons({ jobId = null, size = 'md' }: { jobId?: string | null; size?: 'sm' | 'md' }): React.JSX.Element {
-  const hasLink = useMemberPrefsStore((state) => Boolean(supportTarget(state.supportLink)))
+  const ownLink = useMemberPrefsStore((state) => effectiveSupportTarget(state.supportLink).custom)
   const [working, setWorking] = useState<'report' | 'copy' | null>(null)
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   useEffect(() => {
@@ -41,7 +42,7 @@ export function ReportButtons({ jobId = null, size = 'md' }: { jobId?: string | 
   return (
     <>
       <Button size={size} variant="ghost" icon={<LifeBuoy className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />} loading={working === 'report'} disabled={working !== null}
-        tooltip={hasLink ? 'Copies the support report, then opens your support link' : 'Copies the support report for your support chat'} onClick={() => void run(true)}>
+        tooltip={ownLink ? 'Copies the support report, then opens your support link' : 'Copies the support report, then opens the CreatorClips issues page'} onClick={() => void run(true)}>
         Report an issue
       </Button>
       <Button size={size} variant="ghost" icon={<ClipboardCopy className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />} loading={working === 'copy'} disabled={working !== null}
@@ -75,11 +76,11 @@ export function SupportSettings(): React.JSX.Element {
     <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
       <SettingRow
         title={<span className="flex items-center gap-1.5"><Bell className="h-3.5 w-3.5 text-ink-muted" />Notify me when a job finishes</span>}
-        description="A desktop notification when clips, remixes or an avatar video are ready (or fail) while you’re in another app."
+        description="A desktop notification when clips, remixes or videos are ready (or fail) while you’re in another app."
         control={<Switch label="Notify me when a job finishes" checked={notifyOnFinish} disabled={!loaded}
           onChange={(value) => void saveApp({ notifyOnFinish: value }).catch((err) => setError(errorMessage(err)))} />} />
       <Field label="Support link or email (optional)"
-        hint={error ? undefined : saved ? 'Saved.' : target ? `Report an issue copies the support report, then opens ${target.kind === 'email' ? 'an email to this address' : 'this link'}.` : 'Where Report an issue sends you, like your community’s support page or a support email. Empty: it only copies the report.'}>
+        hint={error ? undefined : saved ? 'Saved.' : target ? `Report an issue copies the support report, then opens ${target.kind === 'email' ? 'an email to this address' : 'this link'}.` : 'Where Report an issue sends you, like your community’s support page or a support email. Empty: it opens the CreatorClips issues page on GitHub.'}>
         <TextInput aria-label="Support link or email" value={draft} maxLength={MAX_SUPPORT_LINK} placeholder="https://… or support@…" disabled={!loaded}
           onChange={(e) => { setDraft(e.target.value); setError(null) }} onBlur={() => void commit()}
           onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />

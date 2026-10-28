@@ -28,6 +28,17 @@ test('profile: stored values are read leniently, updates strictly, and a new pro
     assert.ok(shared.GUIDES[goal.id].steps.length >= 3, goal.id)
     assert.ok(!/\d+%|\$\d/.test(JSON.stringify(shared.GUIDES[goal.id])), `${goal.id}: the guide states no made-up numbers`)
   }
+  // B-roll video and AI explainers have guides too (they aren't profile goals), each opening its own page.
+  for (const [id, guide] of Object.entries(shared.TOOL_GUIDES)) {
+    assert.equal(guide.id, id)
+    assert.ok(guide.steps.length >= 3, id)
+    assert.ok(!/\d+%|\$\d/.test(JSON.stringify(guide)), `${id}: the guide states no made-up numbers`)
+    assert.ok(shared.TOOL_GUIDE_PAGES[id], id)
+  }
+  assert.match(shared.TOOL_GUIDES['broll-video'].title, /\(Beta\)/)
+  assert.match(shared.TOOL_GUIDES['ai-explainers'].steps.join(' '), /Save the skill to my computer.*Claude Code.*set up the AI video skill/)
+  // Remix guides don't point at the Who's in it choice, which is hidden while Avatar Studio is off.
+  assert.doesNotMatch(JSON.stringify([shared.GUIDES['camera-reactions'], shared.GUIDES.article]), /at the top/)
   // The AI reactions guide names all three AI presenters, and what HeyGen's needs.
   const ai = JSON.stringify(shared.GUIDES['ai-reactions'])
   assert.match(ai, /Avatar photo/)

@@ -295,7 +295,7 @@ class FrameworkGrader:
                 timeout=httpx.Timeout(180.0, connect=30.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                    "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
                     "X-Title": "CreatorClips Grader",
                 },
             )

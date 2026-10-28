@@ -31,12 +31,18 @@ for required in \
   engine-bin/ffmpeg engine-bin/ffprobe engine-bin/yt-dlp \
   engine-bin/FFMPEG-LICENSE engine-bin/FFMPEG-SOURCE.tar.xz \
   engine-bin/BUNDLED_LIBRARIES.txt \
+  "ai-video-skill/START HERE.md" ai-video-skill/skill/SKILL.md ai-video-skill/skill/LICENSE.txt \
   LICENSE THIRD_PARTY_NOTICES.md Geist-OFL.txt SpaceGrotesk-OFL.txt JetBrainsMono-OFL.txt RENDERER-THIRD-PARTY-LICENSES.txt; do
   [[ -s "$resources/$required" ]] || {
     echo "Missing packaged resource: $required" >&2
     exit 1
   }
 done
+# The AI explainers skill must keep its dotfolder (Claude Code reads .claude/skills).
+[[ -s "$resources/ai-video-skill/.claude/settings.json" && -d "$resources/ai-video-skill/.claude/skills" ]] || {
+  echo "Missing the AI video skill's .claude folder" >&2
+  exit 1
+}
 [[ -d "$resources/engine-bin/THIRD_PARTY_LICENSES" ]] || {
   echo "Missing packaged FFmpeg library notices" >&2
   exit 1

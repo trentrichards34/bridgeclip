@@ -110,9 +110,12 @@ export function parseProfileUpdate(value: unknown, current: CreatorProfile): Cre
   return next
 }
 
+/** Guides for tools that aren't profile goals (they have no setup step): their own page opens them. */
+export type ToolGuideId = 'broll-video' | 'ai-explainers'
+
 /** A short written how-to for one kind of video. */
 export interface Guide {
-  id: GoalId
+  id: GoalId | ToolGuideId
   title: string
   /** One line: what this makes. */
   summary: string
@@ -155,7 +158,8 @@ export const GUIDES: Record<GoalId, Guide> = {
     ],
     tips: [
       'Fluff a line? Say it again, or say “scratch that” and start the line over: the edit keeps your last complete take.',
-      'Not sure what to film? Open What should I film? for five ideas with a hook and talking points, then Film this.'
+      'Not sure what to film? Open What should I film? for five ideas with a hook and talking points, then Film this.',
+      'In the clip editor, Hook ideas writes hook options from what you said. Tick Trial reel on several to make a copy of the clip for each hook, for Instagram trial reels.'
     ]
   },
   'ai-reactions': {
@@ -181,7 +185,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     summary: 'You react to someone else’s video on camera: record here or upload a phone video.',
     needs: ['Your OpenRouter key', 'Camera and microphone access (or a phone video to upload)'],
     steps: [
-      'Easiest: open Remix, keep You on camera at the top, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
+      'Easiest: open Remix, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
       'Trim it to the part you react to, then record: their video plays above your camera and Space pauses it while you talk. Or upload a phone recording where you paused it yourself.',
       'Check the pauses, let the AI write the hook text and caption from what you said, then make the video.',
       'From a long video like a podcast: choose Moment + my take, paste the link and add up to 3 time ranges (type them, like 37:00 to 42:00, or paste a screenshot of the player). The AI picks the best moment in each, you record your take on each one, and each becomes its own video: the moment, then you.',
@@ -203,7 +207,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     needs: ['Your OpenRouter key', 'Camera and microphone access (or a phone video to upload)'],
     steps: [
       'Take a screenshot of the article, post or tweet you want to talk about.',
-      'Open Remix, keep You on camera at the top, choose Article or post, then Choose a screenshot.',
+      'Open Remix, choose Article or post, then Choose a screenshot.',
       'Record your take on camera in front of it (up to 3 minutes), or upload a phone video.',
       'The AI writes the headline and caption from what you said. Check them, then make the video.'
     ],
@@ -252,5 +256,47 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Open Posts to see everything scheduled and posted, as a list or a calendar. Automations post new videos on a schedule for you.'
     ],
     tips: ['Zernio is a separate service with its own plans and pricing.']
+  }
+}
+
+/** Where each tool guide's Start button goes (renderer page ids). */
+export const TOOL_GUIDE_PAGES: Record<ToolGuideId, 'brollvideo' | 'aivideo'> = { 'broll-video': 'brollvideo', 'ai-explainers': 'aivideo' }
+
+/** Guides for B-roll video and AI explainers, listed after the goal guides. */
+export const TOOL_GUIDES: Record<ToolGuideId, Guide> = {
+  'broll-video': {
+    id: 'broll-video',
+    title: 'B-roll video (Beta)',
+    summary: 'Your voiceover, or a script read by an AI voice, covered start to end with your own b-roll, with captions, hook text and motion graphics.',
+    needs: ['Your OpenRouter key', 'Clips or pictures in your B-roll library (or Fill gaps with AI shots turned on)'],
+    steps: [
+      'Open B-roll library (Beta) and add clips or pictures, or a whole folder. The AI looks at each one once; your files stay where they are.',
+      'Open B-roll video (Beta). Under Your words, choose My voiceover (choose a file or record one), A script (AI voice), or Script + my recording.',
+      'Under Your b-roll, use your whole library or only some clips. Turn on Fill gaps with AI shots for new AI shots where nothing in your library fits.',
+      'Under The look, choose the shape, hook text, captions, motion graphics, crossfades and voice cleanup.',
+      'Check the cost under the button, then choose Make my b-roll video. Swap any shot, open it in the editor, or see it in your Library.'
+    ],
+    tips: [
+      'Everything stays editable in the clip editor.',
+      'Add more b-roll to your library any time: the next video uses it.'
+    ]
+  },
+  'ai-explainers': {
+    id: 'ai-explainers',
+    title: 'AI explainers',
+    summary: 'Animated explainer reels with a cartoon presenter and a voiceover, made by a skill that runs in your own Claude (Claude Code).',
+    needs: ['A paid Claude plan with Claude Code', 'An ElevenLabs account for the voice'],
+    steps: [
+      'Open AI explainers and choose Save the skill to my computer. Pick where to keep it, like Documents: CreatorClips copies the skill into a new “AI Video” folder there.',
+      'Open that folder in Claude Code: in the Claude desktop app, open the Code tab and choose the “AI Video” folder. Or in Terminal, go into the folder and run claude.',
+      'Say “set up the AI video skill”. Claude checks your computer and walks you through anything missing, one step at a time: Node.js, ffmpeg, Python, a private browser for rendering, your ElevenLabs voice key and picking a voice.',
+      'Ask for a reel, like “Make a reel about 3 Notion templates every freelancer needs.” Or say “Use my script:” and paste your script.',
+      'Post it: your video lands in the folder’s videos/<topic>/out/, with a caption ready to paste.'
+    ],
+    tips: [
+      'It runs in your own Claude, so each video is covered by the plan you already pay for.',
+      'Don’t paste your ElevenLabs key into the chat: Claude shows you the file to save it in.',
+      'Each reel ends with “Comment KEYWORD”. Use that keyword in your DM automation so commenters get what you promised.'
+    ]
   }
 }

@@ -1,7 +1,7 @@
 // Single source for product identity, shared by the main process (menu,
 // window title) and the renderer.
 export const APP_NAME = 'CreatorClips'
-export const APP_TAGLINE = 'Open-source AI video clipping'
+export const APP_TAGLINE = 'AI video clipping for creators'
 
 /**
  * Release identity compiled in by electron.vite.config.ts (see

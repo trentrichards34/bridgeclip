@@ -352,7 +352,7 @@ export function preflightCheck(paths: {
   if (!existsSync(paths.bridgePath)) {
     return {
       ok: false,
-      error: `Bridge runner script not found at: ${paths.bridgePath}`,
+      error: `CreatorClips’ video engine script (bridge_runner.py) was not found at: ${paths.bridgePath}`,
       hint: app.isPackaged
         ? 'This is a CreatorClips packaging bug — bridge_runner.py is missing from the app bundle. Please reinstall or report this issue.'
         : 'Expected to find bridge/bridge_runner.py in the repo. Did you delete it?'

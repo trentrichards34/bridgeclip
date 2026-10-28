@@ -59,8 +59,8 @@ test('Create: the switch shows what a detailed control set, with no copy of its 
   const noKey = skills.createSkillRows(CREATE, { pexels: false }).find((row) => row.id === 'broll')
   assert.match(noKey.disabledReason, /Pexels/)
   assert.equal(skills.createSkillRows({ ...CREATE, broll: 'after-hook' }, { pexels: false }).find((row) => row.id === 'broll').disabledReason, null)
-  // Stage layouts, music and voice cleanup carry the Beta chip.
-  assert.deepEqual(plain(skills.createSkillRows(CREATE, { pexels: true }).filter((row) => row.beta).map((row) => row.id)), ['stage_layouts', 'music', 'voice_cleanup'])
+  // Stage layouts, B-roll, music and voice cleanup carry the Beta chip.
+  assert.deepEqual(plain(skills.createSkillRows(CREATE, { pexels: true }).filter((row) => row.beta).map((row) => row.id)), ['stage_layouts', 'broll', 'music', 'voice_cleanup'])
 })
 
 test('Create: Stage layouts sit next to Motion graphics and need it, a vertical clip and no gameplay background', () => {

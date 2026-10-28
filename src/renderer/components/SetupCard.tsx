@@ -47,7 +47,7 @@ export function SetupCard({ onOpenSettings, askForKey = true, className }: { onO
         !toolStatus.ffprobe && 'FFprobe',
         !toolStatus.ytdlp && 'yt-dlp',
         !toolStatus.engine && 'CreatorClips clipping engine',
-        !toolStatus.bridgeRunner && 'Bridge runner'
+        !toolStatus.bridgeRunner && 'CreatorClips video engine'
       ].filter(Boolean).join(', ')
     : ''
 

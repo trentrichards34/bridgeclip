@@ -61,8 +61,8 @@ export function AiVideoPage(): React.JSX.Element {
       <PanelHeader icon={<IconTile tone="accent"><Sparkles /></IconTile>} title="Why it runs in your Claude"
         description="Your own Claude does the work, so each video costs nothing extra." />
       <div className="mt-3 space-y-2 text-sm text-ink-muted">
-        <p>Each video is roughly 30-80 minutes of Claude at work: it writes the script, builds custom visuals scene by scene and reviews its own frames before the final render.</p>
-        <p>Paid per use, that much AI work adds up fast. In your own Claude it's covered by the plan you already pay for. Making a lot of videos? A Claude Max plan gives you more room than Pro.</p>
+        <p>Each video is roughly 30 to 80 minutes of Claude at work: it writes the script, builds custom visuals scene by scene and reviews its own frames before the final render.</p>
+        <p>Paid per use, that much AI work adds up fast. In your own Claude it’s covered by the plan you already pay for. Making a lot of videos? A Claude Max plan gives you more room than Pro.</p>
         <p className="text-ink-subtle">A one-click version inside CreatorClips may come later.</p>
       </div>
     </Panel>
@@ -97,7 +97,7 @@ export function AiVideoPage(): React.JSX.Element {
       <Panel className="space-y-3 text-sm text-ink-muted">
         <CopyLine label="What to say" text={SETUP_PROMPT} />
         <p>Claude checks your computer and walks you through anything missing, one step at a time: Node.js, ffmpeg, Python, a private browser for rendering, your ElevenLabs voice key and picking a voice.</p>
-        <p className="text-ink-subtle">Don't paste your ElevenLabs key into the chat: Claude shows you the file to save it in.</p>
+        <p className="text-ink-subtle">Don’t paste your ElevenLabs key into the chat: Claude shows you the file to save it in.</p>
       </Panel>
     </MakerSection>
 
@@ -109,7 +109,7 @@ export function AiVideoPage(): React.JSX.Element {
 
     <MakerSection number={5} title="Post it">
       <Panel className="space-y-2 text-sm text-ink-muted">
-        <p>Your video lands in the folder's <code className="font-mono text-xs text-ink">videos/&lt;topic&gt;/out/</code>, with a caption ready to paste. Post it from there.</p>
+        <p>Your video lands in the folder’s <code className="font-mono text-xs text-ink">videos/&lt;topic&gt;/out/</code>, with a caption ready to paste. Post it from there.</p>
         <p>Each reel ends with “Comment KEYWORD”. Use that keyword in your DM automation so commenters get what you promised.</p>
       </Panel>
     </MakerSection>
@@ -123,7 +123,7 @@ export function AiVideoPage(): React.JSX.Element {
         <Need icon={<Timer />} title="About 10 minutes, once">Claude installs Node.js, ffmpeg, Python and a private browser for you, step by step.</Need>
       </ul>
       <p className="mt-4 border-t border-white/[0.06] pt-3 text-2xs text-ink-subtle" data-testid="ai-video-license">
-        The skill is for your own videos and your clients'. Please don't resell or share it: that's its license.
+        The skill is for your own videos and your clients’. Please don’t resell or share it: that’s its license.
       </p>
     </MakerAside>
   )

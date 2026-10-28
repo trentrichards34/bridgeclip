@@ -400,14 +400,14 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   <Badge className="font-mono tabular">v{APP_VERSION}</Badge>
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                  Released under the {LICENSE_NAME} license. Built on BridgeClip by{' '}
+                  Built on BridgeClip by{' '}
                   <button
                     onClick={() => getApi().shell.openPath(BRIDGEMIND_URL)}
                     className="text-ink underline decoration-white/25 underline-offset-2 transition-colors hover:decoration-ink"
                   >
                     BridgeMind
                   </button>
-                  .
+                  {' '}({LICENSE_NAME}).
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -649,7 +649,7 @@ function toolRows(status: ToolStatus | null): ToolRow[] {
     { name: 'FFprobe', ok: status?.ffprobe ?? null },
     { name: 'yt-dlp', ok: status?.ytdlp ?? null, detail: 'Downloads YouTube videos and Twitch VODs' },
     { name: 'CreatorClips clipping engine', ok: status?.engine ?? null, detail: status?.enginePath },
-    { name: 'Bridge runner', ok: status?.bridgeRunner ?? null, detail: status?.bridgePath }
+    { name: 'CreatorClips video engine', ok: status?.bridgeRunner ?? null, detail: status?.bridgePath }
   ]
 }
 

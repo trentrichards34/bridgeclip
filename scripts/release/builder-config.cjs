@@ -1,6 +1,6 @@
 'use strict'
 // Writes the electron-builder config for one release build:
-//   node scripts/release/builder-config.cjs <mac|windows|linux>   ->  release-<platform>.json
+//   node scripts/release/builder-config.cjs <mac|windows|linux> [arm64|x64]   ->  release-<platform>.json
 // then: electron-builder --config release-<platform>.json --publish never
 //
 // It starts from electron-builder.yml and adds who publishes and signs this build,
@@ -17,6 +17,11 @@ const fs = require('node:fs')
 const path = require('node:path')
 const yaml = require('js-yaml')
 
+// The oldest macOS each Mac build runs on. The bundled FFmpeg links Homebrew libraries
+// built for the CI runner's macOS (docs/RELEASING.md): macos-14 for Apple silicon and
+// macos-15-intel for Intel. macOS refuses to open the app on anything older.
+const MAC_MINIMUM_SYSTEM_VERSION = { arm64: '14.0', x64: '15.0' }
+
 const REPOSITORY = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/
 const DEFAULT_RELEASES_REPOSITORY = 'trentrichards34/creatorclips-releases'
 
@@ -25,8 +30,11 @@ function required(env, keys) {
   if (missing.length) throw new Error(`Missing ${missing.join(', ')}`)
 }
 
-function releaseConfig(base, platform, env) {
+function releaseConfig(base, platform, env, arch) {
   if (!['mac', 'windows', 'linux'].includes(platform)) throw new Error('Platform must be mac, windows or linux')
+  if (arch !== undefined && (platform !== 'mac' || !Object.hasOwn(MAC_MINIMUM_SYSTEM_VERSION, arch))) {
+    throw new Error('Architecture must be arm64 or x64, for mac only')
+  }
   const config = structuredClone(base)
   const repository = (env.CREATORCLIPS_RELEASES_REPO || DEFAULT_RELEASES_REPOSITORY).trim()
   if (!REPOSITORY.test(repository)) throw new Error('CREATORCLIPS_RELEASES_REPO must look like owner/repo')
@@ -36,6 +44,7 @@ function releaseConfig(base, platform, env) {
   const signing = env.RELEASE_SIGNING === '1'
 
   if (platform === 'mac') {
+    if (arch) config.mac.minimumSystemVersion = MAC_MINIMUM_SYSTEM_VERSION[arch]
     if (signing) {
       required(env, ['CREATORCLIPS_MAC_TEAM_ID', 'CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'])
       const team = env.CREATORCLIPS_MAC_TEAM_ID.trim()
@@ -82,16 +91,17 @@ function releaseConfig(base, platform, env) {
 if (require.main === module) {
   try {
     const platform = process.argv[2]
+    const arch = process.argv[3]
     const root = path.resolve(__dirname, '../..')
     const base = yaml.load(fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8'))
-    const config = releaseConfig(base, platform, process.env)
+    const config = releaseConfig(base, platform, process.env, arch)
     const output = path.join(root, `release-${platform}.json`)
     fs.writeFileSync(output, JSON.stringify(config, null, 2) + '\n')
-    console.log(`Wrote ${path.basename(output)}: ${process.env.RELEASE_SIGNING === '1' ? 'signed' : 'UNSIGNED'} ${platform} build, updates from ${config.publish.owner}/${config.publish.repo}`)
+    console.log(`Wrote ${path.basename(output)}: ${process.env.RELEASE_SIGNING === '1' ? 'signed' : 'UNSIGNED'} ${platform}${arch ? ` ${arch}` : ''} build${config.mac?.minimumSystemVersion && platform === 'mac' ? ` for macOS ${config.mac.minimumSystemVersion}+` : ''}, updates from ${config.publish.owner}/${config.publish.repo}`)
   } catch (error) {
     console.error(error.message)
     process.exitCode = 1
   }
 }
 
-module.exports = { releaseConfig, DEFAULT_RELEASES_REPOSITORY }
+module.exports = { releaseConfig, DEFAULT_RELEASES_REPOSITORY, MAC_MINIMUM_SYSTEM_VERSION }

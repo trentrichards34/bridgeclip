@@ -112,7 +112,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.OFFICIAL == 'true' && 'true' || 'false' }}
         run: |
           npm run build
-          node scripts/release/builder-config.cjs mac
+          node scripts/release/builder-config.cjs mac "$ARCH"
           npx electron-builder --mac "--$ARCH" --config release-mac.json --publish never
       - name: Notarize the disk image
         if: env.OFFICIAL == 'true'

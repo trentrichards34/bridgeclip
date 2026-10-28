@@ -501,7 +501,7 @@ async def plan_with_model(slots: Sequence[Slot], catalog: Sequence[CatalogShot],
     if fallbacks:
         payload["models"] = fallbacks
     client = httpx.AsyncClient(base_url=settings.openrouter_base_url, timeout=httpx.Timeout(120.0, connect=30.0),
-                               headers={"Authorization": f"Bearer {settings.openrouter_api_key}", "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                               headers={"Authorization": f"Bearer {settings.openrouter_api_key}", "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
                                         "X-Title": "CreatorClips B-roll video"})
     try:
         body, _ = await chat_completion(client, payload)

@@ -294,7 +294,7 @@ test('support report: versions, system check, which keys are saved (never the ke
   assert.match(text, /Pexels key saved: no/)
   assert.match(text, /Source research: yes/)
   assert.match(text, /Output folder: ~[\\/]CreatorClips/)
-  assert.match(text, /What: Create \(Review & edit\)/)
+  assert.match(text, /What: Clip \(Review & edit\)/)
   assert.match(text, /Code: DOWNLOAD_FAILED · stage downloading · HTTP 403/)
   assert.match(text, /Error: Download failed: ~\/Downloads\/talk\.mp4 \(\[key removed\]\)/)
   assert.match(text, /Recent log \(last 80 lines\)/)
@@ -306,14 +306,14 @@ test('support report: versions, system check, which keys are saved (never the ke
   // A specific job is reported when asked.
   assert.match(report.collectSupportReport('old'), /Error: Older failure/)
 
-  // Report an issue: copies, then opens nothing without a support link.
-  assert.deepEqual(plain(await report.reportIssue(null, true)), { copied: true, opened: null })
+  // Report an issue: copies, then opens the public issues page without a support link.
+  assert.deepEqual(plain(await report.reportIssue(null, true)), { copied: true, opened: 'link' })
   assert.equal(copied.length, 1)
-  assert.deepEqual(opened, [])
+  assert.deepEqual(opened, ['https://github.com/trentrichards34/creatorclips-releases/issues'])
   cleanup()
 })
 
-test('support report: Report an issue opens only a valid support link, after copying', async () => {
+test('support report: Report an issue opens a valid support link, or else the issues page, after copying', async () => {
   const email = loadReport({ supportLink: 'help@example.com' })
   assert.deepEqual(plain(await email.report.reportIssue(null, true)), { copied: true, opened: 'email' })
   assert.deepEqual(email.opened, ['mailto:help@example.com?subject=CreatorClips%20support'])
@@ -324,8 +324,8 @@ test('support report: Report an issue opens only a valid support link, after cop
   assert.equal(email.opened.length, 1)
   email.cleanup()
   const bad = loadReport({ supportLink: 'javascript:alert(1)' })
-  assert.deepEqual(plain(await bad.report.reportIssue(null, true)), { copied: true, opened: null })
-  assert.deepEqual(bad.opened, [])
+  assert.deepEqual(plain(await bad.report.reportIssue(null, true)), { copied: true, opened: 'link' })
+  assert.deepEqual(bad.opened, ['https://github.com/trentrichards34/creatorclips-releases/issues'], 'an invalid link is never opened')
   bad.cleanup()
 })
 

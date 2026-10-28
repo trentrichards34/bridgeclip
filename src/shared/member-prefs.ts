@@ -7,6 +7,7 @@
  */
 
 import { isAvatarId } from './avatars'
+import { ISSUES_URL } from './brand'
 import { isBrollSource, type BrollSource } from './broll-library'
 import { DEFAULT_PROFILE, readProfile, type CreatorProfile } from './onboarding'
 import { isBackgroundVideoName } from './backgrounds'
@@ -335,6 +336,16 @@ function parsePresets<K extends StyleKind>(kind: K, value: unknown): StylePreset
 }
 
 /** An https link or an email address the member typed; null when it's neither. */
+/**
+ * Where Report an issue goes: the member's own support link or email when they
+ * set one in Settings → About, otherwise the public CreatorClips issues page.
+ */
+export function effectiveSupportTarget(value: unknown): { kind: 'email' | 'link'; url: string; custom: boolean } {
+  const own = supportTarget(value)
+  if (own) return { ...own, custom: true }
+  return { kind: 'link', url: ISSUES_URL, custom: false }
+}
+
 export function supportTarget(value: unknown): { kind: 'email' | 'link'; url: string } | null {
   if (typeof value !== 'string') return null
   const text = value.trim()

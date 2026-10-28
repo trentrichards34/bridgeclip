@@ -18,8 +18,8 @@ function releaseNotes(markdown, version, { repository = 'trentrichards34/creator
   const lines = [
     '## Download',
     '',
-    `- **Mac with Apple silicon (M1 or newer):** ${download(`CreatorClips-${version}-mac-arm64.dmg`)}`,
-    `- **Mac with Intel:** ${download(`CreatorClips-${version}-mac-x64.dmg`)}`,
+    `- **Mac with Apple silicon (M1 or newer), macOS 14 Sonoma or newer:** ${download(`CreatorClips-${version}-mac-arm64.dmg`)}`,
+    `- **Mac with Intel, macOS 15 Sequoia or newer:** ${download(`CreatorClips-${version}-mac-x64.dmg`)}`,
     `- **Windows (64-bit):** ${download(`CreatorClips-${version}-win-x64.exe`)}`,
     '',
     'Already installed? CreatorClips updates itself: it downloads new versions in the background and installs them when you restart it.',

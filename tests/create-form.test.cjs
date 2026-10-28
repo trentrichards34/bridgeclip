@@ -164,7 +164,7 @@ test('Skills on Create (Automatic): one list over the draft’s own fields, with
     const html = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} }))
     assert.match(html, /data-testid="skills-panel"/)
     for (const name of ['Rough cut', 'Captions', 'Motion graphics', 'Stage layouts', 'Zoom', 'B-roll', 'Music', 'Voice cleanup']) assert.match(html, new RegExp(`aria-label="${name}"`))
-    assert.equal((html.match(/>Beta</g) ?? []).length, 3)
+    assert.equal((html.match(/>Beta</g) ?? []).length, 4, 'Stage layouts, B-roll, Music and Voice cleanup')
     // Stage layouts wait for Motion graphics (switch disabled, with why).
     assert.match(html, /Turn on Motion graphics first/)
     // One home per setting: what it's for moved to the Video step, Motion graphics is only a skill, and Zoom

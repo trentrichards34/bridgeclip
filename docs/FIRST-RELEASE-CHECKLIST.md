@@ -2,7 +2,7 @@
 
 This is for the owner (Trent), on a Mac with Apple silicon. It covers what to set up once and what to do for every release, how members download and update, and what to do when something goes wrong. You don't need to be a developer. Every step says where to click.
 
-**How it works:** the CreatorClips code stays in your **private** GitHub repository (`trentrichards34/bridgeclip`). When you release a version, GitHub builds the Mac and Windows apps for you on its own computers. It signs the Mac app with Wealthery's Apple certificate and has Apple check it ("notarization"). Then it uploads the installers to a separate **public** repository (`trentrichards34/creatorclips-releases`) as a *draft*. You check the draft and press **Publish**. Members download from that public page, and their apps update themselves from it.
+**How it works:** the CreatorClips code stays in your **private** GitHub repository (`trentrichards34/bridgeclip`). When you release a version, GitHub builds the Mac and Windows apps for you on its own computers. It signs the Mac app with our Apple Developer certificate and has Apple check it ("notarization"). Then it uploads the installers to a separate **public** repository (`trentrichards34/creatorclips-releases`) as a *draft*. You check the draft and press **Publish**. Members download from that public page, and their apps update themselves from it.
 
 > **Words used here**
 > - **Repository ("repo")**: a project folder on GitHub.
@@ -17,33 +17,35 @@ This is for the owner (Trent), on a Mac with Apple silicon. It covers what to se
 
 Total hands-on time is about 1.5 to 2 hours. Apple's approval can add a few days to two weeks of waiting, so start step 1 first.
 
-### 1. Join the Apple Developer Program as an organization (30 min, then a wait of days to ~2 weeks)
+### 1. Use the Apple Developer account that signs CreatorClips (5 min if it's already enrolled)
 
-This gives Wealthery the certificate that makes macOS trust CreatorClips. It costs $99 a year.
+CreatorClips is signed with an Apple Developer Program account. Its certificate is what makes macOS trust the app, and macOS shows that account's name as the developer. The Account Holder of that account does steps 1 to 3, or does them together with you.
 
-1. Get Wealthery's **D-U-N-S Number**, a free company ID Apple uses to confirm that Wealthery is a real business. Look it up or request one at <https://developer.apple.com/enroll/duns-lookup/>. A new one can take up to about a week.
-2. You need: an Apple Account with two-factor authentication turned on, Wealthery's legal name exactly as registered, a website on Wealthery's domain, and the authority to sign for the company.
-3. Go to <https://developer.apple.com/programs/enroll/> → **Start your enrollment** → sign in → choose **Organization**, fill in the company details, and pay.
+If the account is **already enrolled**, skip to item 5. If it isn't:
+
+1. Go to <https://developer.apple.com/programs/enroll/> → **Start your enrollment** → sign in with an Apple Account that has two-factor authentication turned on.
+2. Choose **Individual** or **Organization** and fill in the details. An organization also needs its **D-U-N-S Number** (look it up at <https://developer.apple.com/enroll/duns-lookup/>; a new one can take about a week), its legal name exactly as registered, and a website on its domain.
+3. Pay the yearly fee shown on Apple's enrollment page.
 4. Wait for Apple's approval email. Apple may phone to confirm.
-5. After approval, open <https://developer.apple.com/account>, scroll to **Membership details**, and write down the **Team ID** (10 letters and numbers, like `AB12CD34EF`). You'll need it in step 6.
+5. Once enrolled, open <https://developer.apple.com/account>, scroll to **Membership details**, and write down the **Team ID** (10 letters and numbers, like `AB12CD34EF`). You'll need it in step 6.
 6. If the account page shows a banner asking you to accept a new agreement, accept it. Notarization fails until you do.
 
 ### 2. Make the "Developer ID Application" certificate (20 min)
 
 Only the person who enrolled (the **Account Holder**) can do this.
 
-1. **Create a request file:** open **Keychain Access** (⌘ Space → *Keychain Access*). In the menu bar choose **Keychain Access → Certificate Assistant → Request a Certificate From a Certificate Authority…**. Enter your email and the common name `Wealthery Developer ID`, leave CA Email empty, choose **Saved to disk**, click **Continue**, and save it to the Desktop.
+1. **Create a request file:** open **Keychain Access** (⌘ Space → *Keychain Access*). In the menu bar choose **Keychain Access → Certificate Assistant → Request a Certificate From a Certificate Authority…**. Enter your email and the common name `CreatorClips Developer ID`, leave CA Email empty, choose **Saved to disk**, click **Continue**, and save it to the Desktop.
 2. Go to <https://developer.apple.com/account/resources/certificates/list> and click the **+** button.
 3. Under *Software*, choose **Developer ID Application** → **Continue**. If asked for a profile type, pick **G2 Sub-CA** → upload the request file from the Desktop → **Continue** → **Download**.
 4. Double-click the downloaded `.cer` file. Keychain Access adds it.
-5. **Export it with its private key:** in Keychain Access, click **login** (left) and then the **My Certificates** tab (top). Find **Developer ID Application: Wealthery … (your Team ID)**; it has a small arrow, because the private key is inside. Right-click the certificate → **Export…** → File Format **Personal Information Exchange (.p12)** → name it `creatorclips-developer-id.p12` → save to the Desktop.
+5. **Export it with its private key:** in Keychain Access, click **login** (left) and then the **My Certificates** tab (top). Find **Developer ID Application: … (your Team ID)** (the account's name is in the middle); it has a small arrow, because the private key is inside. Right-click the certificate → **Export…** → File Format **Personal Information Exchange (.p12)** → name it `creatorclips-developer-id.p12` → save to the Desktop.
 6. Choose a strong password for the file. **Write it down**: this is the `CSC_KEY_PASSWORD` secret. Then enter your Mac login password to allow the export.
 7. Turn the file into text for GitHub. In Terminal, type:
    ```
    base64 -i ~/Desktop/creatorclips-developer-id.p12 | pbcopy
    ```
    This copies a long block of text to your clipboard. It's the `CSC_LINK` secret. Paste it in step 6 right away, or into a note in your password manager.
-8. Keep the `.p12` file and its password in your password manager, then delete them from the Desktop. Anyone with both can sign apps as Wealthery.
+8. Keep the `.p12` file and its password in your password manager, then delete them from the Desktop. Anyone with both can sign apps as that Apple Developer account.
 
 ### 3. Make an app-specific password for notarization (5 min)
 
@@ -163,7 +165,7 @@ Under **Assets** on that page:
 - **Mac with Intel:** `CreatorClips-X.Y.Z-mac-x64.dmg` (needs macOS 15 Sequoia or newer)
 - **Windows:** `CreatorClips-X.Y.Z-win-x64.exe`
 
-The Apple silicon Mac app needs macOS 14 Sonoma or newer. (Not sure which Mac? Apple menu → About This Mac: "Chip: Apple M…" means Apple silicon.)
+The Apple silicon Mac app needs macOS 14 Sonoma or newer, and the Intel one macOS 15 Sequoia or newer; older versions of macOS won't open it. (Not sure which Mac? Apple menu → About This Mac: "Chip: Apple M…" means Apple silicon.)
 
 **Install on a Mac:** open the `.dmg`, drag **CreatorClips** onto **Applications**, then open it from the Applications folder. It must run from Applications to update itself; if it's opened straight from the disk image, Settings → About offers **Move to Applications**.
 
@@ -171,7 +173,7 @@ The Apple silicon Mac app needs macOS 14 Sonoma or newer. (Not sure which Mac? A
 
 **Updates:** automatic for signed Mac and Windows apps, as described in Part 2, step 5. Members can see the current state under **Settings → About → Updates**.
 
-The first Wealthery-signed version has to be installed by hand once. Every version after that arrives automatically.
+The first signed version has to be installed by hand once. Every version after that arrives automatically.
 
 ---
 

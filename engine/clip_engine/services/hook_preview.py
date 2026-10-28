@@ -107,7 +107,7 @@ async def pick_teaser(
         timeout=httpx.Timeout(120.0, connect=30.0),
         headers={
             "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+            "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
             "X-Title": "CreatorClips hook preview",
         },
     )

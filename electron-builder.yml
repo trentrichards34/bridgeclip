@@ -74,9 +74,13 @@ extraMetadata:
 
 mac:
   category: public.app-category.video
+  # The oldest macOS the bundled FFmpeg runs on (Apple silicon, built on macos-14).
+  # Release CI raises it per architecture: scripts/release/builder-config.cjs mac <arch>
+  # sets 15.0 for Intel, which is built on macos-15-intel.
+  minimumSystemVersion: "14.0"
   hardenedRuntime: true
   gatekeeperAssess: false
-  # Local builds are unsigned. Release CI signs with Wealthery's Developer ID
+  # Local builds are unsigned. Release CI signs with our Apple Developer ID certificate
   # through scripts/release/builder-config.cjs (identity = team ID, notarize).
   identity: null
   entitlements: build/entitlements.mac.plist

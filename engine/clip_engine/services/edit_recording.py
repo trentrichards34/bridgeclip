@@ -1065,7 +1065,7 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     warnings: list[str] = []
     client = httpx.AsyncClient(base_url=settings.openrouter_base_url, timeout=httpx.Timeout(240.0, connect=30.0),
                                headers={"Authorization": f"Bearer {settings.openrouter_api_key}",
-                                        "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip", "X-Title": "CreatorClips Edit"})
+                                        "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases", "X-Title": "CreatorClips Edit"})
     plan = None
     try:
         for attempt in range(2):

@@ -44,10 +44,10 @@ test('the page: why it runs in your Claude, what you need, and the five steps', 
   const html = decode(staticRender(React.createElement(AiVideoPage)))
   for (const text of [
     'Animated explainer videos, made by your Claude', '1080×1920',
-    'Why it runs in your Claude', 'roughly 30-80 minutes', 'Claude Max plan', 'may come later',
+    'Why it runs in your Claude', 'roughly 30 to 80 minutes', 'Claude Max plan', 'may come later',
     'What you need', 'A paid Claude plan with Claude Code', 'An ElevenLabs account for the voice', 'about 800 characters', 'About 10 minutes, once',
     '01 · Save the skill to my computer', '02 · Open that folder in Claude Code', '03 · Say: set up the AI video skill', '04 · Ask for a reel', '05 · Post it',
-    'videos/<topic>/out/', 'DM automation', "don't resell or share it"
+    'videos/<topic>/out/', 'DM automation', 'don’t resell or share it'
   ]) {
     assert.ok(html.includes(text), text)
   }

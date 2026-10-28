@@ -7,7 +7,7 @@ const path = require('node:path')
 const yaml = require('js-yaml')
 const ts = require('typescript')
 const vm = require('node:vm')
-const { releaseConfig, DEFAULT_RELEASES_REPOSITORY } = require('./release/builder-config.cjs')
+const { releaseConfig, DEFAULT_RELEASES_REPOSITORY, MAC_MINIMUM_SYSTEM_VERSION } = require('./release/builder-config.cjs')
 const { nextVersion, releaseChangelog, main: bump } = require('./release/bump-version.cjs')
 const { releaseNotes } = require('./release/release-notes.cjs')
 
@@ -80,6 +80,25 @@ test('the releases repository can be changed, and must be owner/repo', () => {
   assert.deepEqual(releaseConfig(base, 'linux', { CREATORCLIPS_RELEASES_REPO: 'acme/app-releases' }).publish, { provider: 'github', owner: 'acme', repo: 'app-releases' })
   assert.throws(() => releaseConfig(base, 'linux', { CREATORCLIPS_RELEASES_REPO: 'https://github.com/acme/x' }), /owner\/repo/)
   assert.throws(() => releaseConfig(base, 'beos', {}), /Platform/)
+})
+
+test('each Mac build refuses to open on a macOS older than its bundled FFmpeg supports', () => {
+  assert.equal(base.mac.minimumSystemVersion, '14.0', 'local builds: the Apple silicon minimum')
+  assert.deepEqual(MAC_MINIMUM_SYSTEM_VERSION, { arm64: '14.0', x64: '15.0' })
+  assert.equal(releaseConfig(base, 'mac', {}, 'arm64').mac.minimumSystemVersion, '14.0')
+  assert.equal(releaseConfig(base, 'mac', MAC_SIGNING, 'x64').mac.minimumSystemVersion, '15.0')
+  assert.equal(releaseConfig(base, 'mac', {}).mac.minimumSystemVersion, '14.0')
+  assert.equal(base.mac.minimumSystemVersion, '14.0', 'the base config is not modified')
+  assert.throws(() => releaseConfig(base, 'mac', {}, 'ia32'), /arm64 or x64/)
+  assert.throws(() => releaseConfig(base, 'windows', {}, 'x64'), /mac only/)
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8')
+  assert.match(workflow, /builder-config\.cjs mac "\$ARCH"/, 'the workflow passes each build\'s architecture')
+  // The runners these minimums come from (docs/RELEASING.md).
+  const runners = Object.fromEntries(yaml.load(workflow).jobs.mac.strategy.matrix.include.map((entry) => [entry.arch, entry.runner]))
+  assert.deepEqual(runners, { arm64: 'macos-14', x64: 'macos-15-intel' })
+  const notes = releaseNotes('## [0.1.19] - 2026-09-27\n\n### Fixed\n\n- Old fix.\n', '0.1.19')
+  assert.match(notes, /Apple silicon[^\n]*macOS 14 Sonoma or newer/)
+  assert.match(notes, /Intel, macOS 15 Sequoia or newer/)
 })
 
 test('version bumps', () => {

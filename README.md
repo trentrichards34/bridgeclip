@@ -32,16 +32,16 @@ Get CreatorClips from [CreatorClips Releases](https://github.com/trentrichards34
 
 | Platform | Architecture | Install |
 | --- | --- | --- |
-| macOS | Apple silicon, Intel | Open the matching DMG and drag CreatorClips to Applications. |
-| Windows | x64 | Run the EXE installer. |
+| macOS 14 Sonoma or newer | Apple silicon | Open the matching DMG and drag CreatorClips to Applications. |
+| macOS 15 Sequoia or newer | Intel | Same. |
 
-Packages include Python, FFmpeg and yt-dlp. macOS builds are signed and notarized by Wealthery. Linux packages can be built from source (`npm run dist:linux-x64`) but are not published. Installed releases support [automatic updates](docs/usage.md#automatic-updates).
+CreatorClips is Mac only for now. Packages include Python, FFmpeg and yt-dlp. macOS builds are signed with our Apple Developer certificate and notarized by Apple. Windows and Linux packages can be built from source (`npm run dist:linux-x64`) but are not published. Installed releases support [automatic updates](docs/usage.md#automatic-updates).
 
 This README describes the current source. Check the [release notes](https://github.com/trentrichards34/creatorclips-releases/releases) for features available in your downloaded version, and the [verification guide](docs/RELEASING.md#verify-a-download) for signatures and checksums. The [changelog](CHANGELOG.md) lists what changed in each version; in the app, open **Settings → About → Changelog**.
 
 ## Quick start
 
-You need an **[OpenRouter API key](https://openrouter.ai/keys) with available credit**. No BridgeMind account is required.
+You need an **[OpenRouter API key](https://openrouter.ai/keys) with available credit**. No CreatorClips account is required.
 
 1. **Connect your key.** Paste it into the first-launch setup card.
 2. **Add a video.** Choose a local file, a public YouTube link, or a public, completed Twitch VOD.
@@ -85,7 +85,7 @@ Use footage you have permission to use. See the [user guide](docs/usage.md) for 
 
 - Connect your **Claude** (Pro or Max, through Claude Code) or **ChatGPT** (through Codex) subscription in **Settings → Assistant**, or use any **OpenRouter** model with your OpenRouter key, then ask in **Chat** in plain words. Pick the model for each message from the model menu.
 - The assistant uses CreatorClips's own tools: it can start clipping jobs, browse and tidy the Library, export Review & edit clips, build and run automations, post or schedule clips and adjust settings.
-- It can find YouTube videos by channel or search ("clip the latest BridgeMind video"), search the web and read web pages.
+- It can find YouTube videos by channel or search ("clip the latest Acme Podcast video"), search the web and read web pages.
 - Anything that publishes, deletes or spends OpenRouter credit on clipping shows an approval card first. The assistant has no shell or file access.
 
 ### Understand each run
@@ -100,7 +100,7 @@ Use footage you have permission to use. See the [user guide](docs/usage.md) for 
 
 ## AI, costs and privacy
 
-**Rendering is local; AI processing uses cloud providers.** Audio and transcripts go to OpenRouter. Visual-only planning and enabled AI framing checks can send sampled frames. Your videos and keys do not pass through a BridgeMind server.
+**Rendering is local; AI processing uses cloud providers.** Audio and transcripts go to OpenRouter. Visual-only planning and enabled AI framing checks can send sampled frames. Your videos and keys do not pass through a CreatorClips server.
 
 - **Bring your own accounts.** AI calls bill your OpenRouter account. Optional social publishing uses your Zernio account and uploads selected clips to its service.
 - **Choose additional analysis.** Jev review for Automatic, source web research and additional visual context are opt-in betas. Review & edit always uses Jev; these features can add provider cost.
@@ -129,7 +129,7 @@ See the [development guide](docs/development.md) for macOS, Linux and Windows se
 
 ## Contributing
 
-Bug reports and focused bug-fix PRs are welcome. Feature and other change PRs need an explicit maintainer greenlight before implementation. Discuss those proposals in [GitHub Issues](https://github.com/trentrichards34/bridgeclip/issues) and wait for approval before starting work.
+Bug reports and focused bug-fix PRs are welcome. Feature and other change PRs need an explicit maintainer greenlight before implementation. Discuss those proposals in [GitHub Issues](https://github.com/trentrichards34/creatorclips-releases/issues) and wait for approval before starting work.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy and follow the [code of conduct](CODE_OF_CONDUCT.md). Report bugs on the [issues page](https://github.com/trentrichards34/creatorclips-releases/issues) and report security concerns through [SECURITY.md](SECURITY.md).
 

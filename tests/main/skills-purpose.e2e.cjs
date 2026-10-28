@@ -119,8 +119,8 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   assert.ok((await panel.boundingBox()).y < (await page.getByTestId('style-board').boundingBox()).y, 'Skills sit above the look')
   const names = await panel.locator('[data-skill]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-skill')))
   assert.deepEqual(names, ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'])
-  // Stage layouts, Music and Voice cleanup are in beta.
-  assert.equal(await panel.getByText('Beta', { exact: true }).count(), 3)
+  // Stage layouts, B-roll, Music and Voice cleanup are in beta.
+  assert.equal(await panel.getByText('Beta', { exact: true }).count(), 4)
   const skill = (name) => panel.getByRole('switch', { name, exact: true })
   // They show the draft's own settings: dead air is cut and captions are on by default.
   assert.equal(await checked(skill('Rough cut')), true)
