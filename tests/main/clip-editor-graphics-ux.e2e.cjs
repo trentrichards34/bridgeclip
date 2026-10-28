@@ -95,8 +95,9 @@ test('graphics: gallery at the playhead with the words said there, edited and mo
   const gallery = page.getByRole('dialog', { name: 'Add a graphic' })
   await gallery.waitFor()
   await gallery.getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  // Every template but the Effect one (the effects follow in their own groups), counted from the shared list.
-  const templateCount = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx').length
+  // Every template but the Effect one (the effects follow in their own groups) and Custom (designed by your AI, not
+  // picked from the gallery), counted from the shared list.
+  const templateCount = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx' && t.id !== 'custom').length
   assert.equal(await gallery.locator('.editor-graphic-tile:not([aria-label^="Add effect"])').count(), templateCount)
   await page.waitForFunction((n) => document.querySelectorAll('.graphic-gallery .mg-root').length === n, templateCount)
   assert.ok(await gallery.getByText('Your words').count() > 3, 'tiles show the words said at the playhead')

@@ -90,7 +90,8 @@ test('a finished avatar video is in the Library with its hook text, ready to pos
 
   // It is a Library run: clip_00.mp4 and job_output.json in its own folder.
   const runs = fs.readdirSync(library).filter((name) => /^avatar-/.test(name))
-  assert.equal(runs.length, 1, 'older videos join when the Library loads')
+  // The older video has already joined (the Library list loads at start-up): it and the new one.
+  assert.equal(runs.length, 2, 'the new video and the older one imported when the Library loaded')
   const jobs = runs.map((name) => JSON.parse(fs.readFileSync(path.join(library, name, 'job_output.json'), 'utf8')))
   const made = jobs.find((job) => job.source_video_title === 'Avatar Studio · Stop buying coffee')
   assert.ok(made, jobs.map((job) => job.source_video_title).join(', '))
