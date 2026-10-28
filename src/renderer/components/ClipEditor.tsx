@@ -1,4 +1,5 @@
 import type { LibraryView } from '../../shared/motion-library'
+import type { EditorDesignInfo } from '../../shared/custom-graphics'
 import type { LogoSummary } from '../../shared/logos'
 import { SavedStageTimings } from './StageBreakdown'
 import { registerNavigationCommit } from '../lib/navigation'
@@ -687,6 +688,18 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   // My motion library inserts (declared before the early returns: hooks keep their order).
   const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
   const [libraryError, setLibraryError] = useState<string | null>(null)
+  // "Design a custom graphic here": its estimate and look (asked each time the gallery opens; free), and the design in progress.
+  const [designInfo, setDesignInfo] = useState<EditorDesignInfo | null>(null)
+  const [designBusy, setDesignBusy] = useState(false)
+  const [designError, setDesignError] = useState<string | null>(null)
+  const galleryOpen = gallery !== null
+  useEffect(() => {
+    if (!galleryOpen || typeof getApi().editor.designInfo !== 'function') return
+    let live = true
+    setDesignError(null)
+    void getApi().editor.designInfo(outputDir).then((info) => { if (live) setDesignInfo(info) }).catch((e: unknown) => { if (live) setDesignError(errorMessage(e)) })
+    return () => { live = false }
+  }, [galleryOpen, outputDir])
   if (session?.mediaMissing) return <div className="p-8 space-y-4">{leading}
     <p role="status" className="text-sm">This run’s video was removed to save space. Your clips are unchanged. Get the video again to keep editing them.</p>
     <div className="flex gap-2">{onNeedSource && <Button variant="primary" onClick={onNeedSource}>Get the video again</Button>}<Button onClick={() => { void onExports().catch((e) => setError(errorMessage(e))) }}>View clips</Button></div>
@@ -740,6 +753,18 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')
       showGraphic(g)
     }).catch((e: unknown) => setLibraryError(errorMessage(e))).finally(() => setLibraryBusy(null))
+  }
+  // A new custom graphic designed by the member's AI at the gallery's spot (paid: the estimate is shown first), added like any graphic.
+  const insertDesign = (note: string): void => {
+    if (gallery === null || editingDisabled || designBusy) return
+    const at = gallery
+    setDesignBusy(true); setDesignError(null)
+    void getApi().editor.designCustom(outputDir, candidate.id, Math.round(at), note).then((result) => {
+      if (!result.graphic) { setDesignError(result.reason ?? 'The design didn’t pass our checks, so nothing was added.'); return }
+      const g = result.graphic
+      setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      showGraphic(g)
+    }).catch((e: unknown) => setDesignError(errorMessage(e))).finally(() => setDesignBusy(false))
   }
   const insertLogo = (logo: LogoSummary): void => {
     if (gallery === null || editingDisabled) return
@@ -1316,7 +1341,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
-      looks pictures onPick={insertGraphic} onLogo={insertLogo} library={{ onPick: insertLibrary, busy: libraryBusy, error: libraryError }} onClose={() => { setGallery(null); setLibraryError(null) }} />}
+      looks pictures onPick={insertGraphic} onLogo={insertLogo} library={{ onPick: insertLibrary, busy: libraryBusy, error: libraryError }}
+      design={{ info: designInfo, busy: designBusy, error: designError, onDesign: insertDesign }} onClose={() => { if (designBusy) return; setGallery(null); setLibraryError(null); setDesignError(null) }} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */

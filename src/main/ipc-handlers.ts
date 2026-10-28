@@ -13,7 +13,7 @@ import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, r
 import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { registerCustomGraphics } from './custom-graphics-ipc'
-import { EDITOR_REMAKE_ESTIMATE_USD, LIBRARY_ADD_ESTIMATE_USD, editorAddLibraryGraphic, editorCustomInfo, editorRemakeCustom } from './editor-custom-graphics'
+import { EDITOR_REMAKE_ESTIMATE_USD, LIBRARY_ADD_ESTIMATE_USD, editorAddLibraryGraphic, editorCustomInfo, editorDesignCustom, editorDesignEstimate, editorDesignInfo, editorRemakeCustom } from './editor-custom-graphics'
 import { libraryView as motionLibraryView, setLibraryStatus } from './motion-library'
 import { existsSync, realpathSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
@@ -851,6 +851,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Custom graphic', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {})
     return result
   })
+  // ...and a new one designed at the playhead, in any editor project: its estimate first (free), then the design (paid, in the ledger).
+  handle('editor:designInfo', (_event, path: unknown) => editorDesignInfo(path))
+  paid('editor:designCustom', 'openrouter', (path) => editorDesignEstimate(path), (path, candidateId, atMs, note) => editorDesignCustom(path, candidateId, atMs, note, {
+    onSpend: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: 'Custom graphic (designed here)', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {}) }
+  }))
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
   handle('edit:chatInfo', async () => {

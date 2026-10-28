@@ -135,6 +135,23 @@ export function heroCount(durationMs: number, format: 'reel' | 'youtube' = 'reel
   return Math.max(seconds < 25 ? 1 : 3, Math.min(12, Math.round(seconds / 20)))
 }
 
+/**
+ * What a new custom graphic designed at a spot in the clip editor ("Design a custom graphic here") shows, from the
+ * member's note first ("make it a rocket", "a before and after") and then the words said there.
+ */
+export function designKindFor(words: string, note = ''): HeroKind {
+  const read = (text: string): HeroKind | null => {
+    const t = text.toLowerCase()
+    if (!t.trim()) return null
+    if (/\b(vs\.?|versus|instead|compared?|comparison|before and after|rather than|wrong|right way|old way|new way|better than|worse than)\b/.test(t)) return 'comparison'
+    if (/\b(steps?|first|second|third|then|next|finally|stages?|process|staircase|ladder|journey|path|how to)\b/.test(t)) return 'process'
+    if (/\b(two|three|four|2|3|4|5|6|7|five|six|seven)\s+(things|ways|reasons|tips|mistakes|rules|parts|pillars|keys)\b|\blist\b|\bchecklist\b/.test(t)) return 'list'
+    if (/[$€£%]|\b\d[\d,.]*\s*(k|m|x|percent|dollars?|million|billion|thousand)?\b/.test(t) || (/\b(hundred|thousand|million|billion|percent|dollars?)\b/.test(t) && RESULT.test(t))) return 'proof'
+    return null
+  }
+  return read(note) ?? read(words) ?? 'claim'
+}
+
 /** The frame a hero is drawn in: a diagram keeps its full Visual scene; a proof, list or process goes on the stage; the opening and short lines stay a card. */
 export function heroFrame(c: Pick<HeroCandidate, 'template' | 'size' | 'atMs' | 'durationMs'>, kind: HeroKind, format: 'reel' | 'youtube' = 'reel'): CustomFrameKind {
   if (format === 'youtube') return c.size === 'stage' || DIAGRAMS.includes(c.template) || kind === 'process' || kind === 'comparison' ? 'visual' : 'card'
@@ -1024,6 +1041,13 @@ export function customGraphicsEstimate(moments: number, price: { input: number; 
   return { expectedUsd: Math.round(expectedUsd * 1000) / 1000, mostUsd: Math.round(mostUsd * 1000) / 1000, revisions }
 }
 
+/** One new custom graphic designed at a spot in the clip editor: one write and grade with its revisions, plus the video's world call when it has none yet. */
+export function customDesignEstimate(price: { input: number; output: number } = DEFAULT_PRICE, hasWorld = false): { expectedUsd: number; mostUsd: number; revisions: number } {
+  const one = customGraphicsEstimate(1, price)
+  const less = hasWorld ? worldCallCost(price) : 0
+  return { expectedUsd: Math.round((one.expectedUsd - less) * 1000) / 1000, mostUsd: Math.round((one.mostUsd - less) * 1000) / 1000, revisions: one.revisions }
+}
+
 /** The scene plan call (once per video: the hero object, the motif and which stretches become scenes), in USD. */
 export function planCallCost(price: { input: number; output: number } = DEFAULT_PRICE): number {
   return CUSTOM_TOKENS.planIn * price.input + CUSTOM_TOKENS.planOut * price.output
@@ -1279,3 +1303,17 @@ export interface EditorCustomInfo {
 }
 
 export interface EditorCustomRemake { graphic: import('./motion-graphics').EditorGraphic | null; costUsd: number; reason: string | null }
+
+/** Designing a new custom graphic at the playhead in the clip editor (free to ask): whether it can, what it costs, and the look it uses. */
+export interface EditorDesignInfo {
+  available: boolean
+  /** Why it can't (no OpenRouter key), or null. */
+  reason: string | null
+  model: string
+  expectedUsd: number
+  mostUsd: number
+  /** The theme this project's custom graphics are designed in (kept for the project's later designs). */
+  theme: CustomTheme
+  /** The video's visual world in one line (empty: proposed with the first design). */
+  world: string
+}
