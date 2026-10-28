@@ -133,7 +133,9 @@ test('Camera + screen: a screen recording lined up by sound, layouts picked per 
   await choices.getByLabel('Screen size').fill('40')
   await shot(app, 'screen-review.png')
   await page.getByRole('button', { name: 'Make my reel' }).click()
-  await page.getByText('Your reel is ready').waitFor({ timeout: 600000 })
+  // A failed render goes back to the review with its error: say so at once instead of waiting out the timeout.
+  await page.getByText('Your reel is ready').or(page.getByText('Something went wrong while making this.')).waitFor({ timeout: 600000 })
+  assert.equal((await page.evaluate(() => window.bridgeclip.edit.status())).error ?? null, null)
   await page.getByTestId('screen-done').waitFor()
 
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))

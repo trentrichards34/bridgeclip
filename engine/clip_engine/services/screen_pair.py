@@ -789,6 +789,19 @@ def face_of(camera: str, pieces: Sequence[Any]) -> Optional[tuple[float, float, 
     return found[len(found) // 2]
 
 
+def reel_sound_placements(config: dict, timed: list, look: Any, total_s: float, warnings: list[str]) -> list:
+    """The reel's sound effects (the hook text's whoosh, the AI's extras), planned as Edit my recording plans them for a
+    reel finished without the editor: the clip editor's bake of this project adds none, so they go into its source."""
+    from clip_engine.services import edit_recording as er
+    from clip_engine.services import sound_design as sd
+    sounds_on, register, music_db = er.sound_config(config)
+    if not sounds_on:
+        return []
+    total_ms = round(total_s * 1000)
+    return sd.plan_sounds(sd.cues_from_events(er.reel_sound_events(config, timed, look, total_s), total_ms),
+                          total_ms, register, music_db, sd.palette_of(config.get("sound_palette"), warnings))
+
+
 async def render_screen_reel(config: dict, progress) -> dict:
     """Mode "render" with a screen recording: the canvas (cut like the reviewed edit), the layouts, the editor project
     and the reel itself."""
@@ -830,7 +843,7 @@ async def render_screen_reel(config: dict, progress) -> dict:
     assembled = os.path.join(work, "assembled.mkv")
     await asyncio.to_thread(er.ffmpeg, ["-f", "concat", "-safe", "0", *er.MEDIA_GUARD, "-i", listing, "-c", "copy", assembled])
     source = os.path.join(root, "editor-source.mp4")
-    await er.mix_reel_audio(assembled, source, config, timed, look, work, warnings, progress)
+    await er.mix_reel_audio(assembled, source, config, reel_sound_placements(config, timed, look, total, warnings), work, warnings, progress)
     os.chmod(source, 0o600)
     duration_ms = int(min(round(total * 1000), math.floor((er.probe_seconds(source) or total) * 1000)))
     # Which layout where.

@@ -270,3 +270,42 @@ def test_runner_checks_the_screen_requests(tmp_path):
         parse_request({**preview, "output_path": "/elsewhere/p.mp4"})
     with pytest.raises(ValueError):
         parse_request({**preview, "offset_ms": 10 ** 9})
+
+
+def test_render_hands_the_sound_mix_its_planned_sounds(tmp_path, monkeypatch):
+    """The reel's sound is mixed with the arguments edit_recording takes now (its sound effects planned first): a stale
+    call there failed every camera + screen reel after the review."""
+    import asyncio
+    import inspect
+
+    from edit_runner import parse_request
+
+    from clip_engine.services import edit_recording as er
+    words = [[w, i * 400, i * 400 + 350, 0] for i, w in enumerate("here is the trick watch this dashboard click here now".split())]
+    raw = {"mode": "render", "output_dir": str(tmp_path), "sources": ["/v/camera.mov"], "words": words, "keep": [True] * len(words),
+           "hook": None, "cta": None, "popups": [], "sounds": [{"at": 4, "sound": "ding"}], "headline": "The trick",
+           "include_captions": True, "caption_preset": "pop", "title": "x", "cost_usd": 0,
+           "screen": {"path": "/v/screen.mov", "offset_ms": 0, "style": "screen_top", "split": 0.4, "fit": "fit", "zoom": False, "auto": True}}
+    config = parse_request(raw)
+    monkeypatch.setattr(sp, "prepare_camera", lambda path, out, seconds, warnings: out)
+    monkeypatch.setattr(sp, "probe", lambda path: {"seconds": 10.0, "width": 1280, "height": 720})
+    monkeypatch.setattr(sp, "normalize_screen", lambda path, out, size, seconds: out)
+    monkeypatch.setattr(sp, "compose_piece", lambda *args: None)
+    monkeypatch.setattr(er, "ffmpeg", lambda args: None)
+    real = er.mix_reel_audio
+    seen = {}
+
+    class Mixed(Exception):
+        pass
+
+    async def mix(*args, **kwargs):
+        seen.update(inspect.signature(real).bind(*args, **kwargs).arguments)
+        raise Mixed
+
+    monkeypatch.setattr(er, "mix_reel_audio", mix)
+    with pytest.raises(Mixed):
+        asyncio.run(sp.render_screen_reel(config, lambda *a, **k: None))
+    sounds = seen["placements"]
+    assert isinstance(sounds, list) and sounds, "the hook text and the AI's ding go in with their sounds"
+    # Sounds off: none planned.
+    assert sp.reel_sound_placements({**config, "sounds": [], "sound_design": {"on": False}}, [], config["look"], 4.0, []) == []
