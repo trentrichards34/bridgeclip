@@ -26,6 +26,7 @@ import logging
 import math
 import os
 import re
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
@@ -370,8 +371,12 @@ def _far_enough(peak: int, taken: list[tuple[int, int]], gap: int) -> bool:
 
 
 def plan_sounds(cues: list[Cue], total_ms: int, register: str = DEFAULT_REGISTER, music_db: Optional[float] = None,
-                palette: Optional[dict] = None, sounds: Optional[dict] = None) -> list[Placement]:
+                palette: Optional[dict] = None, sounds: Optional[dict] = None, seed: Optional[int] = None) -> list[Placement]:
     """Which cues sound, with which take, where and how loud (sorted by time).
+
+    Each video starts each action's rotation at its own take (from `seed`, else from the video's length and cue times:
+    the same video always sounds the same, different videos sound different). The member's own sounds always start
+    at their first take.
 
     The register keeps only its kinds of cue, then cues are taken in priority order (ties: earlier first) while they
     are at least its gap apart and under its count (one per `per_seconds` on average). An extra (the AI's pick) needs a
@@ -400,12 +405,20 @@ def plan_sounds(cues: list[Cue], total_ms: int, register: str = DEFAULT_REGISTER
     taken: list[tuple[int, int]] = []
     chosen: list[tuple[Cue, str, Optional[Sound]]] = []
     choose = lambda action: (palette.get(action) or sounds.get(action) or ())  # noqa: E731
+    if seed is None:
+        seed = zlib.crc32(f"{total_ms}:{','.join(str(c.at_ms) for c in cues)}".encode())
+
+    def first_take(action: str) -> int:
+        takes = choose(action)
+        if not takes or palette.get(action):
+            return 0
+        return zlib.crc32(f"{seed}:{action}".encode()) % len(takes)
     # The riser first: the payoff is the one moment worth building to.
     if rule.riser:
         payoff = next((c for c in sorted(eligible, key=lambda c: (-c.priority, c.at_ms)) if c.payoff), None)
         risers = choose("riser")
         if payoff is not None and risers:
-            riser = risers[0]
+            riser = risers[first_take("riser")]
             peak = payoff.at_ms + FRAME_MS
             if peak - riser.peak_ms >= 0:
                 taken.append((peak - riser.peak_ms, peak))
@@ -423,12 +436,13 @@ def plan_sounds(cues: list[Cue], total_ms: int, register: str = DEFAULT_REGISTER
     chosen = varied_families(sorted(chosen, key=lambda item: (item[0].at_ms, item[1] != "riser")), choose)
     # Takes rotate per action through time, so neighbors never repeat (the member's own come first when they have any).
     used: dict[str, int] = {}
+    start_at = {action: first_take(action) for action in {item[1] for item in chosen}}
     out: list[Placement] = []
     for cue, action, fixed in chosen:
         takes = choose(action)
         if not takes:
             continue
-        sound = fixed or takes[used.get(action, 0) % len(takes)]
+        sound = fixed or takes[(start_at.get(action, 0) + used.get(action, 0)) % len(takes)]
         if fixed is None:
             used[action] = used.get(action, 0) + 1
         peak = cue.at_ms + FRAME_MS

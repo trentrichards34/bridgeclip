@@ -373,7 +373,8 @@ def test_an_editor_bake_mixes_the_clips_sounds_where_its_graphics_land(monkeypat
     for p, start in zip(planned, starts):
         assert p.start_ms - 60 <= start <= p.peak_at_ms + 30, (start, p)
         lo, hi = (p.peak_at_ms - 300) // 10, (p.peak_at_ms + 300) // 10
-        assert abs((lo + int(np.argmax(energy[lo:hi]))) * 10 - p.peak_at_ms) <= 40
+        # The loudest 10 ms lands on the peak (a two-blip select take's second blip can win after the limiter: <= 70 ms).
+        assert abs((lo + int(np.argmax(energy[lo:hi]))) * 10 - p.peak_at_ms) <= 70
     integrated, peak = _ebur128(clip)
     print(f"editor bake: {integrated} LUFS, true peak {peak} dBTP")
     assert abs(integrated - sd.TARGET_LUFS) <= 1.0 and peak <= -1.0
@@ -405,3 +406,12 @@ def test_edit_runner_checks_the_sound_design_options():
                 {"sound_palette": []}):
         with pytest.raises(ValueError):
             edit_runner.parse_request({**base, **bad})
+
+
+def test_each_video_starts_its_takes_somewhere_else_but_the_same_video_sounds_the_same():
+    cues = [sd.Cue(1000 + i * 4200, "whoosh", "scene", 5) for i in range(3)]
+    first = [p.sound.path for p in sd.plan_sounds(cues, 15000, "teaching", -20.0)]
+    again = [p.sound.path for p in sd.plan_sounds(cues, 15000, "teaching", -20.0)]
+    assert first == again
+    starts = {sd.plan_sounds(cues, 15000, "teaching", -20.0, seed=seed)[0].sound.path for seed in range(12)}
+    assert len(starts) >= 4, starts
