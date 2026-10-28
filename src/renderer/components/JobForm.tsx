@@ -12,6 +12,7 @@ import { CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
 import { Panel } from './ui/Panel'
 import { Switch } from './ui/Switch'
+import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { TextArea, TextInput } from './ui/Field'
 import { IconTile } from './ui/IconTile'
@@ -751,7 +752,7 @@ export function FormatStep({ draft, update, customize, onCustomize }: StepProps)
       )}
 
       {draft.workflow !== 'review' && (
-        <Group label="B-roll" aside="From your library, stock or AI">
+        <Group label={<span className="inline-flex items-center gap-1.5">B-roll <Badge tone="warning" className="h-4 px-1.5 text-[10px]">Beta</Badge></span>} aside="From your library, stock or AI">
           <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="B-roll">
             {BROLL_OPTIONS.map((option) => {
               const selected = draft.broll === option.id
@@ -1298,7 +1299,7 @@ function FramingGlyph({ style, selected }: { style: 'auto' | 'fill' | 'fit'; sel
   )
 }
 
-function Group({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }): React.JSX.Element {
+function Group({ label, aside, children }: { label: ReactNode; aside?: ReactNode; children: ReactNode }): React.JSX.Element {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">

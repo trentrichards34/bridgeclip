@@ -58,7 +58,7 @@ export function BrollVideoPage({ onNavigate, onViewLibrary }: { onNavigate: (pag
 
   return (
     <PageColumn width="default">
-      <PageHeader eyebrow="Studio" title="Your words, covered in b-roll"
+      <PageHeader eyebrow="Studio" title={<>Your words, covered in b-roll <Badge tone="warning" className="ml-1 align-middle">Beta</Badge></>}
         description="Your voiceover covered start to end with your own b-roll, with captions, hook text and motion graphics. Add more clips to your B-roll library any time: the next video uses them."
         actions={<Button variant="secondary" icon={<Images className="h-4 w-4" />} onClick={() => onNavigate('broll')}>B-roll library</Button>} />
       <div className="mt-4 space-y-4">

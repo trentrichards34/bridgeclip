@@ -22,7 +22,7 @@ export type Tool = 'create' | 'edit' | 'remix' | 'avatar' | 'library' | 'jobs' |
 /** Sidebar groups: Make, Manage, Publish, then Guides and Settings. */
 export type NavGroupId = 'make' | 'manage' | 'publish' | 'help'
 
-export interface NavItem { id: Page; label: string; icon: LucideIcon; shortcut: string; group: NavGroupId; tool: Tool }
+export interface NavItem { id: Page; label: string; icon: LucideIcon; shortcut: string; group: NavGroupId; tool: Tool; /** Still being finished: a small "Beta" tag after the label. */ beta?: boolean }
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'clip', label: 'Create', icon: Plus, shortcut: '1', group: 'make', tool: 'create' },
@@ -31,12 +31,12 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'remix', label: 'Remix', icon: Shuffle, shortcut: '9', group: 'make', tool: 'remix' },
   { id: 'avatar', label: 'Avatar Studio', icon: UserRound, shortcut: '8', group: 'make', tool: 'avatar' },
   // No shortcut is free: none shown.
-  { id: 'brollvideo', label: 'B-roll video', icon: Clapperboard, shortcut: '', group: 'make', tool: 'broll' },
+  { id: 'brollvideo', label: 'B-roll video', icon: Clapperboard, shortcut: '', group: 'make', tool: 'broll', beta: true },
   { id: 'library', label: 'Library', icon: LayoutGrid, shortcut: '2', group: 'manage', tool: 'library' },
   { id: 'jobs', label: 'Jobs', icon: Activity, shortcut: '3', group: 'manage', tool: 'jobs' },
   { id: 'assistant', label: 'Chat', icon: MessageSquare, shortcut: '7', group: 'manage', tool: 'chat' },
   // ⌘B (Ctrl+B): no number is free.
-  { id: 'broll', label: 'B-roll library', icon: Film, shortcut: 'B', group: 'manage', tool: 'broll' },
+  { id: 'broll', label: 'B-roll library', icon: Film, shortcut: 'B', group: 'manage', tool: 'broll', beta: true },
   // No shortcut is free: none shown.
   { id: 'brand', label: 'Brand look', icon: Star, shortcut: '', group: 'manage', tool: 'brand' },
   { id: 'posts', label: 'Posts', icon: Send, shortcut: '5', group: 'publish', tool: 'publish' },
@@ -223,6 +223,7 @@ function NavButton({ item, expanded, active, onNavigate }: {
       {expanded && (
         <>
           <span className="flex-1 truncate text-left">{item.label}</span>
+          {item.beta && <span aria-hidden className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-warning">Beta</span>}
           {(badge || note) && (
             <span aria-hidden className="shrink-0 whitespace-nowrap font-mono text-[10px] tabular text-tool-library group-hover:hidden">{badge ? badgeText : `${refining} refining`}</span>
           )}

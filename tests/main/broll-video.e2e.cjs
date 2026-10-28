@@ -190,7 +190,9 @@ test('B-roll video: a voiceover and the whole library become a video in the Libr
   assert.deepEqual(candidate.ranges, [[0, plan.total_ms]])
   assert.equal(candidate.hook.text, 'My calm morning plan')
   assert.equal(candidate.captions, true)
-  assert.deepEqual(candidate.graphics.map((g) => [g.template, g.origin]), [['title', 'auto']])
+  // The planner's title card comes out as a text effect (the graphics director upgrades plain titles).
+  assert.deepEqual(candidate.graphics.map((g) => [g.template, g.origin]), [['fx', 'auto']])
+  assert.equal(candidate.graphics[0].fields.effect, 'marker-highlight')
   // What it cost is in the ledger (the word timings and the plan).
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   const spent = ledger.filter((entry) => entry.kind === 'broll' && entry.label === 'B-roll video').reduce((sum, entry) => sum + entry.usd, 0)

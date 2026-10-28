@@ -94,7 +94,7 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
 
   return (
     <PageColumn width="wide">
-      <PageHeader eyebrow="Studio" title="Footage the editor cuts to"
+      <PageHeader eyebrow="Studio" title={<>Footage the editor cuts to <Badge tone="warning" className="ml-1 align-middle">Beta</Badge></>}
         description="Your own clips and pictures. The AI looks at each one once, then Create and Remix use the shots that match what you say. Your files stay where they are."
         actions={<>
           <Button variant="secondary" icon={<Sparkles className="h-4 w-4" />} onClick={generate}>Generate</Button>
