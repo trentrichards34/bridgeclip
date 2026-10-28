@@ -77,28 +77,18 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   }, [original, phone])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  // A first visit opens on You on camera (it needs no avatar); the AI presenter says it needs one, with the way to make it.
-  assert.equal(await page.getByRole('radio', { name: /^You on camera/ }).getAttribute('aria-checked'), 'true')
-  assert.equal(await page.getByTestId('ai-needs-avatar').innerText(), 'Needs an avatar · Make one')
-  await page.getByRole('radio', { name: /^AI presenter/ }).click()
-  // The AI presenters are marked Beta, with one honest line; you on camera isn't. With no avatar yet, Voice only (with a
-  // preset voice) is chosen, not Avatar photo or "Your avatar's voice".
-  const presenters = page.getByRole('radiogroup', { name: 'Presenter' })
-  await presenters.getByRole('radio', { name: /Avatar photo.*Beta.*Early version: a still picture with voice-over\./ }).waitFor()
-  assert.equal(await presenters.getByRole('radio', { name: /^Voice only/ }).getAttribute('aria-checked'), 'true')
-  assert.equal(await page.getByText('Your avatar’s voice', { exact: true }).count(), 0)
-  await presenters.getByRole('radio', { name: /Voice only.*Beta/ }).waitFor()
-  // Two big choices at the top: you on camera (no Beta) or the AI presenter (Beta).
-  assert.doesNotMatch(await page.getByRole('radio', { name: /^You on camera/ }).innerText(), /Beta/i)
-  assert.match(await page.getByRole('radio', { name: /^AI presenter/ }).innerText(), /Beta/i)
-  assert.equal(await presenters.getByRole('radio', { name: /Me, on camera/ }).count(), 0)
-  if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenters.scrollIntoViewIfNeeded(); await shot(app, 'remix-presenters-beta.png') }
-  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  // Avatar Studio is switched off for launch: Remix offers only You on camera (no "Who's in it" choice, no AI presenter).
+  await page.getByRole('radiogroup', { name: 'Remix format' }).waitFor()
+  assert.equal(await page.getByRole('radio', { name: /^AI presenter/ }).count(), 0)
+  assert.equal(await page.getByRole('radiogroup', { name: 'Who is in the video' }).count(), 0)
+  assert.equal(await page.getByTestId('ai-needs-avatar').count(), 0)
+  assert.equal(await page.getByText('Avatar Studio').count(), 0)
   await page.getByRole('radio', { name: /Pause & react/ }).click()
   await page.getByRole('heading', { name: '01 · The video you react to' }).waitFor()
-  // The video comes first, then who's in it and the format, then the look (folded, with a summary); Continue is in the summary card.
+  // The video comes first, then the format, then the look (folded, with a summary); Continue is in the summary card.
   const headings = (await page.getByRole('heading').allTextContents()).map((text) => text.trim())
-  assert.ok(headings.indexOf('01 · The video you react to') < headings.indexOf('02 · Who’s in it') && headings.indexOf('02 · Who’s in it') < headings.indexOf('03 · Format'), headings.join(' | '))
+  const at = (start) => headings.findIndex((text) => text.startsWith(start))
+  assert.ok(at('01 · The video you react to') >= 0 && at('01 · The video you react to') < at('02 · Format') && at('02 · Format') < at('03 · Look & call to action'), headings.join(' | '))
   const look = page.getByRole('button', { name: 'Customize for this video' })
   assert.equal(await look.getAttribute('aria-expanded'), 'false')
   assert.equal(await page.getByTestId('look-summary').innerText(), 'Box at the top · As filmed · Pop captions · White bar · No brand · No call to action')
@@ -231,7 +221,7 @@ test('Pause & react recorded here: their video plays over the camera, Space paus
   await page.reload()
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix opens on You on camera, the only side while Avatar Studio is switched off.)
   await page.getByRole('radio', { name: /Pause & react/ }).click()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByPlaceholder('e.g. @theircreator').fill('@coach')

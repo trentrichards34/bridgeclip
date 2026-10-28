@@ -75,7 +75,7 @@ test('video speed supports keyboard selection, review, submission and reuse in E
   assert.equal(await app.evaluate(() => globalThis.speedTest.submitted.videoSpeed), 1.5)
   await page.getByRole('button', { name: 'View job' }).click()
   await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor()
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByRole('button', { name: 'Clip another video' }).click()
   await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/next.mp4')
   await page.getByRole('button', { name: 'Use link', exact: true }).click()

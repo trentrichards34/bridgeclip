@@ -535,7 +535,7 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
         </div>
         <div className="glass-tile rounded-xl p-3 text-2xs leading-relaxed text-ink-muted">
           <p className="font-medium text-ink">Where this look is used</p>
-          <p className="mt-1">Picking this brand on Create or Remix fills in its hook look, caption style, call to action, keyword and handle. You can change any of them for one video there, or for one clip in the editor.</p>
+          <p className="mt-1">Picking this brand on Clip or Remix fills in its hook look, caption style, call to action, keyword and handle. You can change any of them for one video there, or for one clip in the editor.</p>
         </div>
       </aside>
     </div>
@@ -613,7 +613,7 @@ function CreateDefaults(): React.JSX.Element {
   const update = useDraftStore((state) => state.update)
   const shown = LOOK_EXTRAS.filter((extra) => !CREATE_SKILL_EXTRAS.includes(extra.id))
   return (
-    <Section label="Extras and graphics on Create" aside="Saved with your Create settings, for every look">
+    <Section label="Extras and graphics on Clip" aside="Saved with your Clip settings, for every look">
       <div role="group" aria-label="Extras: pick as many as you like" className="flex flex-wrap gap-1.5">
         {shown.map((extra) => {
           const on = extras.includes(extra.id)
@@ -629,11 +629,11 @@ function CreateDefaults(): React.JSX.Element {
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2">
           <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">Motion graphics</span><span className="block text-2xs text-ink-subtle">Animated cards for numbers, lists and key lines (Automatic).</span></span>
-          <Switch label="Motion graphics on Create" checked={motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} />
+          <Switch label="Motion graphics on Clip" checked={motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} />
         </label>
         <label className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2">
           <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">Stage layouts</span><span className="block text-2xs text-ink-subtle">Big cards on a stage over you, with motion graphics.</span></span>
-          <Switch label="Stage layouts on Create" checked={stageLayouts} disabled={!motionGraphics} onChange={(on) => update({ stageLayouts: on })} />
+          <Switch label="Stage layouts on Clip" checked={stageLayouts} disabled={!motionGraphics} onChange={(on) => update({ stageLayouts: on })} />
         </label>
       </div>
       <div className="space-y-1">
@@ -642,7 +642,7 @@ function CreateDefaults(): React.JSX.Element {
           options={[{ value: 'auto', label: 'Auto' }, ...REGISTERS.map((id) => ({ value: id, label: REGISTER_INFO[id].label }))]} />
         <p className="text-2xs text-ink-subtle">{register ? REGISTER_INFO[register].detail : 'Picked from what you say: a lesson gets more graphics and sound, a personal story fewer.'} Sets how many graphics and how much sound, on Create and Edit my recording.</p>
       </div>
-      <p className="text-2xs text-ink-subtle">Extras use your accent color when the look has one. Zoom is in Create’s Skills.</p>
+      <p className="text-2xs text-ink-subtle">Extras use your accent color when the look has one. Zoom is in Clip’s Skills.</p>
     </Section>
   )
 }

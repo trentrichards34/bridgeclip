@@ -22,6 +22,7 @@ import { Badge } from './ui/Badge'
 import { EmptyState } from './ui/EmptyState'
 import { Skeleton } from './ui/Skeleton'
 import type { Page as AppPage } from './Sidebar'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 /** Same limit as a run's batch posting: each clip is still its own upload and post. */
 const MAX_POST_BATCH = 10
@@ -84,6 +85,8 @@ export function ReadyToPost({ onOpenRun, onNavigate }: {
   useEffect(() => { setShown(PAGE_SIZE) }, [filters])
   const allSelected = page.length > 0 && page.every((clip) => selected.has(keyOf(clip)))
   const update = (patch: Partial<ReadyFilters>): void => setFilters((current) => ({ ...current, ...patch }))
+  // Avatar Studio switched off: the Avatar filter only shows for a member who already has avatar videos.
+  const kinds = useMemo(() => (['create', 'remix', 'avatar'] as const).filter((kind) => kind !== 'avatar' || isAvatarStudioEnabled() || filters.kind === 'avatar' || Boolean(result?.clips.some((clip) => clip.kind === 'avatar'))), [result, filters.kind])
   const filtered = filters.query.trim() !== '' || filters.minGrade !== 'any' || filters.kind !== 'all'
 
   const toggle = (clip: ReadyClip): void => setSelected((previous) => {
@@ -124,7 +127,7 @@ export function ReadyToPost({ onOpenRun, onNavigate }: {
           placeholder="Search titles, hooks and captions" leading={<Search className="h-3.5 w-3.5" />} aria-label="Search clips ready to post" />
         <Select size="sm" aria-label="Lowest grade" value={filters.minGrade} options={gradeOptions} onChange={(value) => update({ minGrade: value as MinGrade })} className="w-48" />
         <Segmented<RunKind | 'all'> size="sm" label="Kind of clip" value={filters.kind} onChange={(kind) => update({ kind })}
-          options={[{ value: 'all', label: 'All' }, ...(['create', 'remix', 'avatar'] as const).map((kind) => ({ value: kind, label: RUN_KIND_LABELS[kind] }))]} />
+          options={[{ value: 'all', label: 'All' }, ...kinds.map((kind) => ({ value: kind, label: RUN_KIND_LABELS[kind] }))]} />
         <Segmented<ReadySort> size="sm" label="Sort clips ready to post" value={filters.sort} onChange={(sort) => update({ sort })}
           options={[{ value: 'newest', label: 'Newest' }, { value: 'best', label: 'Best first' }]} />
         <Button variant="ghost" size="sm" iconOnly aria-label="Refresh ready to post" title="Refresh"
@@ -172,7 +175,7 @@ export function ReadyToPost({ onOpenRun, onNavigate }: {
           </div>
         ) : result.clips.length === 0 ? (
           <EmptyState icon={<CheckCheck />} title={result.runs ? 'Everything is posted' : 'No clips yet'}
-            description={result.runs ? 'Every clip in your Library is posted or marked as posted. New clips show up here.' : 'Make clips on Create, Remix or Avatar Studio and the ones you have not posted show up here.'}
+            description={result.runs ? 'Every clip in your Library is posted or marked as posted. New clips show up here.' : `Make clips on ${isAvatarStudioEnabled() ? 'Clip, Remix or Avatar Studio' : 'Clip or Remix'} and the ones you have not posted show up here.`}
             action={!result.runs && onNavigate ? <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} onClick={() => onNavigate('clip')}>Create clips</Button> : undefined} />
         ) : visible.length === 0 ? (
           <div className="glass flex flex-col items-center rounded-3xl px-5 py-10 text-center">

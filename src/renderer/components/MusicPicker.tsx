@@ -254,7 +254,7 @@ export function MusicSettingsPanel({ initialLibrary }: { initialLibrary?: MusicL
       <div className="space-y-1.5" role="list" aria-label="My music">
         {library.own.length === 0 && (
           <p className="glass-tile rounded-xl px-3 py-3 text-xs text-ink-muted">
-            No music of your own yet. The built-in tracks are always there to pick in Create, Edit my recording and Remix.
+            No music of your own yet. The built-in tracks are always there to pick in Clip, Edit my recording and Remix.
           </p>
         )}
         {library.own.map((track) => (

@@ -6,8 +6,9 @@
  * need are shown, plus a "make your first one" step for each kind of video.
  */
 
-import { GOALS, isVideoGoal, type GoalId, type VideoGoalId } from './onboarding'
+import { AVATAR_GOALS, GOALS, goalAvailable, isVideoGoal, type GoalId, type VideoGoalId } from './onboarding'
 import { ZERNIO_PLATFORM_NAMES, type ZernioPlatform } from './zernio'
+import { isAvatarStudioEnabled } from './features'
 
 export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video' | 'first-listicle' | 'first-edited-recording'
 export type SetupItemId = 'openrouter' | 'tools' | 'camera' | 'posting' | 'brand' | 'cta' | 'avatar' | FirstRunId
@@ -59,7 +60,7 @@ export interface SetupItem {
 export interface SetupProfile { goals: readonly GoalId[]; platforms: readonly ZernioPlatform[] }
 
 const FIRST_RUNS: Record<VideoGoalId, { id: FirstRunId; title: string; detail: string; count: keyof RunCounts }> = {
-  clips: { id: 'first-clip', title: 'Make your first clips', detail: 'Paste a video link on Create and start a run.', count: 'clips' },
+  clips: { id: 'first-clip', title: 'Make your first clips', detail: 'Paste a video link on Clip and start a run.', count: 'clips' },
   'ai-reactions': { id: 'first-ai-reaction', title: 'Make your first AI reaction', detail: 'In Remix, choose AI presenter and remix a video with your avatar.', count: 'aiReactions' },
   'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'In Remix, choose You on camera: Pause & react, Their clip then me, React then my thoughts, or a moment from a long video.', count: 'cameraReactions' },
   article: { id: 'first-article', title: 'Make your first article or post video', detail: 'Talk over a screenshot in Remix.', count: 'articles' },
@@ -83,7 +84,9 @@ function listNames(names: string[]): string {
 
 /** The setup path for this profile (no goals: the general checklist). */
 export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [], platforms: [] }): SetupItem[] {
-  const goals = new Set(profile.goals)
+  // Avatar Studio switched off (shared/features): no avatar step, and no first-run steps for what it makes.
+  const avatarStudio = isAvatarStudioEnabled()
+  const goals = new Set(profile.goals.filter((goal) => avatarStudio || !AVATAR_GOALS.includes(goal)))
   const general = goals.size === 0
   const needsAvatar = goals.has('ai-reactions') || goals.has('avatar-videos')
   const needsCamera = goals.has('camera-reactions') || goals.has('article') || goals.has('edit-recording')
@@ -129,7 +132,7 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
     {
       id: 'brand', title: 'Set up your brand', detail: 'Your niche, voice and offer, plus your color, caption style and handle.', done: facts.brandIdentities > 0,
       why: 'Titles, hook text and takes are written in your voice, and your look is filled in for you.',
-      how: ['Add a brand: who you help, what you believe, your offer and your proof.', 'Under Look, add your color, hook and caption style, handle or logo, and comment keyword.', 'Choose the brand on Create, Remix or Avatar Studio to use it.'],
+      how: ['Add a brand: who you help, what you believe, your offer and your proof.', 'Under Look, add your color, hook and caption style, handle or logo, and comment keyword.', `Choose the brand on ${avatarStudio ? 'Clip, Remix or Avatar Studio' : 'Clip or Remix'} to use it.`],
       cost: 'Free.'
     },
     {
@@ -139,7 +142,7 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
       cost: 'Free.'
     }
   )
-  if (needsAvatar || general) items.push({
+  if (avatarStudio && (needsAvatar || general)) items.push({
     id: 'avatar', title: 'Make an avatar', done: facts.avatars > 0, optional: general,
     detail: needsAvatar ? 'Your AI presenter: a picture and a voice.' : 'For Avatar Studio videos and Remix takes with an AI presenter.',
     why: 'AI reactions and avatar videos are presented by your avatar.',
@@ -168,5 +171,5 @@ export function remainingSetup(items: SetupItem[]): number {
 
 /** The goal labels, for headings ("Clips from my long videos and Reactions on camera"). */
 export function goalLabels(goals: readonly GoalId[]): string[] {
-  return GOALS.filter((goal) => goals.includes(goal.id)).map((goal) => goal.label)
+  return GOALS.filter((goal) => goals.includes(goal.id) && goalAvailable(goal.id)).map((goal) => goal.label)
 }

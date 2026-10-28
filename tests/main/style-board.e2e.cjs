@@ -8,6 +8,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 const KIT = 'a1b2c3d4e5f60718'
 const TEXT = 'Core promise: pull-ups for busy parents. Voice: plain and warm.'
@@ -276,7 +278,7 @@ test('the style board picks the look in one place, previews it and sends the sam
 
   // Saved styles: "Save as a style" names the current look for the Style bar.
   await board.getByRole('button', { name: 'Save as a style' }).click()
-  const name = page.getByRole('dialog', { name: 'Save your Create style' })
+  const name = page.getByRole('dialog', { name: 'Save your Clip style' })
   await name.getByLabel('Style name').fill('Pull-up look')
   await name.getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByText('Saved “Pull-up look”').first().waitFor()

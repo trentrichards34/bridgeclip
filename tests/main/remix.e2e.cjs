@@ -5,6 +5,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 test('Remix: add a brand identity, pick a style and presenter, start, and review the results', { timeout: 180000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-remix-e2e-'))

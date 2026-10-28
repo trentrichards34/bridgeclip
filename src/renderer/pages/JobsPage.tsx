@@ -23,6 +23,7 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, formatDate, formatDuration, formatRelativeDate, formatTimecode, formatUsd, sourceLabel } from '../lib/utils'
 import { isJobActive, useActiveJobs, useJobStore, type Job } from '../store/use-job-store'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 type Filter = 'all' | HistoryEntry['status']
 
@@ -280,7 +281,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
           <EmptyState
             icon={<ListVideo />}
             title="No jobs yet"
-            description="Every video you make shows up here while it works, then stays listed when it’s done: Create clips, Remix, Edit my recording and Avatar Studio. Up to two run at once."
+            description={`Every video you make shows up here while it works, then stays listed when it’s done: Clip, Remix, Edit my recording${isAvatarStudioEnabled() ? ' and Avatar Studio' : ''}. Up to two run at once.`}
             action={<Button variant="primary" icon={<Plus className="h-3.5 w-3.5" strokeWidth={2.4} />} onClick={onNew}>Create clips</Button>}
           />
         ) : (<>
@@ -295,7 +296,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
                 )}
               </div>
               {active.length === 0 ? (
-                <p className="px-4 py-3.5 text-xs text-ink-subtle">Nothing running. Start a job from Create, Remix, Edit my recording or Avatar Studio; extra jobs wait here in line.</p>
+                <p className="px-4 py-3.5 text-xs text-ink-subtle">Nothing running. Start a job from Clip, Remix{isAvatarStudioEnabled() ? ', Edit my recording or Avatar Studio' : ' or Edit my recording'}; extra jobs wait here in line.</p>
               ) : (
                 <ul className="divide-y divide-white/[0.04]">
                   {active.map((job) => (

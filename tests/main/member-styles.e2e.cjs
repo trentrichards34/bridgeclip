@@ -5,6 +5,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 async function openRemix(page) {
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
@@ -101,7 +103,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   await page.getByRole('combobox', { name: 'Saved style' }).getByText('No saved styles yet').waitFor()
 
   // Create has its own (empty) list.
-  await page.getByRole('button', { name: 'Create', exact: true }).first().click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByRole('combobox', { name: 'Saved style' }).getByText('No saved styles yet').waitFor()
   assert.deepEqual(errors, [])
 })

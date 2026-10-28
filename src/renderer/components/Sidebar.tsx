@@ -13,6 +13,7 @@ import { useAssistantStore } from '../store/use-assistant-store'
 import { useLibrarySummaryStore } from '../store/use-library-summary-store'
 import { useDataVersion } from '../store/use-data-version-store'
 import { useEffect, useId } from 'react'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'aivideo' | 'brand' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
@@ -24,8 +25,10 @@ export type NavGroupId = 'make' | 'manage' | 'publish' | 'help'
 
 export interface NavItem { id: Page; label: string; icon: LucideIcon; shortcut: string; group: NavGroupId; tool: Tool; /** Still being finished: a small "Beta" tag after the label. */ beta?: boolean }
 
-export const NAV_ITEMS: NavItem[] = [
-  { id: 'clip', label: 'Create', icon: Plus, shortcut: '1', group: 'make', tool: 'create' },
+/** Every tool, including ones switched off for launch (shared/features). */
+const ALL_NAV_ITEMS: NavItem[] = [
+  // The clipping tool (long videos into short clips). Its id and tool colour are still 'clip' and 'create'.
+  { id: 'clip', label: 'Clip', icon: Plus, shortcut: '1', group: 'make', tool: 'create' },
   // No number is free: ⌘E (Ctrl+E) for Edit.
   { id: 'edit', label: 'Edit my recording', icon: Video, shortcut: 'E', group: 'make', tool: 'edit' },
   { id: 'remix', label: 'Remix', icon: Shuffle, shortcut: '9', group: 'make', tool: 'remix' },
@@ -48,6 +51,14 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'settings', label: 'Settings', icon: SlidersHorizontal, shortcut: ',', group: 'help', tool: 'settings' }
 ]
 
+/** Whether a page can be opened: Avatar Studio only while it's switched on. */
+export function pageAvailable(page: Page): boolean {
+  return page !== 'avatar' || isAvatarStudioEnabled()
+}
+
+/** The sidebar's items (and their shortcuts): tools switched off for launch are left out. */
+export const NAV_ITEMS: NavItem[] = ALL_NAV_ITEMS.filter((item) => pageAvailable(item.id))
+
 const GROUPS: { id: NavGroupId; label: string | null }[] = [
   { id: 'make', label: 'Make' },
   { id: 'manage', label: 'Manage' },
@@ -57,12 +68,12 @@ const GROUPS: { id: NavGroupId; label: string | null }[] = [
 
 /** The tool (and its colour) for a page. */
 export function toolFor(page: Page): Tool {
-  return NAV_ITEMS.find((item) => item.id === page)?.tool ?? 'create'
+  return ALL_NAV_ITEMS.find((item) => item.id === page)?.tool ?? 'create'
 }
 
 /** The sidebar label for a page. */
 export function pageLabel(page: Page): string {
-  return NAV_ITEMS.find((item) => item.id === page)?.label ?? ''
+  return ALL_NAV_ITEMS.find((item) => item.id === page)?.label ?? ''
 }
 
 interface SidebarProps {

@@ -269,7 +269,7 @@ test('Remix and Edit my recording: Skills on camera and the purpose fields fit t
   }, root)
   await page.reload()
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix opens on You on camera, the only side while Avatar Studio is switched off.)
   // The look folds open; Skills come first in it, on camera only.
   const look = page.locator('[data-remix-field="look"]')
   if ((await look.getByRole('button').first().getAttribute('aria-expanded')) !== 'true') await look.getByRole('button').first().click()

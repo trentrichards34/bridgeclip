@@ -18,12 +18,12 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   page.on('pageerror', (error) => errors.push(error.message))
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900))
 
-  // Every destination, in Make, Manage, Publish, then Guides and Settings.
+  // Every destination, in Make, Manage, Publish, then Guides and Settings (Avatar Studio is switched off for launch).
   const nav = page.getByRole('navigation', { name: 'Main' })
   await nav.waitFor()
   const labels = await nav.getByRole('button').allInnerTexts()
   assert.deepEqual(labels.map((label) => label.split('\n')[0].trim()), [
-    'Create', 'Edit my recording', 'Remix', 'Avatar Studio', 'B-roll video',
+    'Clip', 'Edit my recording', 'Remix', 'B-roll video', 'AI explainers',
     'Library', 'Jobs', 'Chat', 'B-roll library', 'Brand look',
     'Posts', 'Accounts', 'Automations', 'Guides', 'Settings'
   ])
@@ -32,7 +32,7 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   // The page header carries the tool chip; the glow and chip take the tool colour.
   await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
   assert.equal(await page.locator('main').getAttribute('data-tool'), 'create')
-  await page.locator('header .tool-chip', { hasText: 'Create' }).waitFor()
+  await page.locator('header .tool-chip', { hasText: 'Clip' }).waitFor()
 
   // Fonts are bundled: no network font, and the families load.
   const fonts = await page.evaluate(async () => {

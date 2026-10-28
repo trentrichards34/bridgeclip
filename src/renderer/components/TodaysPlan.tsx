@@ -99,7 +99,9 @@ export function TodaysPlan({ onNavigate, onViewLibrary, className }: {
 
   const describe = (kind: PlanKind): { title: string; detail: React.ReactNode; action: string } => {
     switch (kind) {
-      case 'clip': return { title: 'A clip from your latest long video', detail: <>From “{source?.title}”. Opens it in your Library: More clips from this video finds new moments and reuses its transcript.</>, action: 'Open' }
+      case 'clip': return source
+        ? { title: 'A clip from your latest long video', detail: <>From “{source.title}”. Opens it in your Library: More clips from this video finds new moments and reuses its transcript.</>, action: 'Open' }
+        : { title: 'Clips from a long video', detail: 'Paste a podcast, stream or YouTube link below and make clips of its best moments.', action: 'Start' }
       case 'reaction': return {
         title: 'A reaction to something trending',
         detail: link ? 'Pause & react to the video you pasted.' : reactionIdea ? <>Idea: “{reactionIdea.hook}”. Paste a link to react to it, or find a moment in a long video.</> : 'Paste a link to a viral video to react to it, or leave it empty to find a moment in a long video (Moment + my take).',

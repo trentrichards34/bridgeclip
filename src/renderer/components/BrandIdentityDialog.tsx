@@ -110,7 +110,7 @@ export function BrandIdentityDialog({ brand, onClose, onSaved, focus }: {
         <section aria-labelledby="brand-look-heading" className="space-y-4 border-t border-white/[0.06] pt-4">
           <div>
             <h3 id="brand-look-heading" className="text-sm font-semibold text-ink">Look</h3>
-            <p className="mt-0.5 text-2xs text-ink-muted">All optional. When you pick this brand on Create or Remix, these fill in the form. You can still change them there.</p>
+            <p className="mt-0.5 text-2xs text-ink-muted">All optional. When you pick this brand on Clip or Remix, these fill in the form. You can still change them there.</p>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">

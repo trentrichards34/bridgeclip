@@ -13,10 +13,11 @@ import { EmptyState } from './ui/EmptyState'
 import { Skeleton } from './ui/Skeleton'
 import { cn, formatRelativeDate, localFileUrl, sourceLabel } from '../lib/utils'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 export type ClipFilter = 'all' | LibraryClipStatus | 'processing'
 export const STATUS_LABELS: Record<LibraryClipStatus | 'processing', string> = { refining: 'Refining', ready: 'Ready', exported: 'Exported', processing: 'Processing' }
-const MADE_WITH: Record<string, string> = { create: 'Create', remix: 'Remix', avatar: 'Avatar Studio', edit: 'Edit my recording', listicle: 'Avatar Studio', broll: 'B-roll video' }
+const MADE_WITH: Record<string, string> = { create: 'Clip', remix: 'Remix', avatar: 'Avatar Studio', edit: 'Edit my recording', listicle: 'Avatar Studio', broll: 'B-roll video' }
 
 /** m:ss for a clip's length. */
 export function clipLength(ms: number): string {
@@ -135,7 +136,7 @@ export function LibraryClipGrid({ summary, error, jobs, query, filter, sort, onO
   if (!clips.length && !working.length) {
     return <EmptyState className="mt-1" icon={<Search />}
       title={q ? 'No clips match your search' : filter === 'processing' ? 'Nothing is processing' : filter === 'all' ? 'No clips yet' : `No ${STATUS_LABELS[filter].toLowerCase()} clips`}
-      description={q ? 'Try another title, or show every status.' : filter === 'processing' ? 'Jobs you start on Create, Remix or Avatar Studio show here while they run.'
+      description={q ? 'Try another title, or show every status.' : filter === 'processing' ? `Jobs you start on ${isAvatarStudioEnabled() ? 'Clip, Remix or Avatar Studio' : 'Clip or Remix'} show here while they run.`
         : filter === 'refining' ? 'Clips you are still editing show here.' : filter === 'ready' ? 'Clips you mark ready in the editor wait here until you bake them.' : 'Finished clips show here.'} />
   }
   return <>

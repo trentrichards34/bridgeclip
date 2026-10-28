@@ -1,5 +1,5 @@
 import { ArrowRight, Lightbulb, UserRoundCog } from 'lucide-react'
-import { GOALS, GUIDES, isVideoGoal, type GoalId } from '../../shared/onboarding'
+import { GOALS, GUIDES, goalAvailable, isVideoGoal, type GoalId } from '../../shared/onboarding'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { startGoal, useOnboarding } from '../store/use-onboarding-store'
 import { Page as PageColumn } from '../components/ui/Page'
@@ -14,7 +14,8 @@ import type { Page } from '../components/Sidebar'
  */
 export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void }): React.JSX.Element {
   const goals = useMemberPrefsStore((state) => state.profile.goals)
-  const order: GoalId[] = [...goals, ...GOALS.map((goal) => goal.id).filter((id) => !goals.includes(id))]
+  // Guides for tools switched off for launch (Avatar Studio) are left out.
+  const order: GoalId[] = [...goals, ...GOALS.map((goal) => goal.id).filter((id) => !goals.includes(id))].filter(goalAvailable)
   return (
     <PageColumn width="narrow">
       <PageHeader eyebrow="Workspace" title="Guides" description="Short how-tos for each kind of video. Yours come first."

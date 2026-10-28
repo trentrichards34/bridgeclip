@@ -28,7 +28,8 @@ function status(patch = {}) {
   return { id: 'r1', phase: 'review', detail: 'Ready for review', percent: 100, folder: `/lib/${REMIX_RUN}`, estimateUsd: 0.06, drafts: [draft(0), draft(1)], outputs: [], costUsd: 0.12, warnings: [], error: null, ...patch }
 }
 
-function load(t) {
+/** avatarStudio: Avatar Studio switched on, as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does (it's off for members; see shared/features). */
+function load(t, { avatarStudio = true } = {}) {
   const { dir, cleanup } = tempDir('creatorclips-studio-tools-')
   t.after(cleanup)
   const { electron } = fakeElectron(dir)
@@ -91,7 +92,8 @@ function load(t) {
     },
     '../file-manager': { getJobOutput: async (dir) => state.outputs[path.basename(dir)] ?? null, getJobHistory: async () => [] }
   }
-  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateToolInput } from './src/main/assistant/tool-input'; export { replaceApiKey, saveSpendLimit } from './src/main/settings-store'; export { recordSpend, flushSpending } from './src/main/spending'", { electron: { ...electron, dialog: {} }, ...mocks })
+  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateToolInput } from './src/main/assistant/tool-input'; export { replaceApiKey, saveSpendLimit } from './src/main/settings-store'; export { recordSpend, flushSpending } from './src/main/spending'; export { setAvatarStudioForTests } from './src/shared/features'", { electron: { ...electron, dialog: {} }, ...mocks })
+  mod.setAvatarStudioForTests(avatarStudio)
   const host = { changed: [], shown: [] }
   const tools = mod.createBridgeClipTools({ getMainWindow: () => null, dataChanged: (scope) => host.changed.push(scope), navigate: (page, runDir) => host.shown.push([page, runDir]) })
   const tool = (name) => { const found = tools.find((item) => item.name === name); assert.ok(found, name); return found }
@@ -370,6 +372,23 @@ test('avatars: readiness without file paths; scripts and videos ask first with t
   assert.ok(!JSON.stringify(done).includes('/secret'))
   state.avatars = []
   assert.match((await tool('list_avatars').run({}, ctx())).note, /Avatar Studio/)
+})
+
+test('Avatar Studio switched off: no avatar tools or AI presenter remixes; on-camera remixes still open Remix', async (t) => {
+  const { tools, tool, valid, calls, host } = load(t, { avatarStudio: false })
+  const names = tools.map((item) => item.name)
+  for (const name of ['list_avatars', 'write_avatar_script', 'start_avatar_video', 'get_avatar_video_status']) assert.ok(!names.includes(name), name)
+  const options = await tool('get_remix_options').run({}, ctx())
+  assert.deepEqual(options.presenters.map((item) => item.id), ['camera'])
+  assert.equal(options.voices, undefined)
+  await assert.rejects(tool('start_remix').confirm({ sources: ['https://a.com/v'] }), /AI presenter isn’t available/)
+  await assert.rejects(tool('start_remix').run({ sources: ['https://a.com/v'], format: 'silent' }, ctx()), /AI presenter isn’t available/)
+  assert.equal(calls.started.length, 0)
+  assert.equal(await tool('start_remix').confirm({ sources: ['https://a.com/v'], presenter: 'camera' }), null)
+  const opened = await tool('start_remix').run({ sources: ['https://a.com/v'], presenter: 'camera' }, ctx())
+  assert.equal(opened.needsMember, true)
+  assert.deepEqual(host.shown.at(-1)[0], 'remix')
+  assert.throws(() => valid('show_in_bridgeclip', { page: 'avatar' }), /must be one of/)
 })
 
 test('show_in_bridgeclip can open Remix and Avatar Studio', async (t) => {

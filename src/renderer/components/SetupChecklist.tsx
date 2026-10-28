@@ -275,10 +275,10 @@ function SetupChecklistSettings({ onShow }: { onShow: (dismissed: boolean) => vo
   }
   return (
     <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
-      <SettingRow title="Show the checklist on Create" description="It stays here in Settings either way."
-        control={<Switch label="Show the checklist on Create" checked={!setupChecklistDismissed} disabled={!loaded} onChange={(show) => onShow(!show)} />} />
+      <SettingRow title="Show the checklist on Clip" description="It stays here in Settings either way."
+        control={<Switch label="Show the checklist on Clip" checked={!setupChecklistDismissed} disabled={!loaded} onChange={(show) => onShow(!show)} />} />
       <Field label="Sample video link (optional)"
-        hint={error ? undefined : saved ? 'Saved.' : 'A video you have permission to clip. With a link here, the checklist offers “Try it with a sample video”, which puts it in Create. Empty: no sample is offered.'}>
+        hint={error ? undefined : saved ? 'Saved.' : 'A video you have permission to clip. With a link here, the checklist offers “Try it with a sample video”, which puts it in Clip. Empty: no sample is offered.'}>
         <TextInput aria-label="Sample video link" value={draft} maxLength={MAX_SAMPLE_VIDEO_LINK} placeholder="https://…" disabled={!loaded}
           onChange={(event) => { setDraft(event.target.value); setError(null) }} onBlur={() => void commit()}
           onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()} />

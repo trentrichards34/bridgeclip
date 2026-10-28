@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Sparkles, X } from 'lucide-react'
-import { GOALS, type GoalId } from '../../shared/onboarding'
+import { availableGoals, type GoalId } from '../../shared/onboarding'
 import { goalLabels, setupItems, type SetupFacts } from '../../shared/setup-checklist'
 import { brandFormPatch } from '../../shared/brand-kit'
 import { ZERNIO_PLATFORMS, ZERNIO_PLATFORM_NAMES, type ZernioPlatform } from '../../shared/zernio'
@@ -140,14 +140,14 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
           <>
             <StepHeading title="What do you want to make?" detail="Pick everything you’re interested in. Your setup path only shows the steps these need, and you can change this anytime." />
             <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="What you want to make">
-              {GOALS.map((goal) => (
+              {availableGoals().map((goal) => (
                 <ChoiceCard key={goal.id} title={goal.label} detail={goal.detail} checked={goals.includes(goal.id)}
                   onChange={(on) => { setError(null); setGoals((list) => toggle(list, goal.id, on)) }} />
               ))}
             </div>
             <ChoiceCard title="Not sure yet: show me everything" detail="Picks all of the above. You can narrow it down anytime."
-              checked={GOALS.every((goal) => goals.includes(goal.id))}
-              onChange={(on) => { setError(null); setGoals(on ? GOALS.map((goal) => goal.id) : []) }} />
+              checked={availableGoals().every((goal) => goals.includes(goal.id))}
+              onChange={(on) => { setError(null); setGoals(on ? availableGoals().map((goal) => goal.id) : []) }} />
           </>
         )}
 
@@ -171,7 +171,7 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
 
         {step === 'brand' && (
           <>
-            <StepHeading title="Your brand and call to action" detail="Both are optional, and you can add them later. Whatever you pick here becomes the default on Create and Remix." />
+            <StepHeading title="Your brand and call to action" detail="Both are optional, and you can add them later. Whatever you pick here becomes the default on Clip and Remix." />
             <section aria-labelledby="onboarding-brand" className="space-y-2">
               <h3 id="onboarding-brand" className="text-sm font-medium text-ink">Your brand</h3>
               <p className="text-xs text-ink-subtle">Who you help, what you believe, your offer and your proof, plus your color, caption style and handle. Titles, hook text and takes are written in your voice. They never make up results: only facts from the video or the proof you write here.</p>
@@ -221,7 +221,7 @@ function PathSummary({ goals, platforms }: { goals: GoalId[]; platforms: ZernioP
   const items = setupItems(facts, { goals, platforms })
   return (
     <>
-      <StepHeading title="Your setup path" detail={`Made for: ${goalLabels(goals).join(' · ')}. It sits at the top of Create and ticks itself off as you go, and each step has a short how-to.`} />
+      <StepHeading title="Your setup path" detail={`Made for: ${goalLabels(goals).join(' · ')}. It sits at the top of Clip and ticks itself off as you go, and each step has a short how-to.`} />
       <ol className="grid gap-1.5 sm:grid-cols-2" aria-label="Your setup path" data-testid="onboarding-path">
         {items.map((item, i) => (
           <li key={item.id} data-setup-item={item.id} className="glass-tile flex items-start gap-2.5 rounded-xl px-3 py-2">

@@ -35,6 +35,7 @@ import { MusicSettingsPanel } from '../components/MusicPicker'
 import { SoundPaletteSettings } from '../components/SoundPalette'
 import { BrollAiSettingsPanel } from '../components/BrollSourcePicker'
 import type { Page as AppPage } from '../components/Sidebar'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'sounds' | 'broll' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
@@ -269,7 +270,8 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   getKeyUrl={PROVIDER_LINKS.pexels}
                 />
               </KeyRow>
-              <KeyRow>
+              {/* Avatar Studio's keys: hidden while it's switched off (shared/features), unless one is saved and can be removed. */}
+              {(isAvatarStudioEnabled() || falConfigured) && <KeyRow>
                 <ApiKeyInput
                   label="fal.ai (optional)"
                   value={keys.drafts.falApiKey}
@@ -281,8 +283,8 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   description="Only for Avatar Studio’s Recreate (your avatar takes over someone in a video). Everything else in Avatar Studio runs on your OpenRouter key."
                   getKeyUrl={PROVIDER_LINKS.fal}
                 />
-              </KeyRow>
-              <KeyRow>
+              </KeyRow>}
+              {(isAvatarStudioEnabled() || heygenConfigured) && <KeyRow>
                 <ApiKeyInput
                   label="HeyGen (optional, Beta)"
                   value={keys.drafts.heygenApiKey}
@@ -295,7 +297,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   getKeyUrl={PROVIDER_LINKS.heygen}
                 />
                 <HeygenKeyCheck configured={heygenConfigured} />
-              </KeyRow>
+              </KeyRow>}
             </div>
           </Section>
 
@@ -324,7 +326,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             <PanelHeader
               icon={<IconTile><Music /></IconTile>}
               title="My music"
-              description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Create, Edit my recording and Remix."
+              description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Clip, Edit my recording and Remix."
             />
             <MusicSettingsPanel />
           </Section>
@@ -342,7 +344,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             <PanelHeader
               icon={<IconTile><Images /></IconTile>}
               title="AI b-roll"
-              description="When Create or Remix fill b-roll with AI, or you make a shot in your B-roll library: what AI makes, the model, and the most AI shots per clip."
+              description="When Clip or Remix fill b-roll with AI, or you make a shot in your B-roll library: what AI makes, the model, and the most AI shots per clip."
               action={onNavigate && <Button size="sm" variant="ghost" onClick={() => onNavigate('broll')}>Open my B-roll library</Button>}
             />
             <div className="mt-3"><BrollAiSettingsPanel /></div>

@@ -6,6 +6,7 @@
  */
 
 import { ZERNIO_PLATFORMS, type ZernioPlatform } from './zernio'
+import { isAvatarStudioEnabled } from './features'
 
 export type GoalId = 'clips' | 'edit-recording' | 'ai-reactions' | 'camera-reactions' | 'article' | 'avatar-videos' | 'listicle' | 'posting'
 
@@ -30,7 +31,20 @@ export const GOALS: readonly Goal[] = [
   { id: 'posting', label: 'Post and schedule from here', detail: 'Connect your accounts and post or schedule without leaving the app.', page: 'accounts' }
 ]
 
-/** The kinds of video a member makes on Create, Remix and Avatar Studio (their setup steps and first-run guides). */
+/** Goals made with Avatar Studio or its avatars (AI reactions in Remix, avatar videos, Top lists). */
+export const AVATAR_GOALS: readonly GoalId[] = ['ai-reactions', 'avatar-videos', 'listicle']
+
+/** Whether a goal can be picked, and its guide shown: Avatar Studio's only while it's switched on (shared/features). */
+export function goalAvailable(id: GoalId): boolean {
+  return isAvatarStudioEnabled() || !AVATAR_GOALS.includes(id)
+}
+
+/** The goals a member can pick now. */
+export function availableGoals(): readonly Goal[] {
+  return GOALS.filter((goal) => goalAvailable(goal.id))
+}
+
+/** The kinds of video a member makes on Clip, Remix and Avatar Studio (their setup steps and first-run guides). */
 // Edit my recording has its own page and guide; it isn't one of the setup's first-video steps.
 export type VideoGoalId = Exclude<GoalId, 'posting' | 'edit-recording'>
 export const VIDEO_GOALS: readonly VideoGoalId[] = ['clips', 'ai-reactions', 'camera-reactions', 'article', 'avatar-videos', 'listicle']
@@ -115,7 +129,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     summary: 'Paste a long video and get short, captioned clips of its best moments.',
     needs: ['Your OpenRouter key', 'The system check passing'],
     steps: [
-      'Open Create. Paste a YouTube or Twitch link, or choose a file from your computer. You can add up to 10 videos at once.',
+      'Open Clip. Paste a YouTube or Twitch link, or choose a file from your computer. You can add up to 10 videos at once.',
       'Pick a workflow. Automatic makes finished clips. Review & edit shows you the candidates first so you can pick and trim them.',
       'Under Format, choose Vertical for TikTok, Reels and Shorts.',
       'Under Clips, describe the moments you want if you have something in mind, and pick the lengths.',

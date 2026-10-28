@@ -5,6 +5,8 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { editorTools } = require('./editor-e2e-tools.cjs')
 const { launchRemix, shot } = require('./remix-e2e-setup.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 // A member makes "Their clip, then me" from a reel file and a phone video of their take. The real engine fetches the
 // reel, makes and frames it; only the paid AI steps (transcription and the writing call) are stood in for.

@@ -34,7 +34,7 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await dialogs([ad, watching, thoughts, [car, cream], screen, [result]])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('radiogroup', { name: 'Who is in the video' }).getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix is on You on camera: with Avatar Studio switched off there is no AI presenter side to choose.)
   await page.getByRole('radio', { name: /^React, then my thoughts/ }).click()
   await page.getByRole('heading', { name: '01 · Their clip' }).waitFor()
   await page.getByText(/^Part 1: their clip plays in a big box/).waitFor()
@@ -46,7 +46,7 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await page.getByRole('button', { name: 'Customize for this video' }).click()
   await page.getByRole('radiogroup', { name: 'While you react' }).getByRole('radio', { name: /^Phone card/ }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Where the hook text goes' }).getByRole('radio', { name: 'Beside me' }).getAttribute('aria-checked'), 'true')
-  if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Who is in the video' }).scrollIntoViewIfNeeded(); await shot(app, 'remix-top-react-thoughts.png') }
+  if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Remix format' }).scrollIntoViewIfNeeded(); await shot(app, 'remix-top-react-thoughts.png') }
   await page.getByRole('button', { name: 'Continue to recording' }).click()
 
   const heading = page.getByRole('heading', { name: 'Your React, then my thoughts' })

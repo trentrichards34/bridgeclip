@@ -7,12 +7,14 @@ const { loadMain, tempDir, fakeElectron } = require('../zernio/support/load-main
 
 const ROOT = path.join(__dirname, '../..')
 
-function loadTools(t) {
+/** avatarStudio: Avatar Studio switched on, as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does (it's off for members; see shared/features). */
+function loadTools(t, { avatarStudio = true } = {}) {
   const { dir, cleanup } = tempDir('bridgeclip-assistant-tools-')
   t.after(cleanup)
   const { electron } = fakeElectron(dir)
   const host = { changed: [], shown: [] }
-  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateJobConfig } from './src/main/validation'", { electron: { ...electron, dialog: {} } })
+  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateJobConfig } from './src/main/validation'; export { setAvatarStudioForTests } from './src/shared/features'", { electron: { ...electron, dialog: {} } })
+  mod.setAvatarStudioForTests(avatarStudio)
   const tools = mod.createBridgeClipTools({
     getMainWindow: () => null,
     dataChanged: (scope) => host.changed.push(scope),
@@ -40,6 +42,12 @@ test('every CreatorClips tool has a strict schema, and anything that publishes, 
   }
   // Never exposed: keys, updates, TikTok consent, account sign-in.
   for (const forbidden of ['replace_api_key', 'install_update', 'approve_tiktok_review', 'connect_account']) assert.ok(!names.includes(forbidden))
+})
+
+test('with Avatar Studio switched off the assistant has no avatar tools', (t) => {
+  const names = loadTools(t, { avatarStudio: false }).tools.map((tool) => tool.name)
+  for (const name of ['list_avatars', 'write_avatar_script', 'start_avatar_video', 'get_avatar_video_status']) assert.ok(!names.includes(name), name)
+  assert.ok(names.includes('start_remix'))
 })
 
 test('start_clip_job builds a request the Create page’s validator accepts, with its defaults', (t) => {

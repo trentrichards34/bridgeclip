@@ -95,7 +95,7 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
   return (
     <PageColumn width="wide">
       <PageHeader eyebrow="Studio" title={<>Footage the editor cuts to <Badge tone="warning" className="ml-1 align-middle">Beta</Badge></>}
-        description="Your own clips and pictures. The AI looks at each one once, then Create and Remix use the shots that match what you say. Your files stay where they are."
+        description="Your own clips and pictures. The AI looks at each one once, then Clip and Remix use the shots that match what you say. Your files stay where they are."
         actions={<>
           <Button variant="secondary" icon={<Sparkles className="h-4 w-4" />} onClick={generate}>Generate</Button>
           <Button variant="secondary" icon={<FolderPlus className="h-4 w-4" />} loading={busy === 'add'} disabled={Boolean(busy)} onClick={() => void add('folder')}>Add a folder</Button>
@@ -142,7 +142,7 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
 
           {items.length === 0 && view ? (
             <EmptyState icon={<Film />} title="Your B-roll library is empty"
-              description="Add the clips and pictures you film for your videos: your desk, your product, your routine. Then turn on B-roll in Create or Remix."
+              description="Add the clips and pictures you film for your videos: your desk, your product, your routine. Then turn on B-roll in Clip or Remix."
               action={<Button variant="primary" icon={<FilePlus2 className="h-4 w-4" />} onClick={() => void add('files')}>Add clips or pictures</Button>} />
           ) : !view ? (
             <div aria-busy="true" aria-label="Loading your b-roll" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -177,7 +177,7 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
         <div className="grid gap-4 lg:grid-cols-2">
           <AiShotPanel busy={busy} setBusy={setBusy} onError={setError} />
           <Panel>
-            <PanelHeader icon={<IconTile><Sparkles /></IconTile>} title="AI b-roll settings" description="Used here and when Create or Remix fill gaps with AI. Also in Settings → AI b-roll." />
+            <PanelHeader icon={<IconTile><Sparkles /></IconTile>} title="AI b-roll settings" description="Used here and when Clip or Remix fill gaps with AI. Also in Settings → AI b-roll." />
             <div className="mt-3"><BrollAiSettingsPanel /></div>
           </Panel>
         </div>

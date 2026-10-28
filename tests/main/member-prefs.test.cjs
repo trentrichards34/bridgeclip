@@ -194,7 +194,7 @@ test('main keeps the prefs in userData: last style, presets (save, replace, rena
   assert.deepEqual(saved.create, { aspectRatio: '16:9', maxClips: 4 })
   assert.equal(JSON.stringify(saved).includes('x.com'), false, 'links are never saved')
   if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600)
-  assert.throws(() => main.saveLastStyle('other', {}), /Create or Remix/)
+  assert.throws(() => main.saveLastStyle('other', {}), /Clip or Remix/)
 
   let prefs = main.savePreset('remix', 'Daily takes', { format: 'commentary', count: 5, links: 'https://a.com' })
   assert.equal(prefs.presets.remix.length, 1)

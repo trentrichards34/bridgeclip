@@ -259,10 +259,10 @@ export async function moreClipsInfo(outputDir: unknown): Promise<MoreClipsInfo> 
 export async function resolveReuse(runId: string, videoUrl: string): Promise<ReusePlan> {
   const { run, output, transcriptPath, saved } = await readRun(runId)
   if (output.source_video_url !== videoUrl) throw new Error('More clips must use the same video as the earlier run.')
-  if (!transcriptSaved(transcriptPath)) throw new Error('This run has no saved transcript, so its video would be transcribed again. Start a new run on Create instead.')
+  if (!transcriptSaved(transcriptPath)) throw new Error('This run has no saved transcript, so its video would be transcribed again. Start a new run on Clip instead.')
   const kept = keptSourcePath(run)
   const source = sourceFor(videoUrl, fileExists, kept)
-  if (source === 'missing') throw new Error('The original video file is no longer on this computer. Choose it again on Create to clip it.')
+  if (source === 'missing') throw new Error('The original video file is no longer on this computer. Choose it again on Clip to clip it.')
   return {
     runId,
     transcriptPath,
@@ -303,7 +303,7 @@ export function refreshReusePlan(plan: ReusePlan, videoUrl: string, exists: (pat
   if (plan.source === 'original' && isAbsolute(videoUrl) && exists(videoUrl)) return { plan }
   if (kept) return { plan: { ...plan, source: 'kept', sourcePath: kept } }
   if (isAbsolute(videoUrl) && exists(videoUrl)) return { plan: { ...plan, source: 'original', sourcePath: null } }
-  return { error: 'The video for this run is no longer on this computer, and no copy was kept with the earlier run. Choose the video again on Create to clip it.' }
+  return { error: 'The video for this run is no longer on this computer, and no copy was kept with the earlier run. Choose the video again on Clip to clip it.' }
 }
 
 /**

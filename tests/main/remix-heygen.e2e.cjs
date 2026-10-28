@@ -6,6 +6,8 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { editorTools } = require('./editor-e2e-tools.cjs')
 const { launchRemix, shot } = require('./remix-e2e-setup.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 // Remix's AI presenter with "Avatar on camera (HeyGen, Beta)": a Voiced take whose opening and closing lines are made on a
 // stand-in HeyGen API (lip-synced to the app's voice), then finished by the real engine (captions, hook text, credit) and

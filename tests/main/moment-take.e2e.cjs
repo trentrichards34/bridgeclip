@@ -95,7 +95,7 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   // You on camera: Pause & react first, then the short-clip templates, then Moment + my take, each with a plain one-line description.
-  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix opens on You on camera, the only side while Avatar Studio is switched off.)
   const formats = page.getByRole('radiogroup', { name: 'Remix format' }).getByRole('radio')
   const labels = await formats.allInnerTexts()
   const at = labels.findIndex((text) => text.startsWith('Moment + my take'))

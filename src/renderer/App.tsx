@@ -1,7 +1,7 @@
 import { commitBeforeNavigation } from './lib/navigation'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
-import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, type Page } from './components/Sidebar'
+import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, pageAvailable, type Page } from './components/Sidebar'
 import { ClipPage } from './pages/ClipPage'
 import { AvatarStudioPage } from './pages/AvatarStudioPage'
 import { RemixPage } from './pages/RemixPage'
@@ -40,7 +40,10 @@ import { isMac } from './lib/utils'
 export default function App(): React.JSX.Element {
   const [loadError, setLoadError] = useState(false)
   const [retry, setRetry] = useState(0)
-  const [page, setPage] = useState<Page>('clip')
+  const [page, setPageState] = useState<Page>('clip')
+  // A tool switched off for launch (Avatar Studio) opens Clip instead, wherever the request came from
+  // (a button, the assistant, a notification or a remembered page).
+  const setPage = useCallback((destination: Page): void => setPageState(pageAvailable(destination) ? destination : 'clip'), [])
   const [pageVisit, setPageVisit] = useState(0)
   const [libraryRun, setLibraryRun] = useState<{ outputDir: string; clipIndex?: number } | null>(null)
   /** Set when Help → Check for Updates… asks for Settings → About. */
@@ -71,14 +74,14 @@ export default function App(): React.JSX.Element {
     void commitBeforeNavigation().then(go, () => {
       if (window.confirm('Your latest clip edits could not be saved. Leave the editor and discard them?')) go()
     })
-  }, [])
+  }, [setPage])
 
   useEffect(() => { if (page !== 'library') setLibraryRun(null) }, [page])
   const viewLibraryRun = useCallback((outputDir: string, clipIndex?: number): void => {
     setLibraryRun({ outputDir, clipIndex })
     setPage('library')
     setPageVisit((visit) => visit + 1)
-  }, [])
+  }, [setPage])
 
   useEffect(() => {
     setLoadError(false)
@@ -128,7 +131,7 @@ export default function App(): React.JSX.Element {
     ]
     void assistant.init().catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [navigateRoot, viewLibraryRun])
+  }, [navigateRoot, viewLibraryRun, setPage])
 
   const openSpending = useCallback((): void => {
     requestSettingsSection('spending')
@@ -153,7 +156,7 @@ export default function App(): React.JSX.Element {
     ]
     void api.update.getState().then((state) => useUpdateStore.getState().set(state)).catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [setPage])
 
   // Optional: a renderer hot-reloaded over an older preload has no changelog bridge.
   useEffect(() => getApi().changelog?.onShow(() => {
@@ -163,7 +166,7 @@ export default function App(): React.JSX.Element {
   }), [])
 
   // ⌘K (top bar) and ⌘J (Ask) live in TopBar.
-  // ⌘1 Create, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
+  // ⌘1 Clip, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
   // ⌘\ collapse or expand the sidebar (Ctrl on Windows/Linux).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -195,7 +198,7 @@ export default function App(): React.JSX.Element {
         <Layout currentPage={page} onNavigate={navigateRoot}>
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
-            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'avatar' && pageAvailable('avatar') && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'edit' && <EditRecordingPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'remix' && <RemixPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}

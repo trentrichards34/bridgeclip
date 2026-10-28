@@ -42,6 +42,7 @@ import { logger } from '../logger'
 import { AssistantToolError, type AssistantToolSpec } from './tool-types'
 import { clipFile, clipIndexProperty, ID_PATTERN, libraryPath, object, runIdProperty, runOutput, seconds, sourceLabel, UUID, type AppPage, type ToolHost } from './tool-helpers'
 import { createStudioTools } from './studio-tools'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 export type { AppPage, DataScope, ToolHost } from './tool-helpers'
 
@@ -567,13 +568,13 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       title: 'Opened a page in CreatorClips',
       description: 'Show a page in the CreatorClips window, e.g. a Library run after it finishes, or Automations after editing one.',
       inputSchema: object({
-        page: { type: 'string', enum: ['clip', 'remix', 'avatar', 'library', 'jobs', 'accounts', 'posts', 'automations', 'settings'], description: 'clip is the Create page; avatar is Avatar Studio.' },
+        page: { type: 'string', enum: ['clip', 'remix', ...(isAvatarStudioEnabled() ? ['avatar'] : []), 'library', 'jobs', 'accounts', 'posts', 'automations', 'settings'], description: isAvatarStudioEnabled() ? 'clip is the Clip page (making clips from long videos); avatar is Avatar Studio.' : 'clip is the Clip page (making clips from long videos).' },
         runId: { ...runIdProperty, description: 'With page "library": open this run.' }
       }, ['page']),
       run: async (input) => {
         const page = input.page as AppPage
         host.navigate(page, page === 'library' && input.runId ? libraryPath(input.runId) : undefined)
-        return { shown: page, summary: `Opened ${page === 'clip' ? 'Create' : page === 'avatar' ? 'Avatar Studio' : page}` }
+        return { shown: page, summary: `Opened ${page === 'clip' ? 'Clip' : page === 'avatar' ? 'Avatar Studio' : page}` }
       }
     },
     {

@@ -66,6 +66,8 @@ test('Ready to post lists unposted clips from every run, filters them, marks the
   await page.getByRole('option', { name: 'Grade B or better' }).click()
   await page.getByTestId('ready-count').filter({ hasText: '2 of 4 clips' }).waitFor()
   assert.deepEqual(await titles(), ['Why most budgets fail', 'Myth vs truth take'])
+  // Avatar Studio is switched off for launch, but this member has an avatar video, so its filter stays.
+  await page.getByRole('radiogroup', { name: 'Kind of clip' }).getByRole('radio', { name: 'Avatar' }).waitFor()
   await page.getByRole('radiogroup', { name: 'Kind of clip' }).getByRole('radio', { name: 'Remix' }).click()
   assert.deepEqual(await titles(), ['Myth vs truth take'])
   await page.getByRole('radiogroup', { name: 'Kind of clip' }).getByRole('radio', { name: 'All' }).click()
@@ -117,7 +119,9 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   const checklist = page.getByTestId('setup-checklist').first()
   await checklist.waitFor()
   const done = (id) => checklist.locator(`[data-setup-item="${id}"]`).getAttribute('data-done')
-  for (const id of ['openrouter', 'posting', 'brand', 'cta', 'avatar', 'first-clip']) assert.equal(await done(id), 'false', id)
+  for (const id of ['openrouter', 'posting', 'brand', 'cta', 'first-clip']) assert.equal(await done(id), 'false', id)
+  // Avatar Studio is switched off for launch: no "Make an avatar" step.
+  assert.equal(await checklist.locator('[data-setup-item="avatar"]').count(), 0)
   assert.equal(await checklist.getByRole('button', { name: 'Try it with a sample video' }).count(), 0, 'no sample video unless one is set in Settings')
 
   // Real state changes: an OpenRouter key, a Library run; brand, call to action and avatar lists mocked in main.
@@ -140,7 +144,7 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   })
   writeRun(library, '44444444-4444-4444-8444-444444444444', { title: 'First run', date: '2026-10-05T12:00:00.000Z', clips: [{ summary: 'First clip' }] })
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  for (const id of ['brand', 'cta', 'avatar', 'first-clip']) {
+  for (const id of ['brand', 'cta', 'first-clip']) {
     await page.waitForFunction((id) => document.querySelector(`[data-setup-item="${id}"]`)?.getAttribute('data-done') === 'true', id)
   }
   assert.equal(await done('posting'), 'false', 'no Zernio key yet')
@@ -171,17 +175,17 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   await page.getByLabel('Sample video link').blur()
   await page.getByText('Saved.').first().waitFor()
   assert.equal(prefs().sampleVideoLink, 'https://example.com/sample-video')
-  await page.getByRole('switch', { name: 'Show the checklist on Create' }).click()
-  await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Show the checklist on Create"]')?.getAttribute('aria-checked') === 'true')
+  await page.getByRole('switch', { name: 'Show the checklist on Clip' }).click()
+  await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Show the checklist on Clip"]')?.getAttribute('aria-checked') === 'true')
   assert.equal(prefs().setupChecklistDismissed, false)
 
-  // Back on Create: the sample action shows only while "first clip" is not done. Remove the run to see it fill Create.
+  // Back on Clip: the sample action shows only while "first clip" is not done. Remove the run to see it fill Create.
   fs.rmSync(path.join(library, '44444444-4444-4444-8444-444444444444'), { recursive: true })
-  await page.getByRole('button', { name: 'Create', exact: true }).first().click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   const sample = page.getByTestId('setup-checklist').getByRole('button', { name: 'Try it with a sample video' })
   await sample.waitFor()
   await sample.click()
-  // The link becomes Create's source (shown as its preview).
+  // The link becomes Clip's source (shown as its preview).
   await page.getByText('example.com/sample-video', { exact: true }).waitFor()
   assert.deepEqual(errors, [])
 })

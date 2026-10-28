@@ -23,7 +23,7 @@ function writeRun(library, folder, { daysAgo, metrics = {}, source = '', title =
   fs.utimesSync(file, when, when)
 }
 
-test("Today's 3 on Create proposes three videos, ticks off today's runs, counts the streak and opens Remix with the pasted link", { timeout: 180000 }, async (t) => {
+test("Today's 3 on Clip proposes three videos, ticks off today's runs, counts the streak and opens Remix with the pasted link", { timeout: 180000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-todays-plan-e2e-'))
   const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   fs.mkdirSync(library, { recursive: true })
@@ -50,7 +50,7 @@ test("Today's 3 on Create proposes three videos, ticks off today's runs, counts 
 
   const card = page.getByTestId('todays-plan')
   await card.waitFor()
-  // It starts folded to one line, so the Create form stays near the top.
+  // It starts folded to one line, so the Clip form stays near the top.
   const toggle = card.locator('button[aria-controls="todays-plan-items"]')
   assert.equal(await toggle.getAttribute('aria-expanded'), 'false')
   await toggle.click()
@@ -79,8 +79,8 @@ test("Today's 3 on Create proposes three videos, ticks off today's runs, counts 
   assert.equal(await links.inputValue(), 'https://www.youtube.com/watch?v=viral123')
   assert.equal(await page.getByRole('radio', { name: /Pause & react/ }).first().getAttribute('aria-checked'), 'true')
 
-  // Back on Create, the link is kept for today; folding the card is remembered.
-  await page.getByRole('button', { name: 'Create', exact: true }).first().click()
+  // Back on Clip, the link is kept for today; folding the card is remembered.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   await card.waitFor()
   assert.equal(await card.getByRole('textbox', { name: 'Link to react to' }).inputValue(), 'https://www.youtube.com/watch?v=viral123')
   await card.getByRole('button', { name: /Today’s 3/ }).click()

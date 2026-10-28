@@ -85,7 +85,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), 'PULL')
 
   // Create: the brand picker in the Captions step fills that step's look.
-  await page.getByRole('button', { name: 'Create', exact: true }).first().click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')
   await page.getByRole('button', { name: 'Use link', exact: true }).click()
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()

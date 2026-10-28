@@ -23,6 +23,7 @@ import { isAutomationMedia, startAutomationScheduler } from './automations'
 import { sweepDeletingRuns } from './library-management'
 import { recoverInterruptedMoves } from './library-storage'
 import { registerAssistant, type AssistantRuntime } from './assistant/ipc'
+import { AVATAR_STUDIO_E2E_ARG, isAvatarStudioEnabled, setAvatarStudioForTests } from '../shared/features'
 
 // Catch crashes anywhere in the main process so we get a log line instead
 // of a silent exit. Without these, an unhandled rejection in an IPC handler
@@ -56,6 +57,8 @@ if (!app.isPackaged && process.env.BRIDGECLIP_USER_DATA_DIR) {
 // Development-only: scripted end-to-end runs keep the window hidden and out
 // of the Dock, so a test run never takes over the developer's screen.
 const hiddenForTests = !app.isPackaged && process.env.BRIDGECLIP_E2E === '1'
+// Development-only: e2e runs that cover Avatar Studio turn it back on (it's switched off for members; see shared/features).
+if (hiddenForTests && process.env.BRIDGECLIP_E2E_AVATAR_STUDIO === '1') setAvatarStudioForTests(true)
 if (hiddenForTests) {
   // Nor may it open the developer's real browser from any link.
   shell.openExternal = async (url: string): Promise<void> => {
@@ -134,6 +137,8 @@ function createWindow(): void {
       : { backgroundColor: '#07080c' }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      // The renderer's copy of the e2e Avatar Studio switch (read by the preload).
+      ...(isAvatarStudioEnabled() ? { additionalArguments: [AVATAR_STUDIO_E2E_ARG] } : {}),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false

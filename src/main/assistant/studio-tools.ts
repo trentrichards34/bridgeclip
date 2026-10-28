@@ -26,6 +26,7 @@ import { AssistantToolError, type AssistantToolSpec } from './tool-types'
 import {
   clipFile, clipIndexProperty, libraryPath, object, pollUntil, runIdProperty, runOutput, seconds, toolError, type ToolHost
 } from './tool-helpers'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 // The assistant's tools for Remix, brand identities, the call-to-action
 // library and Avatar Studio. They call the same main-process functions as the
@@ -154,6 +155,12 @@ function remixView(status: RemixStatus | null): Record<string, unknown> {
     summary: `${status.phase}${isRunning(status) ? ` · ${Math.round(status.percent)}%` : ''}`
   }
 }
+
+/** The Avatar Studio tools: left out while Avatar Studio is switched off (shared/features). */
+const AVATAR_TOOLS = new Set(['list_avatars', 'write_avatar_script', 'start_avatar_video', 'get_avatar_video_status'])
+
+/** Remix without the AI presenter (Avatar Studio switched off): only the member-on-camera remixes, which open Remix. */
+const NO_AI_PRESENTER = 'Remix’s AI presenter isn’t available in this version of CreatorClips (it needs avatars from Avatar Studio). Every Remix has the member on camera: use presenter "camera" (or the image, pause_react or moment_take format) to open Remix for them to record.'
 
 function recordingFlow(input: Record<string, unknown>): boolean {
   return input.presenter === 'camera' || input.format === 'image' || input.format === 'pause_react' || input.format === 'moment_take'
@@ -307,6 +314,11 @@ const sceneSchema = object({
 }, ['narration'])
 
 export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
+  const avatarStudio = isAvatarStudioEnabled()
+  return studioTools(host, avatarStudio).filter((tool) => avatarStudio || !AVATAR_TOOLS.has(tool.name))
+}
+
+function studioTools(host: ToolHost, avatarStudio: boolean): AssistantToolSpec[] {
   return [
     // ── Brand identities ──────────────────────────────────────────────────
     {
@@ -444,8 +456,8 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         formats: REMIX_FORMATS.map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'image' || item.id === 'pause_react' || item.id === 'moment_take' ? { needsMember: 'The member records on camera in the app: open Remix for them.' } : {}) })),
         styles: REMIX_ANGLES.map((item) => ({ id: item.id, label: item.label, description: item.description })),
         orders: REMIX_ORDERS,
-        presenters: REMIX_HOSTS.filter((item) => !item.unavailable).map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'camera' ? { needsMember: 'The member records each take on camera in the app: open Remix for them.' } : {}) })),
-        voices: [{ id: AVATAR_VOICE, label: 'The avatar’s own voice', detail: 'Its cloned voice or its preset (default when an avatar presents).' }, ...REMIX_VOICES],
+        presenters: REMIX_HOSTS.filter((item) => !item.unavailable && (avatarStudio || item.id === 'camera')).map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'camera' ? { needsMember: 'The member records each take on camera in the app: open Remix for them.' } : {}) })),
+        ...(avatarStudio ? { voices: [{ id: AVATAR_VOICE, label: 'The avatar’s own voice', detail: 'Its cloned voice or its preset (default when an avatar presents).' }, ...REMIX_VOICES] } : { note: NO_AI_PRESENTER }),
         captionStyles: CAPTION_PRESETS.map((item) => ({ id: item.id, name: item.name })),
         hookLooks: { looks: HEADLINE_LOOKS, fonts: HEADLINE_FONTS.map((item) => ({ id: item.id, label: item.label })), default: DEFAULT_HEADLINE_LOOK },
         limits: { videosPerRun: MAX_SOURCES, takesPerVideo: MAX_REMIXES, words: REMIX_WORD_LIMITS, postCaptionChars: MAX_POST_CAPTION_CHARS, ctaOfferChars: MAX_CTA_OFFER_CHARS },
@@ -458,7 +470,9 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'start_remix',
       title: 'Start a remix',
-      description: 'Plan remixes: the member\'s own commentary videos on someone else\'s moment. Give video links (sources, up to 10) or a Library clip (runId and clipIndex). Optional: format (commentary = voiced take, silent = their avatar reacts silently behind the moment), style, order, presenter (still = the avatar\'s photo with its voice; voice = voice-over only), avatarId (default: their newest avatar), voice, brandIdentityId, count (takes per video, default 3), captions, captionStyle, hookLook, ctaKeyword and ctaOffer (the "Comment KEYWORD and I\'ll send you …" line), ctaId (a call to action from list_ctas played at the end), creator (credit; needed for a Library clip without a channel). Planning uses OpenRouter credit, so the app shows the estimate and asks first; nothing else is made until the member approves takes (make_remix_videos). It replaces takes waiting for review. "Me, on camera" (presenter camera) and "Article or post" (format image) and "Pause & react" (format pause_react) need the member at their camera: this opens Remix for them instead.',
+      description: avatarStudio
+        ? 'Plan remixes: the member\'s own commentary videos on someone else\'s moment. Give video links (sources, up to 10) or a Library clip (runId and clipIndex). Optional: format (commentary = voiced take, silent = their avatar reacts silently behind the moment), style, order, presenter (still = the avatar\'s photo with its voice; voice = voice-over only), avatarId (default: their newest avatar), voice, brandIdentityId, count (takes per video, default 3), captions, captionStyle, hookLook, ctaKeyword and ctaOffer (the "Comment KEYWORD and I\'ll send you …" line), ctaId (a call to action from list_ctas played at the end), creator (credit; needed for a Library clip without a channel). Planning uses OpenRouter credit, so the app shows the estimate and asks first; nothing else is made until the member approves takes (make_remix_videos). It replaces takes waiting for review. "Me, on camera" (presenter camera) and "Article or post" (format image) and "Pause & react" (format pause_react) need the member at their camera: this opens Remix for them instead.'
+        : 'Remixes are the member\'s own commentary videos on someone else\'s moment, with the member on camera. Use presenter "camera" (or format image, pause_react or moment_take) with video links or a Library clip: this opens Remix for the member to record there. AI presenters (presenter still or voice, and silent with an avatar) aren\'t available in this version.',
       inputSchema: object({
         sources: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 8192 }, minItems: 1, maxItems: MAX_SOURCES, description: 'Public video links, one per video.' },
         runId: { ...runIdProperty, description: 'Remix a Library clip: its run.' },
@@ -482,6 +496,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       describe: (input) => recordingFlow(input) ? 'Open Remix' : 'Start a remix',
       confirm: async (input) => {
         if (recordingFlow(input)) return null
+        if (!avatarStudio) throw new AssistantToolError(NO_AI_PRESENTER)
         assertRemixIdle()
         if (!loadSettings().openrouterApiKey) noOpenRouterKey('remixes')
         const plan = await remixPlan(input)
@@ -529,6 +544,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
               : '“Me, on camera” remixes need the member to record each take on camera. Remix is open: they set it up and record there. You can follow along with get_remix_status.'
           }
         }
+        if (!avatarStudio) throw new AssistantToolError(NO_AI_PRESENTER)
         assertRemixIdle()
         const { request } = await remixPlan(input)
         await spendCheck('remix:start', 'openrouter', remixStartEstimate(request))

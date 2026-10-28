@@ -11,7 +11,7 @@ import type { Page } from './Sidebar'
 export const TOP_BAR_FOCUS_KEY = 'k'
 export const ASK_KEY = 'j'
 
-/** What the top bar does with its text: links start clips on Create, anything else searches the Library. */
+/** What the top bar does with its text: links start clips on Clip, anything else searches the Library. */
 export function topBarIntent(text: string): { kind: 'links'; links: string[] } | { kind: 'search'; query: string } | null {
   const value = text.trim()
   if (!value) return null
@@ -89,7 +89,7 @@ export function TopBar({ onNavigate }: { onNavigate: (page: Page) => void }): Re
           onKeyDown={(event) => { if (event.key === 'Escape') { setText(''); event.currentTarget.blur() } }}
           placeholder="Paste a link to start clips, or search anything"
           aria-label="Start from a link, or search"
-          title={`Paste a video link to start clips on Create, or type to search your Library (${MOD_KEY}K)`}
+          title={`Paste a video link to start clips on Clip, or type to search your Library (${MOD_KEY}K)`}
           spellCheck={false}
           autoComplete="off"
           className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus-visible:outline-none"

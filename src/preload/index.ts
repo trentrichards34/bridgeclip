@@ -15,6 +15,7 @@ import type { EditCustomInfo, EditCustomOutcome, EditorCustomInfo, EditorCustomR
 import type { EditGraphic } from '../shared/reel-graphics'
 import type { LibraryView } from '../shared/motion-library'
 import { contextBridge, ipcRenderer } from 'electron'
+import { AVATAR_STUDIO_E2E_ARG } from '../shared/features'
 import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
 import type {
   ZernioConnectOptions,
@@ -168,6 +169,8 @@ export interface ToolStatus {
 
 export interface BridgeClipAPI {
   source: { youtubePreview: (url: string, details?: boolean) => Promise<YouTubePreview> }
+  /** Tools switched on for this window beyond the launch switches (e2e runs only; see shared/features). */
+  features: { avatarStudio: boolean }
   /** Chat with the user's own Claude Code or Codex, signed in with their subscription. */
   assistant: {
     status: (fresh?: boolean) => Promise<AssistantProviderStatus[]>
@@ -821,6 +824,7 @@ function subscribe<T>(channel: string, callback: (data: T) => void): () => void 
 
 const api: BridgeClipAPI = {
   source: { youtubePreview: (url, details = false) => ipcRenderer.invoke('source:youtubePreview', url, details) },
+  features: { avatarStudio: process.argv.includes(AVATAR_STUDIO_E2E_ARG) },
   assistant: {
     status: (fresh = false) => ipcRenderer.invoke('assistant:status', fresh),
     onStatus: (callback) => subscribe('assistant:status', callback),

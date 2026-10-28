@@ -69,7 +69,7 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
   await page.getByLabel('Video links').fill('https://www.instagram.com/reel/DdurluTvRVB/')
   // A voiced take on camera: one take to record to start with, and the button says what happens next.
   // You on camera, then the scripted take (the AI writes the lines, you read them).
-  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix opens on You on camera, the only side while Avatar Studio is switched off.)
   await page.getByRole('radio', { name: /^Scripted take/ }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).getAttribute('aria-checked'), 'true')
   await page.getByRole('button', { name: 'Write and record', exact: true }).waitFor()

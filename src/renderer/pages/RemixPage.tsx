@@ -63,6 +63,7 @@ import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { toPostable } from '../components/ClipList'
 import { clipFilePath } from '../lib/thumbnails'
 import { parseJobOutput } from '../../shared/job-output'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 const COUNTS = [1, 3, 5, 10] as const
 /** On camera, Zoom is a Skill (in the Skills list): not also in the look board's Extras. */
@@ -337,6 +338,16 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     if (card === 'greenscreen') form.update({ format: 'silent', host: 'camera', camera: { ...form.camera, layout: 'greenscreen', talk: true }, clipRightsAck: false })
     else form.update({ format: card, ...(card === 'commentary' ? { host: 'camera' as const, count: 1 } : {}), clipRightsAck: false })
   }
+  // Avatar Studio switched off (shared/features): no "AI presenter" side (its avatars are made there), so a remembered
+  // AI presenter choice opens on "You on camera" instead.
+  const aiPresenter = isAvatarStudioEnabled()
+  useEffect(() => {
+    if (aiPresenter || mode !== 'ai') return
+    const current = useRemixForm.getState()
+    const card = lastPick.camera
+    if (card === 'greenscreen') current.update({ format: 'silent', host: 'camera', camera: { ...current.camera, layout: 'greenscreen', talk: true }, clipRightsAck: false })
+    else current.update({ format: card, ...(card === 'commentary' ? { host: 'camera' as const, count: 1 } : {}), clipRightsAck: false })
+  }, [aiPresenter, mode])
   // The AI presenter with no avatar yet: Avatar photo and "Your avatar's voice" can't be used, so it starts on
   // Voice only with a preset voice (only when the side opens, so a choice made here stays).
   const noAvatars = avatarsLoaded && avatars.length === 0
@@ -365,7 +376,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const setupFolded = status !== null && (reviewing || (busy && status.drafts.length > 0)) && newRemixFor !== status.id
   const takeWaiting = reviewing && status !== null && (oneTakeRun(status) ? status.drafts.some((draft) => Boolean(draft.quote || draft.headline)) : status.drafts.length > 0)
   // Section numbers: the video, who's in it, the format, (AI presenter) the presenter, the look and call to action, then the rest.
-  const lookStep = onCamera ? 4 : 5
+  // (Without the AI presenter, "Who’s in it" isn't asked: the format comes second.)
+  const lookStep = (onCamera ? 4 : 5) - (aiPresenter ? 0 : 1)
   const goStep = lookStep + 1
 
   const modePanel = (
@@ -540,8 +552,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           </div>
         )}
         <p className="text-2xs text-ink-subtle">
-          Your own video? Use Create for straight clips.{' '}
-          <button type="button" className="font-medium text-tool hover:underline" onClick={() => onNavigate('clip')}>Go to Create</button>
+          Your own video? Use Clip for straight clips.{' '}
+          <button type="button" className="font-medium text-tool hover:underline" onClick={() => onNavigate('clip')}>Go to Clip</button>
         </p>
       </div>
     </div>
@@ -902,8 +914,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       </div>
     )}
     <MakerSection number={1} title={sourceTitle}>{sourcePanel}</MakerSection>
-    <MakerSection number={2} title="Who’s in it">{modePanel}</MakerSection>
-    <MakerSection number={3} title="Format" aside={`${formatCards.length} formats`}>{formatPanel}</MakerSection>
+    {aiPresenter && <MakerSection number={2} title="Who’s in it">{modePanel}</MakerSection>}
+    <MakerSection number={aiPresenter ? 3 : 2} title="Format" aside={`${formatCards.length} formats`}>{formatPanel}</MakerSection>
     {/* The AI presenter's own choice comes first; the look and call to action fold the same way on both sides. */}
     {!onCamera && (
       <MakerSection number={4} title="Presenter" data-remix-field="presenter" className={marked('presenter')}>

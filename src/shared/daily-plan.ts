@@ -8,6 +8,7 @@
  */
 
 import type { GoalId } from './onboarding'
+import { isAvatarStudioEnabled } from './features'
 
 export const DAILY_TARGET = 3
 /** A Create run this recent offers "a clip from your latest long video". */
@@ -64,7 +65,9 @@ const KIND_GOALS: Record<PlanKind, GoalId[]> = {
  */
 export function planSlots(goals: readonly GoalId[], hasRecentSource: boolean): PlanKind[] {
   const order: PlanKind[] = ['clip', 'reaction', 'talking', 'listicle', 'avatar']
-  const usable = order.filter((kind) => kind !== 'clip' || hasRecentSource)
+  // Avatar Studio switched off (shared/features): no top list or avatar video; a clip from a new long video fills the third slot.
+  const avatarStudio = isAvatarStudioEnabled()
+  const usable = order.filter((kind) => kind === 'clip' ? hasRecentSource || !avatarStudio : avatarStudio || (kind !== 'listicle' && kind !== 'avatar'))
   const wanted = goals.length ? usable.filter((kind) => KIND_GOALS[kind].some((goal) => goals.includes(goal))) : []
   const picks = [...wanted]
   for (const kind of ['clip', 'reaction', 'talking', 'listicle'] as PlanKind[]) {

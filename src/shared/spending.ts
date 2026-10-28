@@ -13,7 +13,7 @@ function isProvider(value: unknown): value is SpendProvider {
 }
 
 export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
-  create: 'Create',
+  create: 'Clip',
   edit: 'Edit my recording',
   remix: 'Remix',
   avatar: 'Avatar Studio',

@@ -114,10 +114,10 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.reload()
   await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, recording)
 
-  // The tab sits between Create and Remix.
+  // The tab sits between Clip and Remix.
   const nav = await page.getByRole('navigation', { name: 'Main' }).getByRole('button').allInnerTexts()
   const at = nav.findIndex((label) => label.startsWith('Edit my recording'))
-  assert.ok(at > 0 && nav[at - 1].startsWith('Create') && nav[at + 1].startsWith('Remix'), nav.join(' | '))
+  assert.ok(at > 0 && nav[at - 1].startsWith('Clip') && nav[at + 1].startsWith('Remix'), nav.join(' | '))
   await page.keyboard.press('Control+e')
   await page.getByRole('heading', { name: 'Raw takes in, one finished reel out', level: 1 }).waitFor()
   const start = page.getByRole('button', { name: 'Edit my recording', exact: true }).last()

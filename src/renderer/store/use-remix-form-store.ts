@@ -10,6 +10,7 @@ import type { RangeInput } from '../../shared/moment-take'
 import type { GoalId } from '../../shared/onboarding'
 import type { ReferenceImage } from '../../shared/purpose'
 import type { Part1Layout, TheirCaptions } from '../../shared/remix-layouts'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 export interface RemixForm {
   links: string
@@ -138,6 +139,8 @@ export function libraryClipFormat(format: RemixFormat, host: RemixHost, seconds?
  * the setup profile's only Remix goal is reactions as their AI self, which opens the AI presenter's Voiced take.
  */
 export function remixStartStyle(goals: readonly GoalId[]): Partial<Pick<RemixForm, 'format' | 'host'>> {
+  // Avatar Studio switched off (shared/features): no AI presenter to open on.
+  if (!isAvatarStudioEnabled()) return {}
   const aiOnly = goals.includes('ai-reactions') && !goals.includes('camera-reactions') && !goals.includes('article')
   return aiOnly ? { format: 'commentary', host: 'still' } : {}
 }

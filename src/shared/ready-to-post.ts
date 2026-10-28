@@ -10,7 +10,7 @@ import type { LibraryPostingState } from './library-posting'
 
 export type RunKind = 'create' | 'remix' | 'avatar'
 
-export const RUN_KIND_LABELS: Record<RunKind, string> = { create: 'Create', remix: 'Remix', avatar: 'Avatar' }
+export const RUN_KIND_LABELS: Record<RunKind, string> = { create: 'Clip', remix: 'Remix', avatar: 'Avatar' }
 
 export interface ReadyClip {
   outputDir: string

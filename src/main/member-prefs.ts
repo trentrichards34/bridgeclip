@@ -48,7 +48,7 @@ function write(prefs: MemberPrefs): MemberPrefs {
 }
 
 function kindOf(value: unknown): StyleKind {
-  if (value !== 'create' && value !== 'remix') throw new Error('Choose Create or Remix.')
+  if (value !== 'create' && value !== 'remix') throw new Error('Choose Clip or Remix.')
   return value
 }
 

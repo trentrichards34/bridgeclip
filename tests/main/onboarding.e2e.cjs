@@ -7,7 +7,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 
 const ONBOARDING = { BRIDGECLIP_E2E_ONBOARDING: '1' }
 
-test('first launch: the guided setup builds a profile, then Create shows the path made for it and Guides starts a first run', { timeout: 240000 }, async (t) => {
+test('first launch: the guided setup builds a profile, then Clip shows the path made for it and Guides starts a first run', { timeout: 240000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-onboarding-e2e-'))
   const userData = path.join(root, 'user-data')
   const appDir = buildApp(path.join(root, 'app'))
@@ -24,6 +24,8 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   // The layout height (the panel's opening animation scales it).
   const height = async () => heights.push(await flow.evaluate((el) => el.offsetHeight))
   await height()
+  // Avatar Studio is switched off for launch: the goals it makes aren't offered.
+  assert.equal(await flow.getByRole('checkbox', { name: /Reactions as my AI self|AI avatar videos from a script|Top lists, no camera/ }).count(), 0)
   // "Not sure yet" is a choice like the others: it ticks everything, and unticks it again.
   const notSure = flow.getByRole('checkbox', { name: /Not sure yet: show me everything/ })
   await notSure.click()
@@ -72,7 +74,7 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   await flow.getByRole('button', { name: 'Show my setup path' }).click()
   await flow.waitFor({ state: 'detached' })
 
-  // Create: the path for this profile.
+  // Clip: the path for this profile.
   const checklist = page.getByTestId('setup-checklist').first()
   await checklist.getByText('Your setup path').waitFor()
   assert.equal(await checklist.getByTestId('setup-goals').innerText(), 'Set up for: Clips from my long videos · Reactions on camera · Post and schedule from here')
@@ -91,16 +93,19 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   const guide = page.getByTestId('first-run-guide')
   await guide.getByRole('heading', { name: 'Reactions on camera' }).waitFor()
   assert.equal(await page.getByRole('radio', { name: /^Pause & react/ }).getAttribute('aria-checked'), 'true')
-  await page.getByRole('heading', { name: '02 · Who’s in it' }).waitFor()
+  // Only You on camera (Avatar Studio, which makes the AI presenter's avatars, is switched off): the format comes second.
+  await page.getByRole('heading', { name: '02 · Format' }).waitFor()
+  assert.equal(await page.getByRole('heading', { name: 'Who’s in it' }).count(), 0)
   await page.getByRole('heading', { name: '01 · The video you react to' }).waitFor()
   assert.equal(await page.getByRole('button', { name: 'Continue to recording' }).count(), 1)
   await guide.getByRole('button', { name: 'Close the guide' }).click()
   await guide.waitFor({ state: 'detached' })
 
-  // Guides: the member's goals first; Start opens Create with its guide.
+  // Guides: the member's goals first; Start opens Clip with its guide. Avatar Studio's guides aren't listed.
   await page.getByRole('button', { name: 'Guides', exact: true }).first().click()
   const titles = await page.getByTestId('guide').locator('h2').allInnerTexts()
   assert.deepEqual(titles.slice(0, 3), ['Clips from your long videos', 'Reactions on camera', 'Post and schedule from CreatorClips'])
+  for (const hidden of ['Reactions as your AI self', 'AI avatar videos from a script', 'Top lists, no camera']) assert.ok(!titles.includes(hidden), titles.join(' | '))
   await page.getByRole('button', { name: 'Start: Clips from your long videos' }).click()
   await page.getByTestId('first-run-guide').getByRole('heading', { name: 'Clips from your long videos' }).waitFor()
 

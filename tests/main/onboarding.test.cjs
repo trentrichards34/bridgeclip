@@ -55,15 +55,22 @@ test('member prefs keep the profile and saveProfile validates it', () => {
 })
 
 test('setup path: only the steps the goals need, a first-run step per kind of video, platforms to connect', () => {
-  const { setupItems, remainingSetup, firstRunGoal } = loadMain("export * from './src/shared/setup-checklist'")
+  const { setupItems, remainingSetup, firstRunGoal, setAvatarStudioForTests } = loadMain("export * from './src/shared/setup-checklist'; export { setAvatarStudioForTests } from './src/shared/features'")
   const ids = (profile, extra) => setupItems(facts(extra), profile).map((item) => item.id)
+
+  // Avatar Studio switched off (shared/features): no avatar step, and no first-run steps for what it makes.
+  assert.deepEqual(ids({ goals: ['ai-reactions', 'avatar-videos', 'posting'], platforms: ['tiktok'] }), ['openrouter', 'tools', 'posting', 'brand', 'cta'])
+  assert.deepEqual(ids({ goals: [], platforms: [] }), ['openrouter', 'tools', 'posting', 'brand', 'cta', 'first-clip'])
+  assert.match(setupItems(facts(), { goals: [], platforms: [] }).find((item) => item.id === 'brand').how.join(' '), /on Clip or Remix/)
+  // The rest of this test: with Avatar Studio on (as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does).
+  setAvatarStudioForTests(true)
 
   assert.deepEqual(ids({ goals: ['clips'], platforms: [] }), ['openrouter', 'tools', 'brand', 'cta', 'first-clip'], 'clips only: no camera, avatar or posting')
   assert.deepEqual(ids({ goals: ['camera-reactions', 'article'], platforms: [] }),
     ['openrouter', 'tools', 'camera', 'brand', 'cta', 'first-camera-reaction', 'first-article'])
   assert.deepEqual(ids({ goals: ['ai-reactions', 'avatar-videos', 'posting'], platforms: ['tiktok'] }),
     ['openrouter', 'tools', 'posting', 'brand', 'cta', 'avatar', 'first-ai-reaction', 'first-avatar-video'])
-  // The order the goals were picked in (the guided setup) or saved in (Create) never changes the path's order.
+  // The order the goals were picked in (the guided setup) or saved in (Clip) never changes the path's order.
   assert.deepEqual(ids({ goals: ['camera-reactions', 'clips', 'ai-reactions'], platforms: [] }), ids({ goals: ['clips', 'ai-reactions', 'camera-reactions'], platforms: [] }))
   assert.deepEqual(ids({ goals: ['camera-reactions', 'clips', 'ai-reactions'], platforms: [] }).slice(-3), ['first-clip', 'first-ai-reaction', 'first-camera-reaction'])
 

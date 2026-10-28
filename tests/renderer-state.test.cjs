@@ -627,6 +627,32 @@ test('Remix: You on camera / AI presenter, setup goals land on the right side, a
   for (const text of ['6 · Proof screenshots (optional)', 'post.png', 'Label for post.png', 'placeholder="2.3"', 'Clear box', 'Add screenshots', 'Up to 6']) assert.ok(proofs.includes(text), text)
 })
 
+test('Remix with Avatar Studio switched off: no AI presenter side, You on camera formats only, a remembered AI choice is not offered', () => {
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const code = buildSync({
+    stdin: {
+      contents: `export { useRemixForm, remixStartStyle } from './src/renderer/store/use-remix-form-store';
+        export { RemixPage } from './src/renderer/pages/RemixPage';
+        export { AVATAR_STUDIO_ENABLED } from './src/shared/features';`,
+      resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {}, requestAnimationFrame: (fn) => fn() })
+  const { useRemixForm, remixStartStyle, RemixPage, AVATAR_STUDIO_ENABLED } = mod.exports
+  if (AVATAR_STUDIO_ENABLED) return
+  const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ')
+  // An AI-only profile no longer opens the AI presenter.
+  assert.deepEqual(JSON.parse(JSON.stringify(remixStartStyle(['clips', 'ai-reactions']))), {})
+  const html = text(renderToStaticMarkup(React.createElement(RemixPage, { onNavigate() {} })))
+  assert.doesNotMatch(html, /Who’s in it|AI presenter|Avatar Studio/)
+  assert.match(html, /02 · Format/)
+  assert.match(html, /Pause & react/)
+  assert.deepEqual([useRemixForm.getState().format, useRemixForm.getState().host], ['pause_react', 'camera'])
+})
+
 test('Remix first visit: opens on You on camera (the AI presenter only for an AI-only profile), says what is missing next to the button, labels the take style and folds the look on both sides', () => {
   const React = require('react')
   const { renderToStaticMarkup } = require('react-dom/server')
@@ -641,7 +667,9 @@ test('Remix first visit: opens on You on camera (the AI presenter only for an AI
     bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
   }).outputFiles[0].text
   const mod = { exports: {} }
-  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {}, requestAnimationFrame: (fn) => fn() })
+  // Avatar Studio on (as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does): the AI presenter side is offered.
+  const bridgeclip = { features: { avatarStudio: true } }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, bridgeclip, window: { bridgeclip }, navigator: {}, requestAnimationFrame: (fn) => fn() })
   const { useRemixForm, remixStartStyle, useSettingsStore, RemixPage, MomentRanges } = mod.exports
   // (Server rendering reads a store's initial state, so a change goes there too.)
   const set = (store, patch) => { store.setState(patch); Object.assign(store.getInitialState(), patch) }

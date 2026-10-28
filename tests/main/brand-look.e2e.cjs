@@ -117,7 +117,7 @@ test('Brand look: make looks, set color, type, captions and a CTA, make one the 
   }
 
   // Create starts from it: the brand, its caption style, hook look and call to action.
-  await nav.getByRole('button', { name: 'Create', exact: true }).click()
+  await nav.getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
   await page.getByRole('radiogroup', { name: 'Workflow', exact: true }).getByRole('radio', { name: 'Automatic', exact: true }).click()
   await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')

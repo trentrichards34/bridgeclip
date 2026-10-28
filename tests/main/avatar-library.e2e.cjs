@@ -50,7 +50,8 @@ test('a finished avatar video is in the Library with its hook text, ready to pos
   const openrouter = await fakeOpenRouter(fs.readFileSync(voicePath))
   const appDir = buildApp(path.join(root, 'app'))
   linkEngine(appDir)
-  const session = await launchApp({ appDir, userDataDir, env: { ...tools.appEnv, BRIDGECLIP_E2E_OPENROUTER_MEDIA_URL: openrouter.url } })
+  // Avatar Studio is switched off for members (src/shared/features.ts); this test makes a video in it, so it's turned on.
+  const session = await launchApp({ appDir, userDataDir, env: { ...tools.appEnv, BRIDGECLIP_E2E_OPENROUTER_MEDIA_URL: openrouter.url, BRIDGECLIP_E2E_AVATAR_STUDIO: '1' } })
   t.after(async () => {
     const timer = setTimeout(() => session.app.process().kill('SIGTERM'), 5000)
     try { await session.close() } finally { clearTimeout(timer); await openrouter.close(); fs.rmSync(root, { recursive: true, force: true }) }
@@ -117,5 +118,40 @@ test('a finished avatar video is in the Library with its hook text, ready to pos
   await page.getByRole('button', { name: 'Library', exact: true }).first().click()
   await page.getByRole('button', { name: 'Open Avatar Studio · Old coffee video', exact: true }).waitFor()
   assert.equal(fs.readdirSync(library).filter((name) => /^avatar-/.test(name)).length, 2)
+  assert.deepEqual(errors, [])
+})
+
+test('Avatar Studio switched off: no way in, but avatar videos already in the Library still show and play', { timeout: 180000 }, async (t) => {
+  const tools = editorTools(t)
+  if (!tools) return
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-avatar-off-e2e-'))
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
+  const legacy = path.join(library, 'Avatar Studio', '2026-10-01 120000 Old coffee video')
+  fs.mkdirSync(legacy, { recursive: true })
+  execFileSync(tools.ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=360x640:d=2:r=30', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(legacy, 'final.mp4')])
+  fs.writeFileSync(path.join(userDataDir, 'settings.json'), JSON.stringify({ version: 6, outputDirectory: library, openrouterApiKey: '', zernioApiKey: '' }))
+  const session = await launchApp({ appDir: buildApp(path.join(root, 'app')), userDataDir, env: tools.appEnv })
+  t.after(async () => {
+    const timer = setTimeout(() => session.app.process().kill('SIGTERM'), 5000)
+    try { await session.close() } finally { clearTimeout(timer); fs.rmSync(root, { recursive: true, force: true }) }
+  })
+  const { page } = session
+  page.setDefaultTimeout(20000)
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+
+  // No sidebar item, and its old shortcut (Ctrl/⌘ 8) opens nothing.
+  const nav = page.getByRole('navigation', { name: 'Main' })
+  await nav.getByRole('button', { name: 'Clip', exact: true }).waitFor()
+  assert.equal(await nav.getByRole('button', { name: 'Avatar Studio', exact: true }).count(), 0)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+8' : 'Control+8')
+  await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
+
+  // The avatar video made before is still in the Library, and plays.
+  await nav.getByRole('button', { name: 'Library', exact: true }).click()
+  await page.getByRole('button', { name: 'Open Avatar Studio · Old coffee video', exact: true }).click()
+  await page.getByRole('button', { name: /^Play “/ }).first().hover()
+  await page.waitForFunction(() => { const video = document.querySelector('video'); return Boolean(video && video.readyState >= 1 && video.duration > 1) })
+  assert.ok(fs.existsSync(path.join(legacy, 'final.mp4')))
   assert.deepEqual(errors, [])
 })

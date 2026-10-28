@@ -130,8 +130,11 @@ test('filters: grade at least, kind, newest or best first, and search over title
 })
 
 test('setup checklist items tick off from state, and optional items never block', () => {
-  const { setupItems, remainingSetup } = loadMain("export * from './src/shared/setup-checklist'")
+  const { setupItems, remainingSetup, setAvatarStudioForTests } = loadMain("export * from './src/shared/setup-checklist'; export { setAvatarStudioForTests } from './src/shared/features'")
   const none = { openrouter: false, toolsOk: null, zernioKey: false, postingAccounts: 0, brandIdentities: 0, ctas: 0, avatars: 0, runs: 0 }
+  // Avatar Studio switched off (shared/features): no "Make an avatar" step.
+  assert.deepEqual(setupItems(none).map((item) => item.id), ['openrouter', 'tools', 'posting', 'brand', 'cta', 'first-clip'])
+  setAvatarStudioForTests(true)
   const items = setupItems(none)
   assert.deepEqual(items.map((item) => item.id), ['openrouter', 'tools', 'posting', 'brand', 'cta', 'avatar', 'first-clip'])
   assert.ok(items.every((item) => !item.done))

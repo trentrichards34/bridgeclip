@@ -408,7 +408,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
             frame={draft.style === 'recreate' ? previewFrame(recreate.sourcePath, 'video', recreate.startSeconds + 0.1) : previewFrame(selected?.portraitPath, 'image')}
             hookText={(draft.style === 'recreate' ? draft.script.title.trim() : hook) || undefined}
             words={text ? text.split(/\s+/).slice(0, 12) : undefined}
-            hookNote={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : undefined}
+            hookNote={hookIsCard ? 'With a gameplay split the hook text is a title card, like clips made on Clip.' : undefined}
             ctaHelp="Add one of your CTA clips to the end of the video. You can change it later in the Library."
             layout={draft.style === 'talking' || (handleBrand && markBrands.length > 1) ? (
               <>
@@ -481,7 +481,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
       {!openrouterConfigured && (
         <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start"
           action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
-          Avatar Studio makes faces, voices and video on your own OpenRouter account (pay as you go), the same key Create and Remix use.
+          Avatar Studio makes faces, voices and video on your own OpenRouter account (pay as you go), the same key Clip and Remix use.
         </Callout>
       )}
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}

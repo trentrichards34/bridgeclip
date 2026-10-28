@@ -12,6 +12,7 @@ import { Field, TextInput } from '../ui/Field'
 import { IconTile } from '../ui/IconTile'
 import { PanelHeader } from '../ui/Panel'
 import { ProgressBar } from '../ui/ProgressBar'
+import { isAvatarStudioEnabled } from '../../../shared/features'
 
 const open = (url: string): void => { void getApi().shell.openPath(url) }
 
@@ -98,7 +99,7 @@ export function SpendingSettings(): React.JSX.Element {
       <section aria-label="Recent spending" className="mt-4">
         <h3 className="eyebrow px-1">Last {Math.min(20, summary?.recent.length ?? 0) || 20} entries</h3>
         {summary && summary.recent.length === 0 ? (
-          <p className="mt-2 px-1 text-xs text-ink-muted">Nothing recorded yet. Finished Create, Remix, Avatar Studio and Chat runs appear here with what they cost.</p>
+          <p className="mt-2 px-1 text-xs text-ink-muted">Nothing recorded yet. Finished Clip, Remix, {isAvatarStudioEnabled() ? 'Avatar Studio and ' : ''}Chat runs appear here with what they cost.</p>
         ) : (
           <ul className="mt-2 divide-y divide-white/[0.06]">
             {summary?.recent.map((entry, index) => <EntryRow key={`${entry.at}-${index}`} entry={entry} />)}

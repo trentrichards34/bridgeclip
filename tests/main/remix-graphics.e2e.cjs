@@ -55,7 +55,7 @@ test('Remix graphics: a stat on the member’s take, a chat change to the hook t
   await dialogs([reel, take])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('radiogroup', { name: 'Who is in the video' }).getByRole('radio', { name: /^You on camera/ }).click()
+  // (Remix is on You on camera: with Avatar Studio switched off there is no AI presenter side to choose.)
   await page.getByRole('radio', { name: /^Their clip, then me/ }).click()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('skincare-reel.mp4').waitFor()

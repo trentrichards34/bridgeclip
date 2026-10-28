@@ -23,6 +23,7 @@ import { runOpenRouterTurn, type OpenRouterMessage } from './openrouter-agent'
 import { createClaudeStreamParser, createCodexStreamParser, describeCliFailure, type CliStreamEvent } from './stream-parsers'
 import { validateToolInput } from './tool-input'
 import { AssistantToolError, type AssistantToolSpec } from './tool-types'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 const FIRST_OUTPUT_TIMEOUT_MS = 3 * 60 * 1000
 const SILENCE_TIMEOUT_MS = 30 * 60 * 1000
@@ -373,7 +374,7 @@ export class AssistantService {
       }
     }
     const session = await this.mcp.openSession({
-      instructions: 'Tools for controlling the CreatorClips desktop app: clipping jobs, the clip library, Remix, brand identities, calls to action, Avatar Studio, automations, social posting and settings.',
+      instructions: `Tools for controlling the CreatorClips desktop app: clipping jobs, the clip library, Remix, brand identities, calls to action, ${isAvatarStudioEnabled() ? 'Avatar Studio, ' : ''}automations, social posting and settings.`,
       listTools: () => this.toolDefinitions(provider),
       callTool: (name, args, signal) => this.callTool(turn, name, args, signal)
     })

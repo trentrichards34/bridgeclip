@@ -29,7 +29,10 @@ function load(relative, mocks = {}) {
 }
 
 const shared = load('shared/listicle.ts')
-const plan = load('shared/daily-plan.ts')
+// Avatar Studio (where Top lists are made) on, as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does; it's switched off for members (shared/features).
+const AVATAR_STUDIO_ON = { './features': { isAvatarStudioEnabled: () => true } }
+const AVATAR_STUDIO_OFF = { './features': { isAvatarStudioEnabled: () => false } }
+const plan = load('shared/daily-plan.ts', AVATAR_STUDIO_ON)
 
 const ITEMS = [
   { name: 'HyperFrames', line: 'HTML to video', imagePath: null, box: null, script: 'HyperFrames turns HTML into video.', accent: 'HyperFrames' },
@@ -212,7 +215,7 @@ test('the render refuses a second one and a request without a voice key', async 
 test('Library runs and setup count Top lists as their own kind', () => {
   const source = fs.readFileSync(path.join(ROOT, 'main/file-manager.ts'), 'utf8')
   assert.match(source, /metrics\.listicle === true \? 'listicle'/)
-  const checklist = load('shared/setup-checklist.ts')
+  const checklist = load('shared/setup-checklist.ts', AVATAR_STUDIO_ON)
   const facts = { openrouter: true, toolsOk: true, camera: null, zernioKey: false, postingAccounts: 0, connectedPlatforms: [], brandIdentities: 0, ctas: 0, avatars: 0, runs: 1,
     runsByKind: { clips: 0, aiReactions: 0, cameraReactions: 0, articles: 0, avatarVideos: 0, listicles: 1 } }
   const items = checklist.setupItems(facts, { goals: ['listicle'], platforms: [] })
@@ -222,6 +225,11 @@ test('Library runs and setup count Top lists as their own kind', () => {
   assert.equal(items.some((item) => item.id === 'avatar'), false)
   const onboarding = load('shared/onboarding.ts')
   assert.ok(onboarding.GUIDES.listicle.steps.length >= 4)
+  // Avatar Studio switched off: no Top list step, and its guide isn't offered.
+  const hidden = load('shared/setup-checklist.ts', AVATAR_STUDIO_OFF).setupItems(facts, { goals: ['listicle'], platforms: [] })
+  assert.equal(hidden.some((item) => item.id === 'first-listicle' || item.id === 'avatar'), false)
+  assert.equal(hidden.some((item) => item.id === 'first-clip'), true, 'with no goal left, the general first clip')
+  assert.equal(load('shared/onboarding.ts', AVATAR_STUDIO_OFF).goalAvailable('listicle'), false)
   assert.equal(load('shared/ready-to-post.ts').runKindOf('listicle-11111111-2222-3333-4444-555555555555'), 'avatar')
 })
 
@@ -239,6 +247,13 @@ test("today's 3: a clip only with a recent long video; goals come first; stand-i
   assert.deepEqual(plain(plan.planSlots(['avatar-videos', 'listicle'], false)), ['reaction', 'listicle', 'avatar'])
   assert.deepEqual(plain(plan.planSlots(['clips', 'edit-recording'], true)), ['clip', 'reaction', 'talking'])
   assert.deepEqual(plain(plan.planSlots(['clips'], false)), ['reaction', 'talking', 'listicle'], 'no clip without a recent source')
+})
+
+test("today's 3 with Avatar Studio switched off: no top list or avatar video; a clip from a new long video fills in", () => {
+  const off = load('shared/daily-plan.ts', AVATAR_STUDIO_OFF)
+  assert.deepEqual(plain(off.planSlots([], true)), ['clip', 'reaction', 'talking'])
+  assert.deepEqual(plain(off.planSlots([], false)), ['clip', 'reaction', 'talking'])
+  assert.deepEqual(plain(off.planSlots(['avatar-videos', 'listicle'], false)), ['clip', 'reaction', 'talking'])
 })
 
 test("today's 3 ticks off from runs finished today and counts a real streak", () => {

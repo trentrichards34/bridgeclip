@@ -7,6 +7,8 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 /** A stand-in for OpenRouter: the script call answers with a list script; every voice request gets the same short voiceover. */
 async function fakeOpenRouter(voice) {

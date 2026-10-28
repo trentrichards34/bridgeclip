@@ -160,7 +160,7 @@ export function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
     setWorking(true); setError(null)
     try { await onSave(clean) } catch (err) { setError(errorMessage(err, 'The style could not be saved.')); setWorking(false) }
   }
-  const title = mode === 'rename' ? 'Rename style' : kind === 'create' ? 'Save your Create style' : 'Save your Remix style'
+  const title = mode === 'rename' ? 'Rename style' : kind === 'create' ? 'Save your Clip style' : 'Save your Remix style'
   return (
     <Dialog aria-label={title} onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[420px]"
       onKeyDown={(e) => { if (e.key === 'Escape' && !working) onClose() }}>

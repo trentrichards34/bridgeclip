@@ -4,6 +4,8 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
+// Avatar Studio is switched off for members (src/shared/features.ts); this test covers it, so the e2e run turns it on.
+process.env.BRIDGECLIP_E2E_AVATAR_STUDIO = '1'
 
 const VOICE = 'Core promise: pull-ups for busy parents. Voice: plain and warm. Proof: real results only.'
 const checked = async (locator) => (await locator.getAttribute('aria-checked')) === 'true'
@@ -75,7 +77,7 @@ test('Default look: every tool starts from it, per-video changes never move it, 
   assert.equal(await checked(captions.getByRole('radio', { name: /^Paper/ })), true)
 
   // Create: another brand for one run doesn't change the default.
-  await nav.getByRole('button', { name: 'Create', exact: true }).click()
+  await nav.getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByRole('radiogroup', { name: 'Workflow', exact: true }).getByRole('radio', { name: 'Automatic', exact: true }).click()
   await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')
   await page.getByRole('button', { name: 'Use link', exact: true }).click()

@@ -34,6 +34,7 @@ import { FORMAT_LABELS } from '../../shared/longform'
 import './library.css'
 import { useShellStore } from '../store/use-shell-store'
 import type { Page as AppPage } from '../components/Sidebar'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
 export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNavigate: (page: AppPage) => void; initialRun?: string | null; initialClipIndex?: number }): React.JSX.Element {
   const initialRunOpened = useRef(false)
@@ -402,7 +403,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
           <EmptyState
             icon={<Clapperboard />}
             title="No videos yet"
-            description="Everything you make lands here, newest first: clips from Create, reaction videos from Remix, reels from Edit my recording and Avatar Studio videos."
+            description={`Everything you make lands here, newest first: clips from Clip, reaction videos from Remix${isAvatarStudioEnabled() ? ', reels from Edit my recording and Avatar Studio videos' : ' and reels from Edit my recording'}.`}
             action={
               <div className="flex flex-wrap justify-center gap-2">
                 <Button variant="primary" size="lg" icon={<Sparkles className="h-4 w-4" />} onClick={() => onNavigate('clip')}>
@@ -461,7 +462,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   )
 }
 
-const MADE_WITH: Record<string, string> = { create: 'Create', remix: 'Remix', avatar: 'Avatar Studio', edit: 'Edit my recording', listicle: 'Avatar Studio', broll: 'B-roll video' }
+const MADE_WITH: Record<string, string> = { create: 'Clip', remix: 'Remix', avatar: 'Avatar Studio', edit: 'Edit my recording', listicle: 'Avatar Studio', broll: 'B-roll video' }
 
 function RunCard({ entry, size, previewRevision, counts, busy, onFavorite, onDelete, onOpen, onOpenFolder }: {
   entry: HistoryEntry
