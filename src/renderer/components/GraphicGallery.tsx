@@ -22,6 +22,7 @@ import { Dialog } from './ui/Dialog'
 import { Segmented } from './ui/Segmented'
 import { MotionLibraryGrid } from './MotionLibrary'
 import type { LibraryView } from '../../shared/motion-library'
+import { THEME_LABELS, type EditorDesignInfo } from '../../shared/custom-graphics'
 import './graphic-gallery.css'
 
 /** Each template's icon (the gallery, the timeline blocks and the preview toolbar). */
@@ -68,7 +69,7 @@ export function galleryEffects(pictures: boolean): FxEffect[] {
   return FX_EFFECTS.filter((e) => pictures || !fxNeedsPicture(e))
 }
 
-export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onLogo, library, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onLogo, library, design, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -92,6 +93,8 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   onLogo?: (logo: LogoSummary) => void
   /** My motion library as a tab (the member's custom graphics, to add here filled with the words said). */
   library?: { onPick: (item: LibraryView) => void; busy?: string | null; error?: string | null }
+  /** "Design a custom graphic here": your AI designs a new one for the words said at this spot (paid; the clip editor). */
+  design?: DesignHere
   onClose: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
@@ -138,6 +141,7 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
       <MotionLibraryGrid onPick={full ? undefined : library.onPick} busy={library.busy ?? null} />
     </section> : <section className="graphic-gallery-body" aria-label="Choose a graphic">
       {full && <p role="note" className="graphic-gallery-note">{limitNote}</p>}
+      {design && !query.trim() && <DesignHereCard design={design} full={full} />}
       {onLogo && !full && !query.trim() && <div className="graphic-gallery-group" role="group" aria-label="My logos"><LogoPickRow label="My logos: pops in on a white tile" onPick={onLogo} /></div>}
       {groups.map((group) => <div key={group.id} className={cn('graphic-gallery-group', `group-${group.id}`)} role="group" aria-label={group.label}>
         <p className="graphic-gallery-group-label"><span aria-hidden className="graphic-gallery-dot" />{group.label}<span className="graphic-gallery-count">{group.items.length}</span></p>
@@ -179,4 +183,44 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
 
 function groupLabel(id: GraphicTemplateId): string {
   return GRAPHIC_GROUPS.find((g) => g.templates.includes(id))?.label ?? 'More'
+}
+
+/** The clip editor's "Design a custom graphic here": what it costs, its look, the member's note and its progress. */
+export interface DesignHere {
+  /** The estimate and look (null while it loads). */
+  info: EditorDesignInfo | null
+  busy: boolean
+  error: string | null
+  onDesign: (note: string) => void
+}
+
+const usd = (n: number): string => `$${n.toFixed(2)}`
+
+/** Designing a new custom graphic at the gallery's spot, in the same look as the custom graphic's "Change it" controls. */
+function DesignHereCard({ design, full }: { design: DesignHere; full: boolean }): React.JSX.Element {
+  const [note, setNote] = useState('')
+  const [seconds, setSeconds] = useState(0)
+  const { info, busy, error } = design
+  useEffect(() => {
+    if (!busy) { setSeconds(0); return }
+    const started = Date.now()
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [busy])
+  const unavailable = info && !info.available
+  return <section className="graphic-gallery-design space-y-2" aria-label="Design a custom graphic here" data-testid="design-custom">
+    <p className="graphic-gallery-design-title"><Wand2 size={14} aria-hidden />Design a custom graphic here</p>
+    <p className="text-2xs text-ink-subtle">Your AI designs a new one for what you say at this spot{info ? `, in this video’s look (${THEME_LABELS[info.theme]})` : ''}, then checks it over your video. Only the words you say here can appear on it.</p>
+    <label className="editor-label">What you want (optional)
+      <textarea rows={2} maxLength={300} value={note} disabled={busy || full || !!unavailable} placeholder="Like “make it a rocket” or “show it as steps”" aria-label="What the custom graphic should show"
+        onChange={(e) => setNote(e.target.value)} /></label>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="primary" icon={<Wand2 size={13} />} loading={busy} disabled={busy || full || !info || !info.available} onClick={() => design.onDesign(note.trim())}
+        tooltip="Your AI designs it for the words said here, then checks it over your video.">Design it here</Button>
+      {info?.available && <span className="text-2xs text-ink-subtle" data-testid="design-estimate">Uses your OpenRouter credit: about {usd(info.expectedUsd)}, at most {usd(info.mostUsd)}.</span>}
+    </div>
+    {unavailable && <p role="note" className="text-2xs text-ink-subtle">{info.reason}</p>}
+    {busy && <p role="status" className="text-2xs text-ink-subtle">Designing… writing it, drawing it over your video and checking it (usually 1 to 3 minutes). {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</p>}
+    {error && !busy && <p role="alert" className="text-2xs text-danger">{error}</p>}
+  </section>
 }

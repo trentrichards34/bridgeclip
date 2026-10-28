@@ -14,8 +14,8 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, w
 import { basename, join } from 'path'
 import {
   CUSTOM_DIR, DEFAULT_PRICE, MAX_COMPOSITION_CHARS, STILL_SCALE, callCost, checkComposition, customGeometry, customIdea, customLook, saidIndex, customStillNames, extractComposition, graderSystemPrompt, graderUserPrompt,
-  isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt, flatStretches, motionFixes, MOTION_STEP_MS, stressedWords, parseWorld, worldSystemPrompt, worldUserPrompt,
-  type CustomFallback, type FlatStretch, type VisualWorld, type CustomFrameKind, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type HeroKind, type SaidIndex, type WriterBrief
+  isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt, flatStretches, motionFixes, MOTION_STEP_MS, stressedWords, parseWorld, worldSystemPrompt, worldUserPrompt, isTheme,
+  type CustomFallback, type CustomTheme, type FlatStretch, type VisualWorld, type CustomFrameKind, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type HeroKind, type SaidIndex, type WriterBrief
 } from '../shared/custom-graphics'
 import { customSandbox, type CustomSandbox } from './custom-render'
 import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
@@ -386,6 +386,23 @@ export function readVisualWorld(run: string): VisualWorld | null {
 /** Save the run's world (null removes nothing: a world is always replaced, never cleared). */
 export function saveVisualWorld(run: string, world: VisualWorld): void {
   writeAtomic(join(customDir(run, true), WORLD_FILE), JSON.stringify(world, null, 1))
+}
+
+const THEME_FILE = 'theme.json'
+
+/** The theme the run's custom graphics are designed in, when one was kept (the clip editor keeps it with the first design). */
+export function readCustomTheme(run: string): CustomTheme | null {
+  try {
+    const path = join(customDir(run), THEME_FILE)
+    if (!regularFile(path) || statSync(path).size > 2_000) return null
+    const theme = (JSON.parse(readFileSync(path, 'utf8')) as { theme?: unknown } | null)?.theme
+    return isTheme(theme) ? theme : null
+  } catch { return null }
+}
+
+/** Keep the run's theme, so later designs in it match. */
+export function saveCustomTheme(run: string, theme: CustomTheme): void {
+  writeAtomic(join(customDir(run, true), THEME_FILE), JSON.stringify({ theme }))
 }
 
 /** Propose the video's world from its transcript and the moments that get a graphic. Null when the answer is unusable (the graphics are designed without one). */

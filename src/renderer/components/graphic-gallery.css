@@ -37,3 +37,10 @@
 .graphic-gallery-looks button { font-size:10.5px; line-height:1; padding:5px 7px; border-radius:999px; border:1px solid rgb(255 255 255 / .1); background:rgb(255 255 255 / .03); color:rgb(var(--ink-muted)); transition:border-color 140ms ease, color 140ms ease; }
 .graphic-gallery-looks button:hover:not(:disabled), .graphic-gallery-looks button:focus-visible { border-color:rgb(var(--g) / .75); color:rgb(var(--ink)); }
 .graphic-gallery-looks button:disabled { opacity:.45; cursor:not-allowed; }
+
+/* "Design a custom graphic here" (the clip editor): above the templates, in the custom graphic's own controls' look. */
+.graphic-gallery-design { padding:12px 14px; border-radius:14px; border:1px solid rgb(255 255 255 / .08); background:rgb(255 255 255 / .03); max-width:640px; }
+.graphic-gallery-design-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:rgb(var(--ink)); }
+.graphic-gallery-design-title svg { color:rgb(var(--accent)); flex:none; }
+.graphic-gallery-design textarea { display:block; width:100%; margin-top:6px; padding:8px 10px; font-size:12.5px; line-height:1.5; border:1px solid rgb(255 255 255 / .08); border-radius:10px; background:rgb(0 0 0 / .3); color:rgb(var(--ink)); resize:vertical; }
+.graphic-gallery-design textarea:focus-visible { outline:none; border-color:rgb(var(--accent)); }
