@@ -37,13 +37,16 @@ The first CreatorClips release. CreatorClips is Mac only for now: Macs with Appl
 - **Posts and Automations**: post or schedule any video in your Library to your connected accounts through Zernio. **Posts** shows everything scheduled and posted, as a list or a calendar, and Automations post new videos on a schedule.
 - Automations have **Submitted** and **Needs attention** sections, drag to reorder, **View in Library**, reviewable title and caption drafts, **Refresh post status** and **Return to queue**.
 - **Settings → Spending** lists what each tool cost, from what each provider reported, and lets you set a monthly AI spending limit.
-- **Guides**: short how-tos for each kind of video.
-- **Help → Report an Issue** copies a support report (never your keys) and opens the CreatorClips issues page, or your own support link from Settings → About.
+- **Guides**: short how-tos for each kind of video. **How it works** on each Make page opens its guide.
+- **Help → Report an Issue** shows a support report (never your keys) that you can check, then **Save report to a file** or copy to send to support privately.
 - **TypeSafe Jev review** and **Research the source before clipping**, both in beta and off by default. Turn them on in Settings. Both use extra OpenRouter credit.
 - **Free editor media** removes an editor project's source copy and preview once you're done with it.
 - CreatorClips asks whether to save or discard unsaved edits before quitting, and offers **Reload project** when a project was changed elsewhere.
 - Settings → About shows how much disk space your output folder uses.
 - This changelog, in Settings → About and the Help menu.
+- **What's new**: after an update, CreatorClips shows what changed in the new version, once.
+- **Your data** in Settings → About: where your videos, settings, keys and logs are, what leaves your computer, and how to uninstall.
+- If something goes wrong on a page, CreatorClips shows **Something went wrong** with **Reload**, **Copy details** and **Report an issue**, instead of a blank window.
 - **Chat**: run CreatorClips in plain words. It uses your Claude (Pro or Max, through Claude Code) or ChatGPT (through Codex) subscription, or any OpenRouter model with your OpenRouter key; connect them in **Settings → Assistant**. The assistant can start clipping jobs, manage the Library and automations, and post or schedule clips. Anything that publishes, deletes or spends OpenRouter credit on clipping asks you first.
 - Chat's model menu has a tab each for Claude, OpenAI and OpenRouter (search every OpenRouter model that can use tools, with prices), and each reply shows the logo and model that wrote it. Recent chats are listed beside the conversation, with search.
 - Chat can find YouTube videos by channel name or search, so you can ask it to clip a channel's latest video without a link, and it can search the web and read web pages.
