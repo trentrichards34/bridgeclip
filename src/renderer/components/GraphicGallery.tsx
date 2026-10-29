@@ -22,7 +22,7 @@ import { Dialog } from './ui/Dialog'
 import { Segmented } from './ui/Segmented'
 import { MotionLibraryGrid } from './MotionLibrary'
 import type { LibraryView } from '../../shared/motion-library'
-import { THEME_LABELS, type EditorDesignInfo } from '../../shared/custom-graphics'
+import { DEFAULT_DESIGN_QUALITY, THEME_LABELS, type DesignQuality, type EditorDesignInfo } from '../../shared/custom-graphics'
 import './graphic-gallery.css'
 
 /** Each template's icon (the gallery, the timeline blocks and the preview toolbar). */
@@ -191,7 +191,8 @@ export interface DesignHere {
   info: EditorDesignInfo | null
   busy: boolean
   error: string | null
-  onDesign: (note: string) => void
+  /** `quality`: Best (the default) or Lower cost (one design, no revisions). */
+  onDesign: (note: string, quality: DesignQuality) => void
 }
 
 const usd = (n: number): string => `$${n.toFixed(2)}`
@@ -199,8 +200,11 @@ const usd = (n: number): string => `$${n.toFixed(2)}`
 /** Designing a new custom graphic at the gallery's spot, in the same look as the custom graphic's "Change it" controls. */
 function DesignHereCard({ design, full }: { design: DesignHere; full: boolean }): React.JSX.Element {
   const [note, setNote] = useState('')
+  const [quality, setQuality] = useState<DesignQuality>(DEFAULT_DESIGN_QUALITY)
   const [seconds, setSeconds] = useState(0)
   const { info, busy, error } = design
+  // Older main processes send only Best's estimate.
+  const estimate = info ? info.qualities?.[quality] ?? (quality === 'best' ? info : null) : null
   useEffect(() => {
     if (!busy) { setSeconds(0); return }
     const started = Date.now()
@@ -214,10 +218,19 @@ function DesignHereCard({ design, full }: { design: DesignHere; full: boolean })
     <label className="editor-label">What you want (optional)
       <textarea rows={2} maxLength={300} value={note} disabled={busy || full || !!unavailable} placeholder="Like “make it a rocket” or “show it as steps”" aria-label="What the custom graphic should show"
         onChange={(e) => setNote(e.target.value)} /></label>
+    {info?.available && info.qualities && <div className="flex flex-wrap items-center gap-2" data-testid="design-quality">
+      <Segmented size="sm" label="Design quality" value={quality} onChange={setQuality} options={[
+        { value: 'best', label: `Best · about ${usd(info.qualities.best.expectedUsd)}`, ...(busy ? { disabled: 'Designing…' } : {}) },
+        { value: 'lower', label: `Lower cost · about ${usd(info.qualities.lower.expectedUsd)}`, ...(busy ? { disabled: 'Designing…' } : {}) }
+      ]} />
+      <span className="text-2xs text-ink-subtle">{quality === 'best'
+        ? `Designed, checked over your video and improved up to ${info.qualities.best.revisions} time${info.qualities.best.revisions === 1 ? '' : 's'}.`
+        : 'One design, checked over your video, with no improvement rounds. It may be less polished.'}</span>
+    </div>}
     <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" variant="primary" icon={<Wand2 size={13} />} loading={busy} disabled={busy || full || !info || !info.available} onClick={() => design.onDesign(note.trim())}
+      <Button size="sm" variant="primary" icon={<Wand2 size={13} />} loading={busy} disabled={busy || full || !info || !info.available || !estimate} onClick={() => design.onDesign(note.trim(), quality)}
         tooltip="Your AI designs it for the words said here, then checks it over your video.">Design it here</Button>
-      {info?.available && <span className="text-2xs text-ink-subtle" data-testid="design-estimate">Uses your OpenRouter credit: about {usd(info.expectedUsd)}, at most {usd(info.mostUsd)}.</span>}
+      {info?.available && estimate && <span className="text-2xs text-ink-subtle" data-testid="design-estimate">Uses your OpenRouter credit: about {usd(estimate.expectedUsd)}, at most {usd(estimate.mostUsd)}.</span>}
     </div>
     {unavailable && <p role="note" className="text-2xs text-ink-subtle">{info.reason}</p>}
     {busy && <p role="status" className="text-2xs text-ink-subtle">Designing… writing it, drawing it over your video and checking it (usually 1 to 3 minutes). {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</p>}

@@ -853,9 +853,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   // ...and a new one designed at the playhead, in any editor project: its estimate first (free), then the design (paid, in the ledger).
   handle('editor:designInfo', (_event, path: unknown) => editorDesignInfo(path))
-  paid('editor:designCustom', 'openrouter', (path) => editorDesignEstimate(path), (path, candidateId, atMs, note) => editorDesignCustom(path, candidateId, atMs, note, {
-    onSpend: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: 'Custom graphic (designed here)', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {}) }
-  }))
+  // `quality`: Best (the default) or Lower cost (one design, no revisions); each one's estimate is shown before it runs.
+  paid('editor:designCustom', 'openrouter', (path, _candidate, _at, _note, quality) => editorDesignEstimate(path, quality), (path, candidateId, atMs, note, quality) => editorDesignCustom(path, candidateId, atMs, note, {
+    onSpend: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: quality === 'lower' ? 'Custom graphic (designed here, lower cost)' : 'Custom graphic (designed here)', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {}) }
+  }, quality))
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
   handle('edit:chatInfo', async () => {

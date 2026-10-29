@@ -327,6 +327,9 @@ export function remixFolderInUse(): string | null {
   return active?.status.folder ?? null
 }
 
+/** The run folder whose video is being re-made ("Edit hook text & captions"), or null. */
+export function remixRecomposingFolder(): string | null { return recomposing }
+
 export function remixAvatarInUse(): string | null {
   return pending?.avatarId ?? null
 }

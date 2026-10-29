@@ -177,15 +177,52 @@ test('the estimate shown before it runs: one design with its revisions, plus the
   } finally { cleanup() }
 })
 
+test('Best (the default) or Lower cost: each one\'s estimate is shown first; Lower cost is one design with no revisions, the same checks', async () => {
+  // Opus 5.5 at its list price, a project with no world yet (the first design here) and one with a world kept.
+  const best = shared.customDesignEstimate(shared.DEFAULT_PRICE, false), lower = shared.customDesignEstimate(shared.DEFAULT_PRICE, false, 'lower')
+  assert.deepEqual([best.revisions, lower.revisions], [2, 0])
+  assert.deepEqual(best, shared.customDesignEstimate(shared.DEFAULT_PRICE, false, 'best'))
+  assert.ok(lower.mostUsd < best.expectedUsd / 2, JSON.stringify({ best, lower }))
+  assert.equal(lower.expectedUsd, lower.mostUsd)
+  assert.equal(shared.designRevisions(), 2); assert.equal(shared.designRevisions('lower'), 0)
+  assert.equal(shared.isDesignQuality('lower'), true); assert.equal(shared.isDesignQuality('cheap'), false)
+  const { m, run, cleanup } = load()
+  try {
+    const info = await m.editorDesignInfo(run, { model: MODEL })
+    assert.deepEqual(plainJson(info.qualities), plainJson({ best: shared.customDesignEstimate(MODEL.price, false, 'best'), lower: shared.customDesignEstimate(MODEL.price, false, 'lower') }))
+    assert.equal(info.expectedUsd, info.qualities.best.expectedUsd)
+    assert.equal(await m.editorDesignEstimate(run, 'lower'), shared.customDesignEstimate(shared.DEFAULT_PRICE, false, 'lower').mostUsd)
+    assert.equal(await m.editorDesignEstimate(run, 'nonsense'), shared.customDesignEstimate(shared.DEFAULT_PRICE, false, 'best').mostUsd)
+    // Lower cost: one write and one grade, even when the grade asks for changes; the words-said check still applies.
+    const fake = fakeModel()
+    const failing = async (request) => request.purpose === 'grade' ? { text: '{"pass": false, "score": 5, "failed": ["polish"], "fixes": ["More contrast"]}', costUsd: 0.02 } : fake.call(request)
+    const made = await m.editorDesignCustom(run, 'candidate-1', at('three'), '', { model: MODEL, call: failing, sandbox: sandboxShowing(['three things']), library: null }, 'lower')
+    assert.ok(made.graphic, made.reason)
+    assert.deepEqual(fake.requests.map((r) => r.purpose).filter((p) => p !== 'world'), ['write'])
+    const unsaid = await m.editorDesignCustom(run, 'candidate-1', at('three'), '', { model: MODEL, call: fake.call, sandbox: sandboxShowing(['the whole plan']), library: null }, 'lower')
+    assert.equal(unsaid.graphic, null)
+    // Best (asked for, or by default) improves it up to twice.
+    const again = fakeModel()
+    const failingBest = async (request) => request.purpose === 'grade' ? { text: '{"pass": false, "score": 5, "failed": ["polish"], "fixes": ["More contrast"]}', costUsd: 0.02 } : again.call(request)
+    await m.editorDesignCustom(run, 'candidate-1', at('three'), '', { model: MODEL, call: failingBest, sandbox: sandboxShowing(['three things']), library: null })
+    assert.equal(again.requests.filter((r) => r.purpose === 'write').length, 3)
+    await assert.rejects(m.editorDesignCustom(run, 'candidate-1', at('three'), '', { model: MODEL, call: fake.call, sandbox: sandboxShowing([]), library: null }, 'cheapest'), /Best or Lower cost/)
+  } finally { cleanup() }
+})
+
+const plainJson = (value) => JSON.parse(JSON.stringify(value))
+
 test('the IPC is paid: gated, estimated before spending, recorded in the ledger, and reached through the gate dialog', () => {
   const handlers = fs.readFileSync(path.join(ROOT, 'src/main/ipc-handlers.ts'), 'utf8')
-  assert.match(handlers, /paid\('editor:designCustom', 'openrouter', \(path\) => editorDesignEstimate\(path\)/)
+  // The quality the member chose is estimated before spending (Lower cost: its own, smaller estimate) and passed to the design.
+  assert.match(handlers, /paid\('editor:designCustom', 'openrouter', \(path, _candidate, _at, _note, quality\) => editorDesignEstimate\(path, quality\)/)
   assert.match(handlers, /editorDesignCustom\(path, candidateId, atMs, note, \{\s*onSpend: \(usd\) => \{ void recordSpend\(\{ kind: 'edit', provider: 'openrouter', usd/)
+  assert.match(handlers, /\}, quality\)\)/)
   assert.match(handlers, /handle\('editor:designInfo'/)
   const spending = fs.readFileSync(path.join(ROOT, 'src/main/spending.ts'), 'utf8')
   assert.match(spending, /GATED_CHANNELS = new Set\(\[[^\]]*'editor:designCustom'/)
   const preload = fs.readFileSync(path.join(ROOT, 'src/preload/index.ts'), 'utf8')
-  assert.match(preload, /designCustom: \(path, candidateId, atMs, note\) => paid\('editor:designCustom'/)
+  assert.match(preload, /designCustom: \(path, candidateId, atMs, note, quality\) => paid\('editor:designCustom', path, candidateId, atMs, note, quality \?\? 'best'\)/)
 })
 
 test('what a design shows: the note first, then the words said there', () => {

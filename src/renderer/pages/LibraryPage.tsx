@@ -42,7 +42,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null)
   // A search typed in the top bar opens the Library with it.
   const [query, setQuery] = useState(() => useShellStore.getState().takeLibrarySearch())
-  const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number; editorCandidate?: number; earlierFolder?: boolean } | null>(null)
+  const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number; editorCandidate?: number; editClip?: number; earlierFolder?: boolean } | null>(null)
   const [sort, setSort] = useState<'newest' | 'largest'>('newest')
   const [view, setView] = useState<'runs' | 'clips' | 'ready'>('runs')
   const [clipFilter, setClipFilter] = useState<ClipFilter>('all')
@@ -161,7 +161,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const recent = filtered.filter(entry => !entry.favorite)
   const totalClips = entries?.reduce((sum, e) => sum + e.clipCount, 0) ?? 0
 
-  const openRun = useCallback(async (entry: HistoryEntry, clipIndex?: number, earlierFolder = false, editorCandidate?: number): Promise<void> => {
+  const openRun = useCallback(async (entry: HistoryEntry, clipIndex?: number, earlierFolder = false, editorCandidate?: number, editClip?: number): Promise<void> => {
     if (busyRef.current.has(entry.outputDir)) return
     const request = ++openRequestId.current
     setError(null)
@@ -177,7 +177,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         setError('This run has an unsupported or damaged result file.')
         return
       }
-      setOpen({ entry, output: parsed, clipIndex, editorCandidate, earlierFolder })
+      setOpen({ entry, output: parsed, clipIndex, editorCandidate, editClip, earlierFolder })
       document.getElementById('page-scroll')?.scrollTo({ top: 0 })
     } catch (err) {
       if (request === openRequestId.current) setError(errorMessage(err, 'Could not open this run.'))
@@ -248,6 +248,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         outputDir={open.entry.outputDir}
         initialClipIndex={open.clipIndex}
         initialEditorCandidate={open.editorCandidate}
+        initialEditClip={open.earlierFolder ? undefined : open.editClip}
         onNavigate={onNavigate}
         leading={<>
           <BackLink label="Library" onClick={() => {
@@ -266,6 +267,8 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const openClip = (item: LibraryClipItem, editor: boolean): void => {
     const entry = entryFor(item.outputDir)
     if (!entry) { setError('This run is no longer in the Library list. Refresh the Library and try again.'); void load(); return }
+    // A finished clip opens its run in the editor on that clip (its editor project is made the first time).
+    if (editor && item.status === 'exported') { void openRun(entry, item.index, false, undefined, item.index); return }
     void openRun(entry, undefined, false, editor ? item.index : undefined)
   }
   const pickStatus = (status: ClipFilter): void => {

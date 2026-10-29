@@ -735,6 +735,12 @@ def replaced_clip(run, c, output):
     return index if path.is_file() and not path.is_symlink() else None
 
 
+def remix_project(project):
+    """A project made over a Remix run's finished videos (remix_editor.py)."""
+    extras = project.get('automatic')
+    return isinstance(extras, dict) and extras.get('remix') is True
+
+
 def automatic_extras(run, project):
     """What an Automatic run drew on its clips that the editor draws again: the brand handle/logo and the comment keyword."""
     from clip_engine.services.brand_mark import validate_brand_mark
@@ -833,6 +839,9 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
         index = replace_index
     with failure_code('engine_unavailable'):
         renderer = RenderingService()
+    if remix_project(project):
+        # Made over a finished Remix video: more bits, so a bake that changes nothing keeps the picture as it was.
+        renderer.quality_scale = 1.5
     a, b = c['ranges'][0][0], c['ranges'][-1][1]
     # Absent hook (a project made before hooks were editable): the run's
     # original is not recorded for those, so none is drawn, as before.
@@ -885,7 +894,8 @@ async def render_export(run, project, c, output, source, render_transcript, repl
             await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms, source=source))
         # The run's voice cleanup and music (Create), the same as on its other clips.
         from clip_engine.services.audio_finish import finish_in_place, load_run_audio
-        audio = load_run_audio(run)
+        # A Remix's own music and voice cleanup are already in its finished video.
+        audio = None if remix_project(project) else load_run_audio(run)
         if audio is not None:
             await asyncio.to_thread(finish_in_place, result.output_path, audio, str(Path(work) / 'audio'))
         if sound is not None:
@@ -986,6 +996,12 @@ def replace_library_clip(run, output, index, result, c, project, hook, a, b, cap
             pass
         entry.pop('subtitle_url', None)
         entry.pop('captions_srt', None)
+    if remix_project(project):
+        # A Remix's hook text is in its picture (the editor draws none): the card keeps it. Its "Edit hook text &
+        # captions" would make the video again without what the editor added, so the editor is where it changes now.
+        entry.pop('editable', None)
+        if not hook:
+            hook = {'text': entry['headline']} if isinstance(entry.get('headline'), str) and entry['headline'] else None
     entry.update(duration_ms=result.duration_ms, start_time_ms=a, end_time_ms=b, layout_type=result.layout_type,
                  summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None, cta=None,
                  caption_language=caption_language,

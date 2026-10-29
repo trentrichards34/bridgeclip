@@ -52,6 +52,8 @@ interface ClipListProps {
   initialClipIndex?: number
   /** Editor clip (candidate index) to open straight in the editor, from the Library's clip view. */
   initialEditorCandidate?: number
+  /** A finished Library clip (its clip index) to open in the editor, from the Library's clip view ("Open in the editor"). */
+  initialEditClip?: number
   /** Shown above the title, e.g. a back link from the Library. */
   leading?: ReactNode
   onNewClip?: () => void
@@ -77,19 +79,26 @@ export function isCreateOutput(output: JobOutput): boolean {
   return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true && metrics.listicle !== true && metrics.broll_video !== true
 }
 
+/** A finished Remix run: it opens in the editor over its finished videos (graphics go on top). */
+export function isRemixOutput(output: JobOutput): boolean {
+  const metrics = output.metrics ?? {}
+  return metrics.remix === true && typeof metrics.avatar_studio !== 'string' && metrics.listicle !== true
+}
+
 /** Which clip and tab the editor opens on (from a clip's "Edit headline"). */
 interface EditorTarget { clip?: number; tab?: 'hook'; candidate?: number }
 
 function ClipRun(props: ClipListProps): React.JSX.Element {
   const [output, setOutput] = useState(props.output)
   const hasEditor = output.editor_project === true && !!props.outputDir
-  // Automatic Create runs open in the editor too: the first time, their clips become an editor project.
-  const canEdit = !!props.outputDir && isCreateOutput(output) && (hasEditor || output.clips.length > 0) && typeof getApi().editor?.automaticInfo === 'function'
+  // Automatic Create runs and Remix videos open in the editor too: the first time, their clips become an editor project.
+  const canEdit = !!props.outputDir && (isCreateOutput(output) || isRemixOutput(output)) && (hasEditor || output.clips.length > 0) && typeof getApi().editor?.automaticInfo === 'function'
   const [editing, setEditing] = useState<EditorTarget | null>(null)
   const [opening, setOpening] = useState(hasEditor)
   const [remaining, setRemaining] = useState<number | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
   const [gate, setGate] = useState<{ info: AutomaticEditInfo; target: EditorTarget } | null>(null)
+  const editRequested = useRef(false)
   useEffect(() => {
     if (!hasEditor) return
     let active = true
@@ -121,6 +130,12 @@ function ClipRun(props: ClipListProps): React.JSX.Element {
       else setGate({ info, target })
     } catch (cause) { setEditorError(errorMessage(cause, 'Could not open the editor.')) }
   }
+  // "Open in the editor" on a finished clip in the Library's clip view: straight to that clip in the editor.
+  useEffect(() => {
+    if (props.initialEditClip === undefined || opening || editRequested.current) return
+    editRequested.current = true
+    if (canEdit || hasEditor) void openEditor({ clip: props.initialEditClip })
+  }, [opening])
   if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
   if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} initialClip={editing.clip} initialCandidate={editing.candidate} initialTab={editing.tab}
     onNeedSource={() => { setEditing(null); void openEditor() }}
@@ -363,9 +378,11 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
-              onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              // Once a Remix video has an editor project, the editor owns it: remaking it from Remix would leave the editor's copy
+              // out of date (and a later bake would overwrite that change).
+              onEditVideo={outputDir && clip.editable && !output.editor_project ? () => setEditClip(clip) : undefined}
               onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
-              onEditHeadline={editor ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
+              onEditHeadline={editor && !isRemixOutput(output) ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
@@ -390,7 +407,8 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
         actions={
           <>
             {editor && <Button disabled={deleting} variant={editor.remaining ? 'primary' : 'ghost'} icon={<Scissors className="h-4 w-4" />} onClick={() => editor.onOpen()}
-              title={editor.started ? undefined : 'Rewrite or remove headlines, and change cuts, framing and captions. Baking a clip replaces it here.'}>
+              title={editor.started ? undefined : isRemixOutput(output) ? 'Add graphics and effects over your videos. Their layout, captions and hook text stay as they are. Baking a video replaces it here.'
+                : 'Rewrite or remove headlines, and change cuts, framing and captions. Baking a clip replaces it here.'}>
               {editor.remaining ? 'Continue editing' : editor.started ? 'Open editor' : 'Edit clips'}
             </Button>}
             {outputDir && <Button onClick={() => setInspectEdits(true)}>Inspect transcript & edits</Button>}
