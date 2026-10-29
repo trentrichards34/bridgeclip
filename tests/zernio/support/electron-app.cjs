@@ -42,6 +42,24 @@ function buildApp(appDir = process.env.BRIDGECLIP_E2E_APP_DIR || path.join(os.tm
 }
 
 /**
+ * Chromium picks its Linux key store from the desktop environment, so a headless
+ * session (Xvfb, no desktop) gets plain-text storage, which the app rightly
+ * refuses for API keys. When the session bus has an unlocked Secret Service
+ * (e.g. a gnome-keyring started for the test run), point Chromium at it so
+ * keys are really encrypted. Otherwise change nothing: the app keeps refusing.
+ */
+function linuxPasswordStore() {
+  if (process.platform !== 'linux' || process.env.XDG_CURRENT_DESKTOP || !process.env.DBUS_SESSION_BUS_ADDRESS) return []
+  try {
+    const locked = execFileSync('gdbus', ['call', '--session', '--dest', 'org.freedesktop.secrets', '--object-path', '/org/freedesktop/secrets/aliases/default',
+      '--method', 'org.freedesktop.DBus.Properties.Get', 'org.freedesktop.Secret.Collection', 'Locked'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+    return locked.includes('<false>') ? ['--password-store=gnome-libsecret'] : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * @param {{ appDir: string, userDataDir: string, mock?: { apiUrl: string, browserUrl: string }, apiUrl?: string, env?: object, args?: string[] }} options
  * @returns {Promise<{ app: import('playwright-core').ElectronApplication, page: import('playwright-core').Page, close: () => Promise<void> }>}
  */
@@ -67,7 +85,7 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {}, args = [
   const app = await _electron.launch({
     executablePath: electronPath,
     // A mock keychain keeps safeStorage off the developer's real keychain.
-    args: [appDir, '--use-mock-keychain', ...args],
+    args: [appDir, '--use-mock-keychain', ...linuxPasswordStore(), ...args],
     env: {
       ...cleanEnv,
       ...env,
