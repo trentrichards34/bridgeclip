@@ -76,6 +76,8 @@ function ClipTile({ item, onOpen, onEdit, onReveal, onExport }: {
   const [thumbRef, thumb] = useLazyThumb(item.media, item.durationMs)
   const [failed, setFailed] = useState(false)
   const made = item.madeWith ? MADE_WITH[item.madeWith] : null
+  // A clip still in the editor opens there; a finished one opens its run (the editor is in its menu).
+  const edits = !!onEdit && item.status !== 'exported'
   const actions = [
     ...(onEdit ? [{ label: 'Open in the editor', icon: <Scissors size={14} />, onSelect: onEdit }] : []),
     { label: 'Open its run', icon: <Layers size={14} />, onSelect: onOpen },
@@ -83,7 +85,7 @@ function ClipTile({ item, onOpen, onEdit, onReveal, onExport }: {
     ...(onExport ? [{ label: 'Export a copy…', icon: <Download size={14} />, onSelect: onExport }] : [])
   ]
   return <article className={cn('library-card group', `status-${item.status}`)}>
-    <button type="button" className="library-card-main" onClick={onEdit ?? onOpen} aria-label={`${onEdit ? 'Edit' : 'Open'} ${item.title}`}>
+    <button type="button" className="library-card-main" onClick={edits ? onEdit : onOpen} aria-label={`${edits ? 'Edit' : 'Open'} ${item.title}`}>
       <div ref={thumbRef} className="library-thumb">
         {thumb && !failed ? <>
           <img src={localFileUrl(thumb)} alt="" className="absolute inset-0 h-full w-full scale-125 object-cover opacity-60 blur-xl saturate-150" />
@@ -117,6 +119,9 @@ function JobTile({ job, onOpen }: { job: Job; onOpen: () => void }): React.JSX.E
   </article>
 }
 
+/** Runs whose finished clips open in the clip editor (Clip runs, Remix videos, edited recordings and B-roll videos; not Avatar Studio). */
+const EDITOR_RUNS = new Set(['create', 'remix', 'edit', 'broll'])
+
 export function LibraryClipGrid({ summary, error, jobs, query, filter, sort, onOpenRun, onEdit, onOpenJobs, onReveal, onExport }: {
   summary: LibrarySummary | null; error: string | null; jobs: Job[]; query: string; filter: ClipFilter; sort: 'newest' | 'score'
   onOpenRun: (item: LibraryClipItem) => void; onEdit: (item: LibraryClipItem) => void; onOpenJobs: () => void
@@ -143,7 +148,7 @@ export function LibraryClipGrid({ summary, error, jobs, query, filter, sort, onO
     <div className="library-clip-grid">
       {working.map((job) => <JobTile key={job.id} job={job} onOpen={onOpenJobs} />)}
       {clips.map((item) => <ClipTile key={`${item.outputDir}\n${item.status === 'exported' ? 'e' : 'c'}${item.index}`} item={item} onOpen={() => onOpenRun(item)}
-        onEdit={item.status === 'exported' ? undefined : () => onEdit(item)}
+        onEdit={item.status !== 'exported' || (item.madeWith && EDITOR_RUNS.has(item.madeWith)) ? () => onEdit(item) : undefined}
         onReveal={item.status === 'exported' && item.media?.kind === 'clip' ? () => onReveal(item) : undefined}
         onExport={item.status === 'exported' && item.media?.kind === 'clip' ? () => onExport(item) : undefined} />)}
     </div>

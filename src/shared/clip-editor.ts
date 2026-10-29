@@ -131,6 +131,8 @@ export interface AutomaticOrigin {
   brand_mark?: { handle: string; logo: boolean; position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }
   cta_keyword?: string
   cta_offer?: string
+  /** Made over a Remix run's finished videos (engine remix_editor.py): their layout, captions and hook text are in the picture. */
+  remix?: true
 }
 export interface EditorProject {
   version: 1; revision: number; title: string; duration_ms: number; width: number; height: number
@@ -179,6 +181,8 @@ export interface AutomaticEditInfo {
   clipCount: number
   /** Some clips' cuts weren't saved with the run (older runs): converting works them out again, so they may differ slightly. */
   estimatedCuts?: boolean
+  /** A Remix run: the editor works over its finished videos (graphics go on top; their layout, captions and hook text stay). */
+  remix?: true
 }
 /** Status counts for Library and Jobs, without sending the project to the renderer. */
 export interface EditorProgressSummary {
@@ -446,6 +450,7 @@ function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
   if (v.brand_mark !== undefined) origin.brand_mark = parseBrandMark(v.brand_mark)
   if (v.cta_keyword !== undefined) origin.cta_keyword = /^[A-Z0-9][A-Z0-9-]{1,19}$/.test(str(v.cta_keyword, 20)) ? v.cta_keyword as string : fail()
   if (v.cta_offer !== undefined) origin.cta_offer = str(v.cta_offer, 200)
+  if (v.remix !== undefined) { if (v.remix !== true) fail(); origin.remix = true }
   return origin
 }
 export function candidateEdit(c: CandidateEdit): CandidateEdit {

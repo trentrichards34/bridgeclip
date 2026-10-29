@@ -498,6 +498,13 @@ async def prepare(config, progress=None):
     if not isinstance(media_id, str) or not re.fullmatch(r'[a-f0-9]{32}', media_id):
         raise ValueError('Invalid media id')
     mode, kind = config.get('mode'), config.get('source')
+    if mode == 'remix':
+        # A Remix run: the editor works over its finished videos (remix_editor.py).
+        from clip_engine.services.remix_editor import prepare_remix
+        again = config.get('revision')
+        if again is not None and (type(again) is not int or again < 0):
+            raise ValueError('Invalid editor preparation')
+        return await prepare_remix(run, {'media_id': media_id, 'revision': again}, report)
     if mode not in ('convert', 'restore') or kind not in ('kept', 'file', 'download'):
         raise ValueError('Invalid editor preparation')
     project_path = run / 'editor-project.json'

@@ -11,6 +11,14 @@ import { ProgressBar } from './ui/ProgressBar'
 /** What opening this run in the editor does, in plain words. */
 export function automaticEditSummary(info: AutomaticEditInfo): string[] {
   const lines: string[] = []
+  if (info.remix) {
+    const videos = info.clipCount === 1 ? 'Your video opens' : `Your ${info.clipCount} videos open`
+    if (info.state === 'convert') lines.push(`${videos} in the editor exactly as they look now: the layout, captions, hook text and graphics stay. Add graphics and effects on top. No AI is used.`)
+    else lines.push('The editor’s copy of these videos was removed to save space. Opening makes it again from the videos in your Library, with everything you baked. Changes you didn’t bake aren’t kept.')
+    lines.push('Baking a video replaces it in your Library, with its call to action. Videos you don’t bake stay exactly as they are.')
+    lines.push('Uses the finished videos in this run, so nothing is downloaded.')
+    return lines
+  }
   if (info.state === 'convert') {
     lines.push(`Your ${info.clipCount === 1 ? 'clip opens' : `${info.clipCount} clips open`} in the editor with the same moments and headlines. No AI is used.`)
     if (info.estimatedCuts) lines.push('This run didn’t save its exact cuts, so they are worked out again and may differ slightly from your clips. Check them before baking.')
@@ -78,7 +86,7 @@ export function EditAutomaticDialog({ outputDir, info, onClose, onReady }: {
     } catch (err) { setError(errorMessage(err)) }
   }
   const missing = info.source === 'missing'
-  const title = info.state === 'restore' ? 'Get this run’s video again' : 'Edit clips in the editor'
+  const title = info.state === 'restore' ? 'Get this run’s video again' : info.remix ? 'Edit videos in the editor' : 'Edit clips in the editor'
 
   return (
     <Dialog ref={ref} aria-labelledby="edit-automatic-title" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[560px]"

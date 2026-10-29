@@ -1010,7 +1010,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     {error && <div role="alert" className="editor-notice text-danger">{conflict ? 'This project changed since the editor opened it, so your latest edits cannot be saved. Reload the project to continue from its saved state.' : error}{conflict
       ? <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={() => { setUndo([]); setRedo([]); bakedKeys.current.clear(); void load() }}>Reload project</Button>
       : key !== savedKey.current && <Button size="sm" variant="ghost" onClick={() => { setError(null); void save().catch((e) => setError(errorMessage(e))) }}>Retry save</Button>}</div>}
-    {automatic && originNote && <div role="note" className="editor-notice"><span>These clips were made automatically. Baking a clip replaces it in your Library; clips you don’t bake stay exactly as they are.
+    {automatic?.remix && originNote && <div role="note" className="editor-notice" data-testid="remix-editor-note"><span>These are your finished Remix videos. Their layout, captions, hook text and graphics are part of the picture, so add graphics and effects on top (captions and hook text here would show twice). Baking a video replaces it in your Library; videos you don’t bake stay exactly as they are.</span>
+      <Button size="sm" variant="ghost" aria-label="Dismiss note about remix videos" iconOnly icon={<X size={14} />} onClick={() => setOriginNote(false)} /></div>}
+    {automatic && !automatic.remix && originNote && <div role="note" className="editor-notice"><span>These clips were made automatically. Baking a clip replaces it in your Library; clips you don’t bake stay exactly as they are.
       {automatic.omitted.length > 0 && ` A clip baked again has no ${listWords(automatic.omitted.map((o) => omissionLabels[o]))}.`}
       {automatic.estimated_cuts > 0 && ` This run didn’t save its exact cuts, so ${automatic.estimated_cuts === 1 ? 'one clip’s cut was' : `${automatic.estimated_cuts} clips’ cuts were`} worked out again and may differ slightly from your clips.`}</span>
       <Button size="sm" variant="ghost" aria-label="Dismiss note about automatic clips" iconOnly icon={<X size={14} />} onClick={() => setOriginNote(false)} /></div>}
@@ -1018,7 +1020,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     {confirmFree && <ConfirmDialog onClose={closeFree} request={{
       title: 'Free editor media?', confirmLabel: 'Free media',
       body: automatic
-        ? <>Delete this run's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your clips stay in the Library. To edit them again later, CreatorClips downloads the video again, or uses the original file.</>
+        ? automatic.remix
+          ? <>Delete the editor's copy of these videos and its preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your videos stay in the Library. To edit them again later, CreatorClips makes the copy again from the videos in your Library (changes you haven't baked aren't kept).</>
+          : <>Delete this run's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your clips stay in the Library. To edit them again later, CreatorClips downloads the video again, or uses the original file.</>
         : <>Delete this project's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your exported clips stay in the Library. The project becomes read-only: you won't be able to refine, re-bake or restore its clips again.</>,
       onConfirm: () => { void freeMedia() }
     }} />}
@@ -1196,7 +1200,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
         </div>
       </div>
-      <aside className="editor-inspector">{automatic && <EditLog key={candidate.id} variant="strip" defaultOpen={false} lines={clipEditLog(project, candidate)} disabled={editingDisabled}
+      <aside className="editor-inspector">{automatic && !automatic.remix && <EditLog key={candidate.id} variant="strip" defaultOpen={false} lines={clipEditLog(project, candidate)} disabled={editingDisabled}
         onRestore={(line) => { if (line.restore) change(line.restore) }}
         note={candidate.auto ? 'Undo takes back a Restore.' : 'This clip was opened in the editor before the app kept a record of its cut, so only the graphics it added are listed.'} />}<EditorTabs tab={tab} onTab={setTab} />
         <div ref={transcriptPanel} className="editor-inspector-body">

@@ -10,9 +10,10 @@ import { assertPublicWebUrl } from './network-policy'
 import { readCreateRequest, requestFromOutput } from './more-clips'
 import { brandForJob } from './brands'
 import { liveJobIds } from './job-manager'
+import { remixFolderInUse, remixRecomposingFolder } from './remix'
 import { editorFailureMessage, parseEditorProject, type AutomaticEditInfo, type EditorProject } from '../shared/clip-editor'
 import { headlineLookForEngine, type HeadlineLook } from '../shared/headline-look'
-import { withEditorPreparation } from './clip-editor'
+import { withEditorPreparation, type EditorPreparation } from './clip-editor'
 import { logger } from './logger'
 import type { ClipJobRequest } from '../shared/jobs'
 import type { JobOutput } from '../shared/job-output'
@@ -62,6 +63,12 @@ export function isCreateRun(output: JobOutput): boolean {
   return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true && metrics.listicle !== true && metrics.broll_video !== true
 }
 
+/** A finished Remix run: it opens in the editor over its finished videos (engine remix_editor.py). */
+export function isRemixRun(output: JobOutput): boolean {
+  const metrics = (output.metrics ?? {}) as Record<string, unknown>
+  return metrics.remix === true && typeof metrics.avatar_studio !== 'string' && metrics.listicle !== true
+}
+
 /** The project's own video files are in place (a project made from a kept copy uses editor-source.mp4). */
 function projectMediaPresent(run: string, project: EditorProject): boolean {
   if (project.media_freed) return false
@@ -80,16 +87,37 @@ async function readRun(path: unknown): Promise<{ run: string; library: string; o
   const { run, library } = runFolder(path)
   const output = await getJobOutput(run, library)
   if (!output) throw new Error('This run is no longer in your Library.')
-  if (!isCreateRun(output)) throw new Error('Remix, Avatar Studio and edited recordings are changed from their own menus.')
+  if (!isCreateRun(output) && !isRemixRun(output)) throw new Error('Avatar Studio videos and edited recordings are changed from their own menus.')
   if (liveJobIds().has(basename(run))) throw new Error('Wait for this run to finish before editing it.')
+  if (isRemixRun(output) && [remixFolderInUse(), remixRecomposingFolder()].some((folder) => folder && samePath(folder, run))) {
+    throw new Error('Wait for this remix to finish before editing it.')
+  }
   const project = readProjectFile(run)
   if (output.editor_project && !project) throw new Error('This run’s editor project could not be read.')
   return { run, library, output, project }
 }
 
+function samePath(a: string, b: string): boolean {
+  try { return realpathSync(a) === b } catch { return false }
+}
+
+/** A Remix run: its finished videos become the editor's source (no download, copy or AI). */
+function remixEditInfo(run: string, output: JobOutput, project: EditorProject | null): AutomaticEditInfo {
+  const base = { videoLabel: output.source_video_title || 'your remix', clipCount: output.clips.length, source: 'kept' as const, remix: true as const }
+  if (project && output.editor_project) {
+    if (!project.automatic?.remix) throw new Error('This run’s editor project could not be read.')
+    return { ...base, state: projectMediaPresent(run, project) ? 'ready' : 'restore' }
+  }
+  if (!output.clips.length) throw new Error('This run has no videos to edit.')
+  // An unfinished conversion (the project was written, the run not yet marked) is finished without new video.
+  if (project && !project.automatic?.remix) throw new Error('This run’s editor project could not be read.')
+  return { ...base, state: 'convert' }
+}
+
 /** What opening this run in the editor involves. */
 export async function automaticEditInfo(path: unknown): Promise<AutomaticEditInfo> {
   const { run, output, project } = await readRun(path)
+  if (isRemixRun(output)) return remixEditInfo(run, output, project)
   const videoLabel = isWebUrl(output.source_video_url) ? output.source_video_url : basename(output.source_video_url || '') || 'the video'
   const base = { videoLabel, clipCount: output.clips.length }
   const original = originalFile(output)
@@ -239,6 +267,10 @@ export async function prepareAutomaticEditor(path: unknown, localFile?: unknown)
   const info = await automaticEditInfo(path)
   if (info.state === 'ready') return info
   const { run: folder } = runFolder(path)
+  if (info.remix) {
+    await withEditorPreparation(folder, (prep) => prepareRemixEditor(prep))
+    return automaticEditInfo(path)
+  }
   await withEditorPreparation(folder, async (prep) => {
     // Checked again inside the run's lock: the run may have changed while waiting.
     const { run, output, project } = await readRun(prep.run)
@@ -298,3 +330,35 @@ export async function prepareAutomaticEditor(path: unknown, localFile?: unknown)
   return automaticEditInfo(path)
 }
 
+
+/**
+ * A Remix run's editor project, made from its finished videos (the engine's "prepare" action, mode "remix"), or made
+ * again when its editor video was freed (from the videos now in the Library, with everything baked into them).
+ */
+async function prepareRemixEditor(prep: EditorPreparation): Promise<void> {
+  const { run, output, project } = await readRun(prep.run)
+  const now = remixEditInfo(run, output, project)
+  if (now.state === 'ready') return
+  if (now.state === 'convert' && project?.automatic?.remix) { markEditorProject(run); return }
+  const mediaId = randomUUID().replaceAll('-', '')
+  const owned = [`editor-source-${mediaId}.mp4`, `editor-source-${mediaId}.mp4.partial.mp4`, `editor-preview-${mediaId}.mp4`, `editor-preview-${mediaId}.mp4.partial.mp4`].map((name) => join(run, name))
+  let committed = false
+  try {
+    const durationMs = output.clips.reduce((sum, clip) => sum + Math.max(0, clip.duration_ms || 0), 0)
+    prep.setProgress({ phase: 'copy', percent: 0 })
+    await prep.worker({ media_id: mediaId, mode: 'remix', ...(now.state === 'restore' && project ? { revision: project.revision } : {}) }, Math.max(60_000, durationMs))
+    committed = true
+    markEditorProject(run)
+    logger.info('editor.remix.prepared', { mode: now.state, videos: output.clips.length })
+  } catch (error) {
+    if (prep.cancelled()) throw new Error(editorFailureMessage('prepare', 'cancelled'))
+    throw error
+  } finally {
+    let keep = new Set<string>()
+    try {
+      const current = readProjectFile(run)
+      if (current && !current.media_freed && current.source_id) keep = new Set([`editor-source-${current.source_id}.mp4`, `editor-preview-${current.preview_id ?? current.source_id}.mp4`].map((name) => join(run, name)))
+    } catch { if (committed) keep = new Set(owned) }
+    for (const file of owned) if (!keep.has(file)) { try { unlinkSync(file) } catch { /* Not made. */ } }
+  }
+}

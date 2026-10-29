@@ -611,22 +611,26 @@ class RenderingService:
         """
         rate = float(Fraction(fps))
         gop = ["-g", str(max(1, round(rate * 2)))]
+        # A render made over an already finished video (a Remix opened in the editor) gets more bits, so a bake that
+        # changes nothing keeps the picture as it was (quality_scale 1.5: half again the bitrate, a lower CRF).
+        scale = max(1.0, float(getattr(self, "quality_scale", 1.0) or 1.0))
         if self.settings.local_mode and sys.platform == "darwin":
             # VideoToolbox otherwise requires a free hardware encoder. Allow
             # Apple's software fallback on Intel VMs and Macs with a busy GPU.
             if out_w > out_h:
-                mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) * (1.5 if rate > 31 else 1)
+                mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) * (1.5 if rate > 31 else 1) * scale
                 return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-profile:v", "high", "-b:v", f"{mbps:g}M", *gop]
-            return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", "8M", *gop]
+            return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", f"{8 * scale:g}M", *gop]
         if self.settings.local_mode and getattr(self, "_local_cpu_encoder", "libopenh264") == "libopenh264":
             # The Windows/Linux LGPL distribution includes OpenH264, not x264.
             # A CPU encoder also works on machines without an NVIDIA/Intel GPU.
             mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) if out_w > out_h else 8
             if rate > 31:
                 mbps *= 1.5
-            return ["-c:v", "libopenh264", "-b:v", f"{mbps:g}M", *gop]
+            return ["-c:v", "libopenh264", "-b:v", f"{mbps * scale:g}M", *gop]
+        crf = self.settings.ffmpeg_crf - (round(8 * (scale - 1)) if scale > 1 else 0)
         return ["-c:v", "libx264", "-preset", self.settings.ffmpeg_preset,
-                "-crf", str(self.settings.ffmpeg_crf), *gop]
+                "-crf", str(max(10, crf)), *gop]
 
     async def capture_framing_source(self, video_path: str, output_path: str, *, progress=None, duration_ms=None) -> None:
         """One uncropped preview per captured run, on the original source clock."""
