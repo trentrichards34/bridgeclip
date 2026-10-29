@@ -102,7 +102,8 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
       id: 'openrouter', title: 'Add your OpenRouter key', detail: 'One key covers transcription, picking the best moments and writing.', done: facts.openrouter,
       why: 'CreatorClips uses AI models through OpenRouter to transcribe, find the best moments and write titles and takes.',
       how: ['Sign in at openrouter.ai and add credit to your account.', 'Create an API key there.', 'Paste it in Settings → API keys. It’s stored encrypted on this computer.'],
-      cost: 'You pay OpenRouter for what each run uses. You can set a spending limit in Settings → Spending.'
+      // Never a made-up dollar amount: point at the app's own estimates and records.
+      cost: 'You pay OpenRouter for what each run uses. Not sure how much credit to add? Every paid run shows its estimated cost before it starts, and Settings → Spending lists what each run cost, so you can see how far your credit goes. You can set a monthly limit there too.'
     },
     {
       id: 'tools', title: 'Pass the system check', done: facts.toolsOk === true,

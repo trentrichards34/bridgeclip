@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { ArrowRight, Lightbulb, UserRoundCog } from 'lucide-react'
+import { peekGuide, takeGuide } from '../lib/guide-focus'
 import { GOALS, GUIDES, TOOL_GUIDES, TOOL_GUIDE_PAGES, goalAvailable, isVideoGoal, type GoalId, type Guide, type ToolGuideId } from '../../shared/onboarding'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { startGoal, useOnboarding } from '../store/use-onboarding-store'
@@ -19,6 +21,19 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
   // Then the tools that aren't profile goals (B-roll video, AI explainers).
   const all: Guide[] = [...order.map((id) => GUIDES[id]), ...(Object.keys(TOOL_GUIDES) as ToolGuideId[]).map((id) => TOOL_GUIDES[id])]
   const isMine = (id: Guide['id']): boolean => (goals as string[]).includes(id)
+  // "How it works" on a Make page opens Guides at that page's guide.
+  useEffect(() => {
+    const id = peekGuide()
+    if (!id) return
+    // After the app's own "each page starts at the top" scroll, which runs after this page's effects.
+    const frame = requestAnimationFrame(() => {
+      takeGuide()
+      const section = document.getElementById(`guide-${id}`)
+      section?.scrollIntoView({ block: 'start' })
+      section?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [])
   const start = (guide: Guide, mine: boolean): React.JSX.Element => {
     const variant = mine ? 'primary' : 'secondary'
     const id = guide.id
@@ -46,7 +61,7 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
           const id = guide.id
           const mine = isMine(id)
           return (
-            <section key={id} id={`guide-${id}`} aria-labelledby={`guide-${id}-title`} className="glass scroll-mt-4 rounded-2xl p-4 xl:p-5" data-testid="guide">
+            <section key={id} id={`guide-${id}`} tabIndex={-1} aria-labelledby={`guide-${id}-title`} className="glass scroll-mt-4 rounded-2xl p-4 outline-none focus-visible:ring-2 focus-visible:ring-accent/50 xl:p-5" data-testid="guide">
               <div className="flex flex-wrap items-start gap-3">
                 <div className="min-w-0 flex-1">
                   {mine && <p className="eyebrow text-accent">In your profile</p>}
