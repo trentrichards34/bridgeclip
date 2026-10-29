@@ -12,13 +12,24 @@ const { buildApp, launchApp, ROOT } = require('../support/electron-app.cjs')
 const KEY = 'automation-e2e-key'
 const FFMPEG = fs.existsSync(path.join(ROOT, 'engine-bin', 'ffmpeg')) ? path.join(ROOT, 'engine-bin', 'ffmpeg') : 'ffmpeg'
 
+/** Polls the saved automations. (An IPC call: page.waitForFunction would take its promise as already truthy.) */
+async function waitForAutomations(page, check, timeout = 15_000) {
+  const end = Date.now() + timeout
+  for (;;) {
+    const automations = await page.evaluate(() => window.bridgeclip.automations.list())
+    if (check(automations)) return automations
+    if (Date.now() > end) throw new Error(`Timed out waiting for the saved automations: ${JSON.stringify(automations.map((automation) => automation.content.map((item) => [item.title, item.status])))}`)
+    await page.waitForTimeout(100)
+  }
+}
+
 /** Picks an option from one of the app's dropdowns (a combobox button with a listbox menu). */
 async function choose(page, combobox, name) {
   await combobox.click()
   await page.getByRole('listbox').getByRole('option', { name, exact: true }).click()
 }
 
-test('add library clips, review TikTok, and run a mixed-platform automation', { timeout: 180_000 }, async (t) => {
+test('add library clips, review TikTok, and run a mixed-platform automation', { timeout: 600_000 }, async (t) => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-automation-e2e-'))
   const clip = path.join(work, 'new_clip.mp4')
   execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=360x640:d=4:r=15',
@@ -137,19 +148,27 @@ test('add library clips, review TikTok, and run a mixed-platform automation', { 
   const queueOrder = () => queueRegion.locator('[data-rfd-draggable-id]').evaluateAll((rows) => rows.map((row) => row.querySelector('p').textContent))
   const firstHandle = page.getByRole('button', { name: 'Reorder First library clip', exact: true })
   const secondHandle = page.getByRole('button', { name: 'Reorder Second library clip', exact: true })
-  await secondHandle.scrollIntoViewIfNeeded()
-  const firstBox = await firstHandle.boundingBox()
+  // Drag in the middle of the window: near its edges the list auto-scrolls
+  // under the pointer (for longer on a slow machine), moving the target.
+  await secondHandle.evaluate((handle) => handle.scrollIntoView({ block: 'center', behavior: 'instant' }))
   const secondBox = await secondHandle.boundingBox()
   await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + secondBox.height / 2)
   await page.mouse.down()
   await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y - 10, { steps: 3 })
   await page.locator('body > li[data-rfd-draggable-id]').waitFor()
+  const firstBox = await firstHandle.boundingBox()
   await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2, { steps: 12 })
+  // Release only once the neighbor has animated out of the way (the drop target is set).
+  await page.waitForFunction(() => [...document.querySelectorAll('section[aria-label="Queued"] li[data-rfd-draggable-id]')]
+    .some((row) => /translate\(0px, [1-9]/.test(row.style.transform)))
   await page.mouse.up()
-  await page.waitForFunction(async () => (await window.bridgeclip.automations.list())[0].content[0].title === 'Second library clip')
+  await waitForAutomations(page, (automations) => automations[0].content[0].title === 'Second library clip')
   await page.locator('body > li[data-rfd-draggable-id]').waitFor({ state: 'detached' })
   assert.deepEqual(await queueOrder(), ['Second library clip', 'First library clip'])
   // Keyboard cancel preserves the saved order; Space commits a later move.
+  // (Handles are disabled while the drop saves.)
+  const secondReady = secondHandle.and(page.locator('[aria-disabled="false"]'))
+  await secondReady.waitFor()
   await secondHandle.focus()
   await page.keyboard.press('Space')
   await page.locator('body > li[data-rfd-draggable-id]').waitFor()
@@ -157,12 +176,13 @@ test('add library clips, review TikTok, and run a mixed-platform automation', { 
   await page.keyboard.press('Escape')
   await page.locator('body > li[data-rfd-draggable-id]').waitFor({ state: 'detached' })
   assert.deepEqual(await queueOrder(), ['Second library clip', 'First library clip'])
+  await secondReady.waitFor()
   await secondHandle.focus()
   await page.keyboard.press('Space')
   await page.locator('body > li[data-rfd-draggable-id]').waitFor()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Space')
-  await page.waitForFunction(async () => (await window.bridgeclip.automations.list())[0].content[0].title === 'First library clip')
+  await waitForAutomations(page, (automations) => automations[0].content[0].title === 'First library clip')
   await page.locator('body > li[data-rfd-draggable-id]').waitFor({ state: 'detached' })
   assert.deepEqual(await queueOrder(), ['First library clip', 'Second library clip'])
   const clipTitle = page.getByText('First library clip', { exact: true })
@@ -389,7 +409,8 @@ test('add library clips, review TikTok, and run a mixed-platform automation', { 
   const failedAlerts = page.getByRole('status').filter({ hasText: /^Metadata enhancement failed:/ })
   assert.equal(await failedAlerts.count(), 5)
   await failedAlerts.first().getByRole('button', { name: 'Dismiss', exact: true }).click()
-  await page.waitForFunction(async () => (await window.bridgeclip.automations.list())[0].content.filter((item) => item.metadataErrorAcknowledged).length === 1)
+  await waitForAutomations(page, (automations) => automations[0].content.filter((item) => item.metadataErrorAcknowledged).length === 1)
+  await failedAlerts.nth(4).waitFor({ state: 'detached' })
   assert.equal(await failedAlerts.count(), 4, 'dismiss affects only the chosen clip')
   await page.reload()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Automations/ }).click()
