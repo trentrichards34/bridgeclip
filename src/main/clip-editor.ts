@@ -28,7 +28,7 @@ type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promi
 let applyExportCta: EditorCtaApplier | null = null
 export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
 /** Records what an editor AI call cost in the spending ledger (set by the IPC layer, which owns it). */
-type EditorSpendRecorder = (usd: number, label: string) => Promise<unknown>
+type EditorSpendRecorder = (usd: number, label: string, run: string) => Promise<unknown>
 let recordEditorSpend: EditorSpendRecorder | null = null
 export function onEditorSpend(recorder: EditorSpendRecorder): void { recordEditorSpend = recorder }
 /** Exports rewrite the run's clips and job_output.json: they wait for other changes to the run (CTA changes, re-makes). */
@@ -608,7 +608,7 @@ async function recordEditorCost(run: string, result: WorkerResult, section: keyo
   if (!cost && !incomplete) return
   if (cost && recordEditorSpend) {
     // The spending ledger (Settings → Spending), apart from the run's own cost record.
-    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section]) } catch { /* never breaks the editor */ }
+    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section], run) } catch { /* never breaks the editor */ }
   }
   const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
   try {

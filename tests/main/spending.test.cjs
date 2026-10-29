@@ -320,8 +320,33 @@ test('editor bakes that translate captions pass the spending check and can take 
   assert.match(handlers, /if \(action === 'review'\) \{\s*await assertSpendAllowed\('editor:run', 'openrouter', await editorCallEstimate\(path, 'review'\)/)
   assert.match(handlers, /assertSpendAllowed\('editor:suggestHooks', 'openrouter', await editorCallEstimate\(path, 'suggest-hooks'\)/)
   assert.ok(channels.includes('editor:suggestHooks'), 'hook ideas go through the gate dialog')
-  assert.match(handlers, /recordSpend\(\{ kind: 'create', provider: 'openrouter', usd, label \}\)/)
-  assert.match(handlers, /onEditorSpend\(\(usd, label\) => recordSpend\(\{ kind: 'create'/)
+  // Filed under the tool the run was made with (a Remix's hook ideas under Remix).
+  assert.match(handlers, /onEditorSpend\(\(usd, label, run\) => recordSpend\(\{ kind: spendKindForRun\(runIdOf\(run\)\)/)
+})
+
+test('clip editor costs are filed under the run’s own tool; B-roll videos under "B-roll video", also in older ledgers', () => {
+  assert.equal(shared.spendKindForRun('remix-0d9f0a3c-1b2c-4d5e-8f90-123456789abc'), 'remix')
+  assert.equal(shared.spendKindForRun('edit-0d9f0a3c-1b2c-4d5e-8f90-123456789abc'), 'edit')
+  assert.equal(shared.spendKindForRun('broll-video-0d9f0a3c-1b2c-4d5e-8f90-123456789abc'), 'brollvideo')
+  assert.equal(shared.spendKindForRun('3f1c2a8e-5b6d-4e7f-8a9b-0c1d2e3f4a5b'), 'create')
+  assert.equal(shared.spendKindForRun(undefined), 'create')
+  assert.equal(shared.SPEND_KIND_LABELS.brollvideo, 'B-roll video')
+  assert.equal(shared.SPEND_KIND_LABELS.broll, 'B-roll library')
+  // An older ledger's B-roll video lines (kind "broll") read as B-roll video; B-roll library lines stay.
+  const old = shared.parseLedger([
+    JSON.stringify(entry('2026-10-03T12:00:00.000Z', 0.2, 'broll', { label: 'B-roll video: shots', runId: 'broll-video-0d9f0a3c-1b2c-4d5e-8f90-123456789abc' })),
+    JSON.stringify(entry('2026-10-03T12:00:00.000Z', 0.1, 'broll', { label: 'B-roll video: voice' })),
+    JSON.stringify(entry('2026-10-03T12:00:00.000Z', 0.3, 'broll', { label: 'B-roll library: looking at clips' }))
+  ].join('\n'))
+  assert.deepEqual(plain(old.map((e) => e.kind)), ['brollvideo', 'brollvideo', 'broll'])
+  const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  for (const channel of ['editor:libraryAdd', 'editor:customGraphic', 'editor:designCustom']) {
+    const at = handlers.indexOf(`paid('${channel}'`)
+    const body = handlers.slice(at, handlers.indexOf('\n  paid(', at + 10) > 0 ? handlers.indexOf('\n  paid(', at + 10) : at + 1200).slice(0, 1200)
+    assert.match(body, /kind: spendKindForRun\(runIdOf\(path\)\)/, channel)
+    assert.doesNotMatch(body, /kind: 'edit'/, channel)
+  }
+  assert.match(handlers, /onBrollVideoSpend\(\(usd, label, runId\) => recordSpend\(\{ kind: 'brollvideo'/)
 })
 
 test('a HeyGen video recorded when it starts is replaced by its final figure, never counted twice; $0 removes it', async () => {

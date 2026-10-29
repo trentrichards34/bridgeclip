@@ -195,7 +195,7 @@ test('B-roll video: a voiceover and the whole library become a video in the Libr
   assert.equal(candidate.graphics[0].fields.effect, 'marker-highlight')
   // What it cost is in the ledger (the word timings and the plan).
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-  const spent = ledger.filter((entry) => entry.kind === 'broll' && entry.label === 'B-roll video').reduce((sum, entry) => sum + entry.usd, 0)
+  const spent = ledger.filter((entry) => entry.kind === 'brollvideo' && entry.label === 'B-roll video').reduce((sum, entry) => sum + entry.usd, 0)
   assert.ok(Math.abs(spent - 0.0027) < 1e-6, String(spent))
 
   // The shots are listed; one is swapped for the next best match.
