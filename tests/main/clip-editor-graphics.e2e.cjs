@@ -63,7 +63,8 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   await page.getByRole('region', { name: 'Choose a graphic' }).waitFor()
   // 28 templates, then the Effects (one tile each, fx-effects.e2e.cjs covers those).
   assert.equal(await page.locator('.editor-graphic-tile:not([aria-label^="Add effect"])').count(), 29)
-  await page.waitForFunction(() => document.querySelectorAll('.editor-graphic-tile .mg-root').length === 29)
+  // Each template tile draws its live preview. (Some effect tiles draw one too once on screen: not counted here.)
+  await page.waitForFunction(() => document.querySelectorAll('.editor-graphic-tile:not([aria-label^="Add effect"]) .mg-root').length === 29)
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'editor-graphic-picker.png') }) }
   await page.getByRole('button', { name: 'Add Stat counter', exact: true }).click()
