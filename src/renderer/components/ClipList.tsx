@@ -378,7 +378,9 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
-              onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              // Once a Remix video has an editor project, the editor owns it: remaking it from Remix would leave the editor's copy
+              // out of date (and a later bake would overwrite that change).
+              onEditVideo={outputDir && clip.editable && !output.editor_project ? () => setEditClip(clip) : undefined}
               onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
               onEditHeadline={editor && !isRemixOutput(output) ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
