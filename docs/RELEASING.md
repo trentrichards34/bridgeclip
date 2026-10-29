@@ -85,6 +85,8 @@ Windows is signed only when `AZURE_CLIENT_SECRET` and `WINDOWS_PUBLISHER_NAME` a
 
 ## Versioning
 
+The first CreatorClips release is `npm run release:major` (0.1.19, the last BridgeClip version, to 1.0.0).
+
 `npm run release:patch` (or `release:minor`, `release:major`, or `node scripts/release/bump-version.cjs X.Y.Z`) runs `scripts/release/bump-version.cjs`, which:
 
 1. requires a clean working tree and refuses an existing tag;

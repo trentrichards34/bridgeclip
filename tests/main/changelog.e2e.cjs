@@ -23,9 +23,10 @@ test('Settings → About and Help → Changelog show the bundled changelog', { t
   const dialog = page.getByRole('dialog', { name: 'Changelog' })
   await dialog.waitFor()
   await dialog.getByRole('region', { name: `Version ${version}` }).getByText('This version', { exact: true }).waitFor()
-  const older = dialog.getByRole('region', { name: 'Version 0.1.17' })
-  await older.getByText('Clip public, finished Twitch VODs by pasting their link.', { exact: true }).waitFor()
-  await older.getByText('Restart to update', { exact: true }).waitFor()
+  // BridgeClip's history is not shown: only the credit (as this version in development, "Earlier versions" once released).
+  await dialog.getByText('CreatorClips is built on BridgeClip by BridgeMind (MIT).', { exact: true }).waitFor()
+  assert.equal(await dialog.getByRole('region', { name: 'Version 0.1.17' }).count(), 0)
+  for (const text of ["BridgeMind's Developer ID", 'Linux installers', 'Windows x64']) assert.equal(await dialog.getByText(text).count(), 0, text)
   assert.equal(await dialog.getByText('**').count(), 0, 'Markdown markers must not reach the screen')
   if (shots) {
     fs.mkdirSync(shots, { recursive: true })

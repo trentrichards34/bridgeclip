@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from 'react'
 import { ArrowUpRight, History, X } from 'lucide-react'
 import changelogMarkdown from '../../../CHANGELOG.md?raw'
-import { UNRELEASED, hasChanges, parseChangelog, parseChangelogText, type ChangelogRelease } from '../../shared/changelog'
+import { UNRELEASED, hasChanges, isBridgeClipRelease, parseChangelog, parseChangelogText, type ChangelogRelease } from '../../shared/changelog'
 import { APP_NAME, APP_VERSION, RELEASES_URL } from '../config/brand'
 import { getApi } from '../lib/ipc'
 import { Badge } from './ui/Badge'
@@ -12,11 +12,16 @@ import { IconTile } from './ui/IconTile'
 /** Bundled at build time, so the list always matches the running version. */
 const RELEASES = parseChangelog(changelogMarkdown).filter(hasChanges)
 
+/** One version's section of the bundled changelog (null when it lists nothing). */
+export function releaseNotesFor(version: string): ChangelogRelease | null {
+  return RELEASES.find((release) => release.version === version) ?? null
+}
+
 function formatReleaseDate(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function RichText({ text }: { text: string }): React.JSX.Element {
+export function RichText({ text }: { text: string }): React.JSX.Element {
   return (
     <>
       {parseChangelogText(text).map((part, index) =>
@@ -31,13 +36,15 @@ function RichText({ text }: { text: string }): React.JSX.Element {
 function ReleaseNotes({ release }: { release: ChangelogRelease }): React.JSX.Element {
   const headingId = useId()
   const unreleased = release.version === UNRELEASED
+  // The BridgeClip versions CreatorClips is built on: one credit line, not a version of CreatorClips.
+  const earlier = isBridgeClipRelease(release.version) && release.version !== APP_VERSION
   return (
     <section aria-labelledby={headingId} className="py-5 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 id={headingId} className="text-sm font-semibold text-ink">{unreleased ? 'Unreleased' : `Version ${release.version}`}</h3>
+        <h3 id={headingId} className="text-sm font-semibold text-ink">{unreleased ? 'Unreleased' : earlier ? 'Earlier versions' : `Version ${release.version}`}</h3>
         {release.version === APP_VERSION && <Badge tone="accent">This version</Badge>}
         {unreleased && <Badge>Not in a release yet</Badge>}
-        {release.date && <span className="ml-auto font-mono text-2xs tabular text-ink-subtle">{formatReleaseDate(release.date)}</span>}
+        {release.date && !earlier && <span className="ml-auto font-mono text-2xs tabular text-ink-subtle">{formatReleaseDate(release.date)}</span>}
       </div>
       {release.notes.map((note, index) => (
         <p key={index} className="mt-1.5 text-sm leading-relaxed text-ink-muted"><RichText text={note} /></p>

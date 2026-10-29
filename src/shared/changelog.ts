@@ -6,6 +6,32 @@ export const CHANGELOG_CATEGORIES = ['Added', 'Changed', 'Deprecated', 'Removed'
 
 export const UNRELEASED = 'Unreleased'
 
+/**
+ * The last BridgeClip version: CreatorClips is built on BridgeClip by BridgeMind (MIT).
+ * CHANGELOG.md keeps only a one-line credit for it (its history is in docs/BRIDGECLIP-HISTORY.md),
+ * and the app shows that section as "Earlier versions".
+ */
+export const BRIDGECLIP_LAST_VERSION = '0.1.19'
+
+function versionParts(version: string): number[] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version.trim())
+  return match ? match.slice(1).map(Number) : null
+}
+
+/** Negative when a is older than b, 0 when equal, positive when newer; null when either isn't X.Y.Z. */
+export function compareVersions(a: string, b: string): number | null {
+  const left = versionParts(a)
+  const right = versionParts(b)
+  if (!left || !right) return null
+  return left.reduce((order, part, index) => order || part - right[index], 0)
+}
+
+/** A BridgeClip-era section (0.1.19 or older). */
+export function isBridgeClipRelease(version: string): boolean {
+  const order = compareVersions(version, BRIDGECLIP_LAST_VERSION)
+  return order !== null && order <= 0
+}
+
 export interface ChangelogSection {
   heading: string
   items: string[]

@@ -7,7 +7,7 @@ This is for the owner (Trent), on a Mac with Apple silicon. It covers what to se
 > **Words used here**
 > - **Repository ("repo")**: a project folder on GitHub.
 > - **Secret**: a password you store in GitHub. Its value can't be read back, only used by the build.
-> - **Tag**: a label like `v0.1.20` on one exact version of the code. Pushing a tag starts a release.
+> - **Tag**: a label like `v1.0.0` on one exact version of the code. Pushing a tag starts a release.
 > - **Terminal**: the Mac app for typing commands (press ⌘ Space, type *Terminal*, press Return).
 > - **Workflow / Actions**: GitHub's automatic build, on the **Actions** tab of a repository.
 
@@ -129,11 +129,12 @@ In Terminal, in the CreatorClips project folder:
 ```
 git checkout main
 git pull
-npm run release:patch
+npm run release:major
 git push origin HEAD --follow-tags
 ```
 
-- `release:patch` goes from 0.1.19 to 0.1.20, for fixes and small additions. Use `npm run release:minor` (0.1.19 to 0.2.0) for bigger features, and `npm run release:major` (to 1.0.0) for a milestone.
+- **The first CreatorClips release uses `npm run release:major`**: it goes from 0.1.19 (the last BridgeClip version) to **1.0.0**, so members start on 1.0.0. After that, use `npm run release:patch` instead.
+- `release:patch` goes from 1.0.0 to 1.0.1, for fixes and small additions. Use `npm run release:minor` (1.0.0 to 1.1.0) for bigger features, and `npm run release:major` (to 2.0.0) for a milestone.
 - The command updates the version number, turns *Unreleased* into today's dated section, saves that as a commit and tags it `vX.Y.Z`. The push sends it to GitHub, which starts the build.
 - If it says "Commit or discard your changes first", there are unsaved edits in the folder. Ask whoever made them, or run `git status` to see them.
 
@@ -183,7 +184,7 @@ On the failed run's page, click the red job to see which step failed. After fixi
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| **Tests** fails at *Version*: "Tag … does not match" | The tag was made by hand | Always use `npm run release:patch`. Ask a developer to delete the stray tag. |
+| **Tests** fails at *Version*: "Tag … does not match" | The tag was made by hand | Always use the release command (`npm run release:major` the first time, then `npm run release:patch`). Ask a developer to delete the stray tag. |
 | **Tests** fails at `test:release` | Usually the changelog: no dated section, or a heading that isn't Added/Changed/Fixed/Removed | Fix `CHANGELOG.md`, then make a new release (step 2 again). |
 | **Mac** fails at *Build app* with a certificate or "identity" error | `CSC_LINK` or `CSC_KEY_PASSWORD` is wrong, or the certificate isn't a *Developer ID Application* one | Redo step 2.5 to 2.7 and update both secrets, then **Re-run failed jobs**. |
 | **Mac** fails with "Missing APPLE_…" or "must be the same team" | A secret is missing or mistyped | Check the secret names in Part 1, step 6. |
