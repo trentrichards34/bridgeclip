@@ -106,9 +106,11 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {}, args = [
     throw new Error(`The test app is not isolated from ${userDataDir}: ${outside.join(', ')}`)
   }
   const page = await app.firstWindow()
-  if (process.platform === 'linux' && process.env.GITHUB_ACTIONS === 'true') {
-    // Linux CI runs inside Xvfb. Map the window onto that virtual display so
-    // Chromium advances media, requestAnimationFrame and CSS animations.
+  if (process.platform === 'linux' && (process.env.GITHUB_ACTIONS === 'true' || /(^|\/)xvfb-run\./.test(process.env.XAUTHORITY ?? ''))) {
+    // Linux CI (and any run under xvfb-run) is inside Xvfb. Map the window onto
+    // that virtual display so Chromium advances media, requestAnimationFrame and
+    // CSS animations at full speed (a hidden window gets throttled frames, so
+    // pointer moves, playback checks and polls crawl on a busy machine).
     // Local test runs still stay hidden on the developer's desktop.
     await app.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0]
