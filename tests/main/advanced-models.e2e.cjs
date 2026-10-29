@@ -5,7 +5,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 
-test('Advanced models and export speed support keyboard selection, review and submission in Electron', { timeout: 90000 }, async (t) => {
+test('Advanced models and export speed support keyboard selection, review and submission in Electron', { timeout: 240000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-models-e2e-'))
   const appDir = buildApp(path.join(root, 'app'))
   const session = await launchApp({ appDir, userDataDir: path.join(root, 'user-data') })

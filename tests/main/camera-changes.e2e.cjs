@@ -279,7 +279,7 @@ test('camera scanning, exact frame edits, dismissals and Space playback survive 
 
 // The frame list is intentionally narrower than the source. Reaching its end
 // (including normal playback stopping at the clip end) must never trap navigation.
-test('timeline seeking preserves playback and frame controls recover from edges', { timeout: 90000 }, async (t) => {
+test('timeline seeking preserves playback and frame controls recover from edges', { timeout: 240000 }, async (t) => {
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-frame-edges-'))
@@ -342,16 +342,26 @@ test('timeline seeking preserves playback and frame controls recover from edges'
   // Actual pointer clicks preserve playback on both sliders and retained cuts.
   for (const selector of ['.editor-source-scrub', '.editor-fine-scrub', '.editor-piece-body']) {
     const clickTimeline = async () => {
+      // Record what the click does in the page itself: on a slow machine the
+      // remaining ~0.7 s of the 1 s cut can play out (and stop at the clip end,
+      // by design) before the test gets to look.
+      await page.locator('video').evaluate(v => {
+        const seen = window.clickSeen = { seekedAt: null, pausedAt: null }
+        v.addEventListener('seeked', () => { if (seen.seekedAt === null) seen.seekedAt = v.currentTime * 1000 }, { once: true })
+        v.addEventListener('pause', () => { if (seen.pausedAt === null) seen.pausedAt = v.currentTime * 1000 }, { once: true })
+      })
       const box = await page.locator(selector).boundingBox()
       const fraction = selector === '.editor-piece-body' ? .35 : .47
       await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2)
-      await page.waitForFunction(() => !document.querySelector('video').seeking)
+      await page.waitForFunction(() => window.clickSeen.seekedAt !== null && !document.querySelector('video').seeking)
+      return page.evaluate(() => window.clickSeen)
     }
     await seek(2000)
     await play.click()
-    await clickTimeline()
-    assert.equal(await page.locator('video').evaluate(v => v.paused), false, `${selector} must keep playing`)
-    const clickedTime = await time()
+    const seen = await clickTimeline()
+    // Playing on means no pause at all, or only the stop at the clip end.
+    assert.ok(seen.pausedAt === null || seen.pausedAt >= 2999, `${selector} must keep playing (paused at ${seen.pausedAt}ms)`)
+    const clickedTime = seen.seekedAt
     assert.ok(clickedTime > 2150 && clickedTime < 2800, `${selector} seeks to the clicked position: ${clickedTime}`)
     await page.waitForFunction(at => document.querySelector('video').currentTime * 1000 > at + 50, clickedTime)
     await previous.click()

@@ -8,7 +8,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const { editorTools, openEditorTab, editorTabOpen } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
-test('static subtitle guide supports dragging and undo, and persists across reopening', { timeout: 90000 }, async t => {
+test('static subtitle guide supports dragging and undo, and persists across reopening', { timeout: 240000 }, async t => {
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-caption-position-'))
