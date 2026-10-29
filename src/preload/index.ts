@@ -44,7 +44,7 @@ import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, Folder
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
 import type { HeygenAccount, HeygenCreateInput, HeygenStockAvatar, HeygenVideoDraft } from '../shared/heygen'
-import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-prefs'
+import type { AppPrefsUpdate, EffectiveSupportTarget, MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
@@ -218,8 +218,18 @@ export interface BridgeClipAPI {
     saveProfile: (update: Partial<CreatorProfile>) => Promise<MemberPrefs>
   }
   support: {
-    /** Copies the support report; with `open`, then opens the member's support link or email. */
-    report: (jobId: string | null, open: boolean) => Promise<{ copied: true; opened: 'email' | 'link' | null }>
+    /** "Copy support report": copies it, nothing is opened. */
+    report: (jobId: string | null) => Promise<{ copied: true }>
+    /** "Report an issue": the report to show first, and where it would go (and whether that page is public). */
+    prepare: (jobId: string | null) => Promise<{ report: string; target: EffectiveSupportTarget }>
+    /** Copies the report as shown (the member may have removed something). */
+    copyText: (text: string) => Promise<{ copied: true }>
+    /** Saves the report as a .txt file the member picks, to send privately. */
+    save: (text: string) => Promise<{ saved: boolean; path?: string }>
+    /** Opens the support page or email. The report is never added to it. */
+    open: () => Promise<{ opened: 'email' | 'link'; public: boolean }>
+    /** Help → Report an Issue… asks the window to show the report. */
+    onShow?: (cb: () => void) => () => void
   }
   editor: {
     open: (path: string) => Promise<EditorSession>
@@ -738,6 +748,12 @@ export interface BridgeClipAPI {
   diagnostics: {
     getLogPath: () => Promise<string>
     openLogFolder: () => Promise<boolean>
+    /** The error boundary caught a page crash: logs the kind of error (never its message). */
+    rendererError?: (name: string) => Promise<void>
+    /** Where settings, projects and logs live on this computer. */
+    dataPaths?: () => Promise<{ userData: string; logFile: string }>
+    /** Shows the app's data folder in Finder. */
+    openUserData?: () => Promise<boolean>
   }
   update: {
     getState: () => Promise<UpdateState>
@@ -868,7 +884,12 @@ const api: BridgeClipAPI = {
     saveProfile: (update) => ipcRenderer.invoke('prefs:saveProfile', update)
   },
   support: {
-    report: (jobId, open) => ipcRenderer.invoke('support:report', jobId, open)
+    report: (jobId) => ipcRenderer.invoke('support:report', jobId),
+    prepare: (jobId) => ipcRenderer.invoke('support:prepare', jobId),
+    copyText: (text) => ipcRenderer.invoke('support:copyText', text),
+    save: (text) => ipcRenderer.invoke('support:save', text),
+    open: () => ipcRenderer.invoke('support:open'),
+    onShow: (callback) => subscribe('support:show', () => callback())
   },
   editor: {
     open: (path) => ipcRenderer.invoke('editor:open', path),
@@ -1222,7 +1243,10 @@ const api: BridgeClipAPI = {
   },
   diagnostics: {
     getLogPath: () => ipcRenderer.invoke('diagnostics:getLogPath'),
-    openLogFolder: () => ipcRenderer.invoke('diagnostics:openLogFolder')
+    openLogFolder: () => ipcRenderer.invoke('diagnostics:openLogFolder'),
+    rendererError: (name) => ipcRenderer.invoke('diagnostics:rendererError', name),
+    dataPaths: () => ipcRenderer.invoke('diagnostics:dataPaths'),
+    openUserData: () => ipcRenderer.invoke('diagnostics:openUserData')
   },
   update: {
     getState: () => ipcRenderer.invoke('update:getState'),

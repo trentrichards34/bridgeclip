@@ -34,7 +34,7 @@ import { estimateRemixCost } from '../shared/remix'
 import { REFERENCE_EXTENSIONS } from '../shared/purpose'
 import { addReferenceFile, referenceBytes, referenceSupportFor } from './reference-image'
 import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset, saveProfile } from './member-prefs'
-import { recordToolCheck, reportIssue } from './support-report'
+import { copySupportText, openSupport, prepareSupportReport, recordToolCheck, reportIssue, saveSupportReport } from './support-report'
 import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
 import { libraryClipForRemix } from './library-source'
 import { dropMissing, type MemberPrefs } from '../shared/member-prefs'
@@ -187,11 +187,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('prefs:saveApp', (_event, update: unknown) => known(saveAppPrefs(update)))
   handle('prefs:saveProfile', (_event, update: unknown) => known(saveProfile(update)))
   handle('app:mediaAccessStatus', () => mediaAccessStatus())
-  // Copy the support report (never the keys); "Report an issue" then opens the member's support link.
-  handle('support:report', (_event, jobId: unknown, open: unknown) => reportIssue(jobId, open === true, [
+  // The support report (never the keys). "Report an issue" shows it first; it's never added to a page for the member.
+  const otherFailures = [
     () => { const status = remixStatus(); return status?.phase === 'failed' ? { what: 'Remix', message: status.error, at: null } : null },
     () => { const status = avatarRenderStatus(); return status?.phase === 'failed' ? { what: 'Avatar Studio', message: status.error, at: status.startedAt } : null }
-  ]))
+  ]
+  handle('support:report', (_event, jobId: unknown) => reportIssue(jobId, otherFailures))
+  handle('support:prepare', (_event, jobId: unknown) => prepareSupportReport(jobId, otherFailures))
+  handle('support:copyText', (_event, text: unknown) => copySupportText(text))
+  handle('support:save', (_event, text: unknown) => saveSupportReport(getMainWindow(), text))
+  handle('support:open', () => openSupport())
   handle('library:remixSource', (_event, outputDir: unknown, clipIndex: unknown) => libraryClipForRemix(outputDir, clipIndex))
   // A desktop notification when a long job finishes while the app is in the background.
   onJobUpdate((job) => announce(createNotice(job), getMainWindow))
@@ -956,6 +961,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
     return false
   })
+
+  // A page crashed in the window and the error boundary caught it: log the kind of error, never its
+  // message (it can hold personal text), so the support report shows it happened.
+  handle('diagnostics:rendererError', (_event, name: unknown) => {
+    logger.error('renderer.renderError', { name: typeof name === 'string' && /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error' })
+  })
+  // Settings → About → Your data: where the app keeps its settings and logs.
+  handle('diagnostics:dataPaths', () => ({ userData: app.getPath('userData'), logFile: getLogFilePath() }))
+  handle('diagnostics:openUserData', async () => (await shell.openPath(app.getPath('userData'))) === '')
 
   handle('history:list', async () => {
     const settings = loadSettings()

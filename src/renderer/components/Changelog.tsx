@@ -122,3 +122,45 @@ export function ChangelogDialog({ onClose }: { onClose: () => void }): React.JSX
     </Dialog>
   )
 }
+
+/** Shown once when the app starts on a newer version than last ran: that version's changelog section. */
+export function WhatsNewDialog({ release, onClose, onShowAll }: { release: ChangelogRelease; onClose: () => void; onShowAll: () => void }): React.JSX.Element {
+  const titleId = useId()
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panelRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Escape') { event.preventDefault(); onClose() } }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown); previousFocus?.focus() }
+  }, [onClose])
+  return (
+    <Dialog ref={panelRef} aria-labelledby={titleId} onBackdropMouseDown={onClose} panelClassName="max-h-[min(640px,85dvh)] max-w-[560px]">
+      <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.07] px-5 py-4">
+        <IconTile><History /></IconTile>
+        <div className="min-w-0 flex-1">
+          <h2 id={titleId} className="text-base font-semibold text-ink">What’s new in {release.version}</h2>
+          <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} updated. Here’s what changed.</p>
+        </div>
+        <Button iconOnly variant="ghost" aria-label="Close what’s new" icon={<X className="h-4 w-4" />} onClick={onClose} />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5" data-selectable>
+        {release.notes.map((note, index) => (
+          <p key={index} className="mb-3 text-sm leading-relaxed text-ink-muted"><RichText text={note} /></p>
+        ))}
+        {release.sections.filter((section) => section.items.length > 0).map((section) => (
+          <div key={section.heading} className="mt-3 first:mt-0">
+            <p className="eyebrow">{section.heading}</p>
+            <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm leading-relaxed text-ink-muted marker:text-ink-faint">
+              {section.items.map((item, index) => <li key={index}><RichText text={item} /></li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <DialogFooter className="justify-between">
+        <Button size="sm" variant="ghost" onClick={onShowAll}>See all changes</Button>
+        <Button onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </Dialog>
+  )
+}

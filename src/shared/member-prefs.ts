@@ -7,7 +7,7 @@
  */
 
 import { isAvatarId } from './avatars'
-import { ISSUES_URL } from './brand'
+import { ISSUES_URL, SUPPORT_URL } from './brand'
 import { isBrollSource, type BrollSource } from './broll-library'
 import { DEFAULT_PROFILE, readProfile, type CreatorProfile } from './onboarding'
 import { isBackgroundVideoName } from './backgrounds'
@@ -152,6 +152,8 @@ export interface MemberPrefs {
   myLook: MyLook | null
   /** Edit my recording: start from the saved look ("Use my look" on the setup screen). */
   useMyLook: boolean
+  /** The app version that last ran ('' before the first run is recorded): "What's new" shows once after an update. */
+  lastSeenVersion: string
 }
 
 /** Edit my recording's beat sheet before the reel is made (beat-sheet.ts). */
@@ -163,7 +165,7 @@ export function isBeatSheetChoice(value: unknown): value is BeatSheetChoice {
 }
 
 /** The app preferences Settings and the setup checklist can change. */
-export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId' | 'beatSheet' | 'editStyle' | 'myLook' | 'useMyLook'>>
+export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId' | 'beatSheet' | 'editStyle' | 'myLook' | 'useMyLook' | 'lastSeenVersion'>>
 
 export const MAX_PRESETS = 30
 export const MAX_PRESET_NAME = 40
@@ -182,7 +184,7 @@ export const REMIX_STYLE_KEYS = [
   'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup', 'brollSource'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true, lastSeenVersion: '' }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -336,14 +338,32 @@ function parsePresets<K extends StyleKind>(kind: K, value: unknown): StylePreset
 }
 
 /** An https link or an email address the member typed; null when it's neither. */
+export interface EffectiveSupportTarget {
+  kind: 'email' | 'link'
+  url: string
+  /** The member's own link or email (Settings → About). */
+  custom: boolean
+  /** A public page (GitHub): anything posted there can be read by anyone. */
+  public: boolean
+}
+
+/** A link anyone can read what's posted on: GitHub pages. */
+export function isPublicSupportUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === 'github.com' || host.endsWith('.github.com')
+  } catch { return false }
+}
+
 /**
  * Where Report an issue goes: the member's own support link or email when they
- * set one in Settings → About, otherwise the public CreatorClips issues page.
+ * set one in Settings → About, otherwise SUPPORT_URL (brand.ts), and the public
+ * CreatorClips issues page when that isn't a valid link or email.
  */
-export function effectiveSupportTarget(value: unknown): { kind: 'email' | 'link'; url: string; custom: boolean } {
+export function effectiveSupportTarget(value: unknown, fallback: string = SUPPORT_URL): EffectiveSupportTarget {
   const own = supportTarget(value)
-  if (own) return { ...own, custom: true }
-  return { kind: 'link', url: ISSUES_URL, custom: false }
+  const target = own ?? supportTarget(fallback) ?? { kind: 'link' as const, url: ISSUES_URL }
+  return { ...target, custom: Boolean(own), public: target.kind === 'link' && isPublicSupportUrl(target.url) }
 }
 
 export function supportTarget(value: unknown): { kind: 'email' | 'link'; url: string } | null {
@@ -380,6 +400,11 @@ export function sampleVideoTarget(value: unknown): string | null {
   } catch { return null }
 }
 
+/** A version number (X.Y.Z) the app last ran as; null when it isn't one. */
+export function parseLastSeenVersion(value: unknown): string | null {
+  return typeof value === 'string' && /^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(value) ? value : null
+}
+
 /** A sample video link to save: '' clears it; anything else must be an http(s) link. */
 export function parseSampleVideoLink(value: unknown): string {
   if (value === '' || (typeof value === 'string' && !value.trim())) return ''
@@ -389,7 +414,7 @@ export function parseSampleVideoLink(value: unknown): string {
 }
 
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true, lastSeenVersion: '' }
   const presets = record(value.presets) ? value.presets : {}
   const create = parseCreateStyle(value.create)
   return {
@@ -405,6 +430,7 @@ export function parseMemberPrefs(value: unknown): MemberPrefs {
     beatSheet: isBeatSheetChoice(value.beatSheet) ? value.beatSheet : DEFAULT_BEAT_SHEET_CHOICE,
     editStyle: parseEditStyle(value.editStyle),
     myLook: parseMyLook(value.myLook),
+    lastSeenVersion: parseLastSeenVersion(value.lastSeenVersion) ?? '',
     useMyLook: value.useMyLook !== false
   }
 }

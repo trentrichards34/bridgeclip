@@ -306,27 +306,90 @@ test('support report: versions, system check, which keys are saved (never the ke
   // A specific job is reported when asked.
   assert.match(report.collectSupportReport('old'), /Error: Older failure/)
 
-  // Report an issue: copies, then opens the public issues page without a support link.
-  assert.deepEqual(plain(await report.reportIssue(null, true)), { copied: true, opened: 'link' })
+  // Copy support report: copies only, never opens anything.
+  assert.deepEqual(plain(await report.reportIssue(null)), { copied: true })
   assert.equal(copied.length, 1)
-  assert.deepEqual(opened, ['https://github.com/trentrichards34/creatorclips-releases/issues'])
+  assert.deepEqual(opened, [])
   cleanup()
 })
 
-test('support report: Report an issue opens a valid support link, or else the issues page, after copying', async () => {
+test('support report: Report an issue shows the report first and never adds it to a page; the public page is flagged', async () => {
+  const fallback = loadReport()
+  const prepared = fallback.report.prepareSupportReport(null)
+  assert.match(prepared.report, /App version: 0\.1\.19/)
+  assert.deepEqual(plain(prepared.target), { kind: 'link', url: 'https://github.com/trentrichards34/creatorclips-releases/issues', custom: false, public: true })
+  assert.deepEqual(fallback.copied, [], 'preparing copies nothing')
+  assert.deepEqual(plain(await fallback.report.openSupport()), { opened: 'link', public: true })
+  assert.deepEqual(fallback.opened, ['https://github.com/trentrichards34/creatorclips-releases/issues'])
+  assert.deepEqual(fallback.copied, [], 'opening the page never copies or pastes the report')
+  // Copy as edited: the member may have removed something.
+  assert.deepEqual(plain(fallback.report.copySupportText('edited report')), { copied: true })
+  assert.deepEqual(fallback.copied, ['edited report'])
+  assert.throws(() => fallback.report.copySupportText(''), /empty/)
+  assert.throws(() => fallback.report.copySupportText(42), /empty/)
+  assert.throws(() => fallback.report.copySupportText('x'.repeat(fallback.report.MAX_REPORT_TEXT + 1)), /too long/)
+  assert.equal(fallback.report.supportReportFileName(new Date(2026, 9, 29)), 'CreatorClips support report 2026-10-29.txt')
+  fallback.cleanup()
+
   const email = loadReport({ supportLink: 'help@example.com' })
-  assert.deepEqual(plain(await email.report.reportIssue(null, true)), { copied: true, opened: 'email' })
+  assert.deepEqual(plain(email.report.supportDestination()), { kind: 'email', url: 'mailto:help@example.com?subject=CreatorClips%20support', custom: true, public: false })
+  assert.deepEqual(plain(await email.report.openSupport()), { opened: 'email', public: false })
   assert.deepEqual(email.opened, ['mailto:help@example.com?subject=CreatorClips%20support'])
-  assert.match(email.copied[0], /Last failed job:\n {2}None in this session\./)
-  assert.match(email.copied[0], /System check:\n {2}Not run yet/)
-  // Copy only: never opens.
-  assert.deepEqual(plain(await email.report.reportIssue(null, false)), { copied: true, opened: null })
-  assert.equal(email.opened.length, 1)
   email.cleanup()
   const bad = loadReport({ supportLink: 'javascript:alert(1)' })
-  assert.deepEqual(plain(await bad.report.reportIssue(null, true)), { copied: true, opened: 'link' })
+  await bad.report.openSupport()
   assert.deepEqual(bad.opened, ['https://github.com/trentrichards34/creatorclips-releases/issues'], 'an invalid link is never opened')
   bad.cleanup()
+})
+
+test('support report: Save report to a file writes a private .txt where the member picks', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'support-save-'))
+  const picks = []
+  const mod = load('main/support-report.ts', {
+    electron: {
+      app: { getVersion: () => '1.0.0', getPath: () => dir },
+      clipboard: { writeText() {} }, shell: { openExternal: async () => {} },
+      dialog: { showSaveDialog: async (...args) => { const options = args[args.length - 1]; picks.push(options.defaultPath); return picks.length === 1 ? { canceled: true } : { canceled: false, filePath: path.join(dir, 'my report') } } }
+    },
+    './logger': { getLogFilePath: () => path.join(dir, 'x.log'), logger: { info() {}, warn() {} } },
+    './settings-store': { loadSettings: () => ({}), publicSettings: () => ({}) },
+    './job-manager': { listJobs: () => [] },
+    './member-prefs': { readMemberPrefs: () => ({ supportLink: '', notifyOnFinish: true }) }
+  })
+  try {
+    assert.deepEqual(plain(await mod.saveSupportReport(null, 'report text')), { saved: false })
+    assert.match(picks[0], /CreatorClips support report \d{4}-\d{2}-\d{2}\.txt$/)
+    const saved = await mod.saveSupportReport(null, 'report text')
+    assert.equal(saved.saved, true)
+    assert.equal(saved.path, path.join(dir, 'my report.txt'))
+    assert.equal(fs.readFileSync(saved.path, 'utf8'), 'report text\n')
+    if (process.platform !== 'win32') assert.equal(fs.statSync(saved.path).mode & 0o077, 0, 'only the member can read it')
+    await assert.rejects(() => mod.saveSupportReport(null, ''), /empty/)
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('support target: SUPPORT_URL is the default, the member\'s own link wins, GitHub is flagged public', () => {
+  assert.deepEqual(plain(shared.effectiveSupportTarget('')), { kind: 'link', url: 'https://github.com/trentrichards34/creatorclips-releases/issues', custom: false, public: true })
+  assert.deepEqual(plain(shared.effectiveSupportTarget('', 'support@wealthery.example')), { kind: 'email', url: 'mailto:support@wealthery.example?subject=CreatorClips%20support', custom: false, public: false })
+  assert.deepEqual(plain(shared.effectiveSupportTarget('', 'https://members.example.com/help')), { kind: 'link', url: 'https://members.example.com/help', custom: false, public: false })
+  assert.deepEqual(plain(shared.effectiveSupportTarget('', 'not a link')), { kind: 'link', url: 'https://github.com/trentrichards34/creatorclips-releases/issues', custom: false, public: true })
+  assert.equal(shared.effectiveSupportTarget('https://community.example.com/support').custom, true)
+  assert.equal(shared.isPublicSupportUrl('https://github.com/a/b/issues'), true)
+  assert.equal(shared.isPublicSupportUrl('https://example.com'), false)
+})
+
+test('last seen version: remembered for What\'s new, only as X.Y.Z', () => {
+  assert.equal(shared.parseMemberPrefs({}).lastSeenVersion, '')
+  assert.equal(shared.parseMemberPrefs({ lastSeenVersion: '1.0.0' }).lastSeenVersion, '1.0.0')
+  assert.equal(shared.parseMemberPrefs({ lastSeenVersion: '../1' }).lastSeenVersion, '')
+  assert.equal(shared.DEFAULT_MEMBER_PREFS.lastSeenVersion, '')
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'last-seen-'))
+  try {
+    const main = load('main/member-prefs.ts', { electron: { app: { getPath: () => userData } } })
+    assert.equal(main.saveAppPrefs({ lastSeenVersion: '1.0.1' }).lastSeenVersion, '1.0.1')
+    assert.equal(main.readMemberPrefs().lastSeenVersion, '1.0.1')
+    assert.throws(() => main.saveAppPrefs({ lastSeenVersion: 'v1' }), /Invalid version/)
+  } finally { fs.rmSync(userData, { recursive: true, force: true }) }
 })
 
 test('redaction removes keys, tokens, emails and personal folders', () => {

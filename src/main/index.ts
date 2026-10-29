@@ -14,6 +14,7 @@ import { createMenu } from './menu'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initAutoUpdater } from './auto-updater'
 import { logger, getLogFilePath, errorSummary } from './logger'
+import { MAIN_ERROR_NOTICE, offerReloadAfter, onceNotifier, rendererGoneMessage } from './crash-recovery'
 import { authorizeMedia, isTrustedExternalUrl, openAuthorizedMedia } from './security'
 import { loadSettings } from './settings-store'
 import { cleanStaleWorkspaces, stopAllJobsForQuit } from './pipeline-runner'
@@ -28,12 +29,26 @@ import { AVATAR_STUDIO_E2E_ARG, isAvatarStudioEnabled, setAvatarStudioForTests }
 // Catch crashes anywhere in the main process so we get a log line instead
 // of a silent exit. Without these, an unhandled rejection in an IPC handler
 // would disappear into the void in a packaged build.
+// A crash is also never silent for the member: the first one in a session shows a short notice.
+const noticeMainError = onceNotifier(() => {
+  if (!app.isReady() || hiddenForTestsEarly()) return
+  const window = BrowserWindow.getAllWindows()[0]
+  const options = { type: 'warning' as const, message: MAIN_ERROR_NOTICE.message, detail: MAIN_ERROR_NOTICE.detail, buttons: ['OK'], noLink: true }
+  void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).catch(() => undefined)
+})
 process.on('uncaughtException', (err) => {
   logger.error('main.uncaughtException', errorSummary(err))
+  noticeMainError()
 })
 process.on('unhandledRejection', (reason) => {
+  // Logged only: a rejected promise nobody waited for rarely breaks what the member sees.
   logger.error('main.unhandledRejection', errorSummary(reason))
 })
+
+/** Scripted e2e runs (hiddenForTests below): no native dialogs. A function, so the crash handlers above can ask early. */
+function hiddenForTestsEarly(): boolean {
+  return !app.isPackaged && process.env.BRIDGECLIP_E2E === '1'
+}
 
 let mainWindow: BrowserWindow | null = null
 let assistant: AssistantRuntime | null = null
@@ -56,7 +71,7 @@ if (!app.isPackaged && process.env.BRIDGECLIP_USER_DATA_DIR) {
 
 // Development-only: scripted end-to-end runs keep the window hidden and out
 // of the Dock, so a test run never takes over the developer's screen.
-const hiddenForTests = !app.isPackaged && process.env.BRIDGECLIP_E2E === '1'
+const hiddenForTests = hiddenForTestsEarly()
 // Development-only: e2e runs that cover Avatar Studio turn it back on (it's switched off for members; see shared/features).
 if (hiddenForTests && process.env.BRIDGECLIP_E2E_AVATAR_STUDIO === '1') setAvatarStudioForTests(true)
 if (hiddenForTests) {
@@ -175,6 +190,24 @@ function createWindow(): void {
       })
       window.webContents.send('editor:saveBeforeClose')
     }
+  })
+
+  // The page process crashed or was killed (a blank window otherwise): log it and offer to reload.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('renderer.gone', { reason: details.reason, exitCode: details.exitCode })
+    if (!offerReloadAfter(details.reason) || window.isDestroyed()) return
+    if (hiddenForTests) {
+      // A native dialog would hang scripted runs; tests check that it reloads.
+      logger.info('renderer.gone.reload', { reason: details.reason })
+      window.webContents.reload()
+      return
+    }
+    const text = rendererGoneMessage(details.reason)
+    void dialog.showMessageBox(window, { type: 'warning', message: text.message, detail: text.detail, buttons: text.buttons, defaultId: 0, cancelId: 1, noLink: true }).then(({ response }) => {
+      if (window.isDestroyed()) return
+      if (response === 0) window.webContents.reload()
+      else app.quit()
+    }).catch(() => undefined)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

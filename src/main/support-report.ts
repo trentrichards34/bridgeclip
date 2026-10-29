@@ -1,10 +1,11 @@
-import { app, clipboard, shell } from 'electron'
-import { closeSync, fstatSync, openSync, readSync } from 'fs'
+import { app, clipboard, dialog, shell, type BrowserWindow } from 'electron'
+import { closeSync, fstatSync, openSync, readSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { arch, homedir, release } from 'os'
 import { getLogFilePath, logger } from './logger'
 import { loadSettings, publicSettings } from './settings-store'
 import { listJobs } from './job-manager'
-import { effectiveSupportTarget } from '../shared/member-prefs'
+import { effectiveSupportTarget, type EffectiveSupportTarget } from '../shared/member-prefs'
 import { readMemberPrefs } from './member-prefs'
 
 /**
@@ -158,12 +159,65 @@ export function collectSupportReport(jobId: unknown, extraFailures: FailureSourc
   return buildSupportReport(input, { secrets, home: homedir(), userData })
 }
 
-/** Copy the report; then open the member's support link or email, or the public issues page when none is set. */
-export async function reportIssue(jobId: unknown, open: boolean, extraFailures: FailureSource[] = []): Promise<{ copied: true; opened: 'email' | 'link' | null }> {
+/** Where Report an issue goes (the member's own link or email, or SUPPORT_URL), and whether that page is public. */
+export function supportDestination(): EffectiveSupportTarget {
+  return effectiveSupportTarget(readMemberPrefs().supportLink)
+}
+
+/** The report text to show the member before they send it anywhere, and where it would go. */
+export function prepareSupportReport(jobId: unknown, extraFailures: FailureSource[] = []): { report: string; target: EffectiveSupportTarget } {
+  const report = collectSupportReport(jobId, extraFailures)
+  logger.info('support.report.prepared', {})
+  return { report, target: supportDestination() }
+}
+
+/** "Copy support report": copies only, nothing is opened. */
+export async function reportIssue(jobId: unknown, extraFailures: FailureSource[] = []): Promise<{ copied: true }> {
   clipboard.writeText(collectSupportReport(jobId, extraFailures))
-  logger.info('support.report.copied', { open })
-  if (!open) return { copied: true, opened: null }
-  const target = effectiveSupportTarget(readMemberPrefs().supportLink)
+  logger.info('support.report.copied', {})
+  return { copied: true }
+}
+
+/** Reports are short text; a cap keeps a bad call from writing or copying something huge. */
+export const MAX_REPORT_TEXT = 400_000
+
+function reportText(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('The support report is empty.')
+  if (value.length > MAX_REPORT_TEXT) throw new Error('The support report is too long.')
+  return value
+}
+
+/** Copies the report as the member left it in the Report an issue dialog (they may have removed something). */
+export function copySupportText(value: unknown): { copied: true } {
+  clipboard.writeText(reportText(value))
+  logger.info('support.report.copied', { edited: true })
+  return { copied: true }
+}
+
+/** Opens the support page or email. The report is never added to it: the member pastes or attaches it themselves. */
+export async function openSupport(): Promise<{ opened: 'email' | 'link'; public: boolean }> {
+  const target = supportDestination()
   await shell.openExternal(target.url)
-  return { copied: true, opened: target.kind }
+  logger.info('support.opened', { kind: target.kind, public: target.public, custom: target.custom })
+  return { opened: target.kind, public: target.public }
+}
+
+/** The file name a saved report suggests: "CreatorClips support report 2026-10-29.txt". */
+export function supportReportFileName(now = new Date()): string {
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return `CreatorClips support report ${day}.txt`
+}
+
+/** "Save report to a file": a plain text file the member can send privately (email or a direct message). */
+export async function saveSupportReport(window: BrowserWindow | null, value: unknown): Promise<{ saved: boolean; path?: string }> {
+  const text = reportText(value)
+  let folder = ''
+  try { folder = app.getPath('documents') } catch { /* fall back to the file name alone */ }
+  const options = { title: 'Save support report', defaultPath: folder ? join(folder, supportReportFileName()) : supportReportFileName(), filters: [{ name: 'Text', extensions: ['txt'] }] }
+  const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options)
+  if (result.canceled || !result.filePath) return { saved: false }
+  const path = /\.txt$/i.test(result.filePath) ? result.filePath : `${result.filePath}.txt`
+  writeFileSync(path, text.endsWith('\n') ? text : `${text}\n`, { encoding: 'utf8', mode: 0o600 })
+  logger.info('support.report.saved', {})
+  return { saved: true, path }
 }

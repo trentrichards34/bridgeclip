@@ -29,6 +29,8 @@ interface MemberPrefsState {
   /** Edit my recording: the saved look ("Save as my look"), and whether the next one starts from it. */
   myLook: MyLook | null
   useMyLook: boolean
+  /** The app version that last ran ('' when not recorded yet). */
+  lastSeenVersion: string
   /** Load once at startup: applies the remembered styles, then keeps them saved. */
   load: () => Promise<void>
   savePreset: (kind: StyleKind, name: string) => Promise<void>
@@ -79,7 +81,7 @@ let loading: Promise<void> | null = null
 
 export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
   const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' }, defaultBrandId: prefs.defaultBrandId ?? null, beatSheet: prefs.beatSheet ?? DEFAULT_BEAT_SHEET_CHOICE,
-    editStyle: prefs.editStyle ?? {}, myLook: prefs.myLook ?? null, useMyLook: prefs.useMyLook !== false })
+    editStyle: prefs.editStyle ?? {}, myLook: prefs.myLook ?? null, useMyLook: prefs.useMyLook !== false, lastSeenVersion: prefs.lastSeenVersion ?? '' })
   return {
     loaded: false,
     presets: { create: [], remix: [] },
@@ -93,6 +95,7 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
     editStyle: {},
     myLook: null,
     useMyLook: true,
+    lastSeenVersion: '',
     load: () => {
       // Optional: a renderer hot-reloaded over an older preload has no prefs bridge.
       if (!getApi().prefs) return Promise.resolve()

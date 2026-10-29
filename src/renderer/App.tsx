@@ -31,13 +31,23 @@ import { useDataVersionStore } from './store/use-data-version-store'
 import { usePostsStore } from './store/use-posts-store'
 import { useMemberPrefsStore } from './store/use-member-prefs-store'
 import { requestSettingsSection } from './lib/settings-focus'
-import { ChangelogDialog } from './components/Changelog'
+import { ChangelogDialog, WhatsNewDialog, releaseNotesFor } from './components/Changelog'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { ReportDialog } from './components/SupportReport'
+import { APP_VERSION } from './config/brand'
+import { whatsNewOnLaunch } from '../shared/changelog'
+import type { ChangelogRelease } from '../shared/changelog'
 import { SpendingAlerts } from './components/spending/SpendingAlerts'
 import { Button } from './components/ui/Button'
 import { getApi } from './lib/ipc'
 import { isMac } from './lib/utils'
 
+/** The whole app sits inside a crash screen, so a render error never leaves a blank window. */
 export default function App(): React.JSX.Element {
+  return <ErrorBoundary><AppShell /></ErrorBoundary>
+}
+
+function AppShell(): React.JSX.Element {
   const [loadError, setLoadError] = useState(false)
   const [retry, setRetry] = useState(0)
   const [page, setPageState] = useState<Page>('clip')
@@ -58,6 +68,13 @@ export default function App(): React.JSX.Element {
   const firstLaunch = useMemberPrefsStore((s) => s.profile.onboarding === 'new')
   const onboardingOpen = useOnboarding((s) => s.open)
   const closeChangelog = useCallback(() => useChangelogStore.getState().setOpen(false), [])
+  /** Help → Report an Issue… shows the support report first. */
+  const [reportOpen, setReportOpen] = useState(false)
+  const closeReport = useCallback(() => setReportOpen(false), [])
+  /** "What's new in X.Y.Z", once after an update. */
+  const [whatsNew, setWhatsNew] = useState<ChangelogRelease | null>(null)
+  const closeWhatsNew = useCallback(() => setWhatsNew(null), [])
+  const showAllChanges = useCallback(() => { setWhatsNew(null); useChangelogStore.getState().setOpen(true) }, [])
 
   // Sidebar destinations always open the page root, even when already active.
   // In-page navigation keeps setPage so links to a specific job retain focus.
@@ -165,6 +182,20 @@ export default function App(): React.JSX.Element {
     useChangelogStore.getState().setOpen(true)
   }), [])
 
+  // Optional: a renderer hot-reloaded over an older preload has no support bridge for this.
+  useEffect(() => getApi().support?.onShow?.(() => setReportOpen(true)), [])
+
+  // Once the member's prefs are in: after an update, show what's new in this version once (never on a first install).
+  useEffect(() => {
+    if (!prefsLoaded) return
+    const { lastSeenVersion, profile } = useMemberPrefsStore.getState()
+    const decision = whatsNewOnLaunch(lastSeenVersion, APP_VERSION, profile.onboarding === 'new')
+    if (decision === 'none') return
+    const release = decision === 'show' ? releaseNotesFor(APP_VERSION) : null
+    if (release) setWhatsNew(release)
+    void useMemberPrefsStore.getState().saveApp({ lastSeenVersion: APP_VERSION }).catch(() => {})
+  }, [prefsLoaded])
+
   // ⌘K (top bar) and ⌘J (Ask) live in TopBar.
   // ⌘1 Clip, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
   // ⌘\ collapse or expand the sidebar (Ctrl on Windows/Linux).
@@ -196,6 +227,8 @@ export default function App(): React.JSX.Element {
     <>
       {settingsLoaded ? (
         <Layout currentPage={page} onNavigate={navigateRoot}>
+          {/* A page that crashes shows the crash screen in its place; the sidebar keeps working, and navigating resets it. */}
+          <ErrorBoundary scope="page" key={`${page}:${pageVisit}`}>
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'avatar' && pageAvailable('avatar') && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
@@ -214,6 +247,7 @@ export default function App(): React.JSX.Element {
             {page === 'guides' && <GuidesPage onNavigate={setPage} />}
             {page === 'settings' && <SettingsPage showUpdates={showUpdates} onNavigate={setPage} />}
           </Fragment>
+          </ErrorBoundary>
         </Layout>
       ) : (
         <div className="app-backdrop drag flex h-screen items-center justify-center">
@@ -227,6 +261,8 @@ export default function App(): React.JSX.Element {
       )}
       {settingsLoaded && prefsLoaded && (onboardingOpen || firstLaunch) && <OnboardingFlow onNavigate={navigateRoot} />}
       {changelogOpen && <ChangelogDialog onClose={closeChangelog} />}
+      {whatsNew && !changelogOpen && !(onboardingOpen || firstLaunch) && <WhatsNewDialog release={whatsNew} onClose={closeWhatsNew} onShowAll={showAllChanges} />}
+      {reportOpen && <ReportDialog onClose={closeReport} />}
       {settingsLoaded && <SpendingAlerts onOpenSpending={openSpending} />}
     </>
   )

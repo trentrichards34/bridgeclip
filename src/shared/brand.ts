@@ -18,6 +18,16 @@ export const RELEASE_IDENTITY: Readonly<{ releasesRepository: string; macTeamId:
 export const REPO_URL = `https://github.com/${RELEASE_IDENTITY.releasesRepository}`
 export const ISSUES_URL = `${REPO_URL}/issues`
 export const RELEASES_URL = `${REPO_URL}/releases`
+
+/**
+ * OWNER: REPLACE THIS with Wealthery's member support link (https://…) or support email address.
+ *
+ * Where Help → Report an Issue sends members (a member can still set their own in Settings → About).
+ * Until it's replaced, it's the releases repo's public GitHub Issues page: most members have no GitHub
+ * account and anything posted there is public, so the app shows the report first, warns that the page
+ * is public, and offers to save the report to a file to send privately. It never pastes it there.
+ */
+export const SUPPORT_URL: string = ISSUES_URL
 export const LICENSE_NAME = 'MIT'
 export const BRIDGEMIND_URL = 'https://www.bridgemind.ai'
 export const DISCORD_URL = 'https://www.bridgemind.ai/discord'

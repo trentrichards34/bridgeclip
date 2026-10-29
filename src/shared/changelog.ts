@@ -120,3 +120,15 @@ export function parseChangelogText(text: string): ChangelogText[] {
   if (at < plain.length) parts.push({ kind: 'text', text: plain.slice(at) })
   return parts
 }
+
+/**
+ * "What's new" on launch: 'show' once after an update (the app starts on a newer version than last ran),
+ * 'record' when the version should just be remembered (first install, a downgrade, a guided setup still
+ * to do, or nothing recorded yet), 'none' when nothing changed.
+ */
+export function whatsNewOnLaunch(lastSeen: string, current: string, firstRun: boolean): 'show' | 'record' | 'none' {
+  if (lastSeen === current) return 'none'
+  if (firstRun || !lastSeen) return 'record'
+  const order = compareVersions(current, lastSeen)
+  return order !== null && order > 0 ? 'show' : 'record'
+}
