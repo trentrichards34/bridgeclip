@@ -28,7 +28,7 @@ test('Free up space lists removable files by group, removes only the chosen ones
   fs.writeFileSync(path.join(small, 'editor-source.mp4'), Buffer.alloc(MB))
   const remix = makeRun(library, 'remix-22222222-2222-4222-8222-222222222222', 'Big remix', { extra: { editable: { split: true } } })
   fs.mkdirSync(path.join(remix, '.edit', 'clip_00'), { recursive: true })
-  fs.writeFileSync(path.join(remix, '.edit', 'clip_00', 'edit.json'), '{}')
+  fs.writeFileSync(path.join(remix, '.edit', 'clip_00', 'edit.json'), JSON.stringify({ version: 1, words: [['Money', 0, 300], ['moves', 320, 600]] }))
   fs.writeFileSync(path.join(remix, '.edit', 'clip_00', 'moment.mp4'), Buffer.alloc(12 * MB))
   // Left by a call-to-action change that was interrupted.
   fs.writeFileSync(path.join(small, '.cta-abcdef12.mp4'), Buffer.alloc(4 * MB))
@@ -74,7 +74,7 @@ test('Free up space lists removable files by group, removes only the chosen ones
   // Remix parts and CTA originals are opt-in and carry their warning.
   assert.equal(await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).getAttribute('aria-checked'), 'false')
   assert.equal(await dialog.getByRole('checkbox', { name: 'Clip copies without the call to action' }).getAttribute('aria-checked'), 'false')
-  await dialog.getByText('You can no longer use “Edit hook text & captions” on these Remix videos, or swap shots in these b-roll videos.').waitFor()
+  await dialog.getByText('You can no longer use “Edit hook text & captions” on these Remix videos, or swap shots in these b-roll videos. Each Remix video’s words are kept, so graphics in the clip editor still work.').waitFor()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '7 MB selected')
   await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).click()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '19 MB selected')
@@ -95,6 +95,8 @@ test('Free up space lists removable files by group, removes only the chosen ones
   assert.ok(!fs.existsSync(path.join(remix, '.edit', 'clip_00')))
   for (const kept of [path.join(small, 'clip_00.mp4'), path.join(small, 'clip_00.original.mp4'), path.join(small, 'job_output.json'), path.join(remix, 'clip_00.mp4')]) assert.ok(fs.existsSync(kept), kept)
   assert.equal('editable' in JSON.parse(fs.readFileSync(path.join(remix, 'job_output.json'), 'utf8')).clips[0], false)
+  // The remix's words stay beside it, for the clip editor's graphics.
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(remix, 'clip_00.words.json'), 'utf8')).words, [['Money', 0, 300], ['moves', 320, 600]])
   // Sizes refresh after freeing space.
   await page.waitForFunction(() => Array.from(document.querySelectorAll('article')).find((node) => node.querySelector('[aria-label="Open Big remix"]'))?.querySelector('[data-testid="run-size"]')?.textContent === '1 MB')
 
