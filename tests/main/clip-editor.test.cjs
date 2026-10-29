@@ -573,6 +573,41 @@ test('re-baking an Automatic clip keeps the call to action its Library clip has 
   } finally { f.cleanup() }
 })
 
+test('a Remix video whose call to action is already in its picture is never given a second one; a stale remix waits for the editor to refresh', async () => {
+  const f = batchSetup()
+  try {
+    const applied = []
+    f.main.onEditorExportCta(async (_run, ctaId, index) => { applied.push({ ctaId, index }) })
+    const cta = 'a'.repeat(16)
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    project.automatic = { omitted: [], estimated_cuts: 0, remix: true }
+    // The copy without the call to action was freed: the base video (and this clip) ends with it.
+    Object.assign(project.candidates[1], { library_clip: 0, cta_id: null, cta_in_picture: true, remix_span: [1000, 10000] })
+    Object.assign(project.candidates[4], { library_clip: 1, cta_id: cta, remix_span: [1000, 10000] })
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    const clip = (index, extra = {}) => ({ clip_index: index, s3_url: path.join(f.run, `clip_0${index}.mp4`), duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 50, cta: { id: cta, name: 'Offer' }, ...extra })
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0), clip(1)] }))
+    // Re-made in Remix since: baking waits until the editor's copy is refreshed.
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0, { editor_stale: true }), clip(1)] }))
+    await assert.rejects(f.main.runEditor(f.run, 0, '', 'export-all'), /Open the run in the editor again/)
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0), clip(1)] }))
+    const pending = f.main.runEditor(f.run, 0, '', 'export-all')
+    ;(await nextWorker(f.workers, 1)).finish()
+    ;(await nextWorker(f.workers, 2)).finish()
+    await pending
+    // Candidate 1 kept its call to action as it is (in the picture); candidate 4 is cut from the same video's end too.
+    assert.deepEqual(applied, [])
+    const saved = (await f.main.openEditor(f.run)).project
+    assert.equal(saved.candidates[1].cta_in_picture, true)
+    assert.deepEqual(saved.candidates[1].remix_span, [1000, 10000])
+    // Shared rule: only clips that reach that video's last second carry it.
+    const early = { ...saved.candidates[4], ranges: [[1000, 5000]] }
+    assert.equal(schema.ctaInPicture(saved, early), false)
+    assert.equal(schema.ctaInPicture(saved, saved.candidates[4]), true)
+    assert.equal(schema.ctaInPicture({ ...saved, automatic: { omitted: [], estimated_cuts: 0 } }, saved.candidates[4]), false)
+  } finally { f.cleanup() }
+})
+
 test('cancelling between batch clips never starts the next worker', async () => {
   const f = batchSetup()
   try {

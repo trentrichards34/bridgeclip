@@ -739,6 +739,22 @@ test('re-editing a finished remix: checked, rebuilt from its saved parts, call t
   assert.equal(await m.recomposeRemix(folder, 0, edit), null)
   assert.equal(fs.existsSync(path.join(folder, 'clip_00.original.mp4')), false)
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8')).clips[0].duration_ms, 12500)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8')).clips[0].editor_stale, undefined, 'no editor project: nothing to refresh')
+  // The run is in the clip editor: the video is marked so the editor swaps in the new version when it opens next.
+  const inEditor = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
+  inEditor.editor_project = true
+  fs.writeFileSync(path.join(folder, 'job_output.json'), JSON.stringify(inEditor))
+  assert.equal(await m.recomposeRemix(folder, 0, edit), null)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8')).clips[0].editor_stale, true)
+  // Baked in the clip editor: a re-make would undo the editor's work, so it is refused (the editor is where it changes).
+  const baked = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
+  baked.clips[0].editor_candidate = 'remix-000'
+  fs.writeFileSync(path.join(folder, 'job_output.json'), JSON.stringify(baked))
+  const runs = configs.length
+  await assert.rejects(m.recomposeRemix(folder, 0, edit), /changed in the clip editor/)
+  assert.equal(configs.length, runs)
+  delete baked.clips[0].editor_candidate
+  fs.writeFileSync(path.join(folder, 'job_output.json'), JSON.stringify(baked))
   // An engine failure keeps the video as it was.
   fail = true
   await assert.rejects(m.recomposeRemix(folder, 0, edit), /made before editing was possible/)
