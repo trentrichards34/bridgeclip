@@ -61,7 +61,7 @@ Only the person who enrolled (the **Account Holder**) can do this.
 4. Click **Create repository**.
 5. Optional: edit the README to say "Download CreatorClips from the Releases section on the right."
 
-Nothing else goes in this repository. Code never goes there, only the installers the build uploads. Members can file bug reports under its **Issues** tab, which is where the app's **Report an Issue…** menu item leads.
+Nothing else goes in this repository. Code never goes there, only the installers the build uploads. Its **Issues** tab is public. Until you set `SUPPORT_URL` in `src/shared/brand.ts` to your member support link or email, the app's **Report an Issue…** shows members the report, warns that this page is public, and offers to save the report to a file instead.
 
 ### 5. Create a GitHub token so the build can upload (5 min)
 
