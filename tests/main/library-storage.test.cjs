@@ -402,3 +402,25 @@ test('a b-roll video’s working folder (voice and shot pieces) is offered with 
   assert.ok(fs.existsSync(path.join(broll, 'clip_00.mp4')))
   assert.ok(fs.existsSync(path.join(other, '.broll-video', 'voice.m4a')))
 })
+
+test('freeing Remix parts keeps each video’s words beside it (the clip editor still has them); if they can’t be kept, neither are the parts', async (t) => {
+  const f = fixture()
+  t.after(f.cleanup)
+  const remix = makeRun(f.library, `remix-${UUID(7)}`, { clips: [0, 1], extra: { 0: { editable: { split: true } }, 1: { editable: { split: true } } } })
+  const words = [['Money', 0, 300], ['moves', 320, 600]]
+  for (const part of ['clip_00', 'clip_01']) {
+    write(path.join(remix, '.edit', part, 'moment.mp4'), 500)
+    fs.writeFileSync(path.join(remix, '.edit', part, 'edit.json'), JSON.stringify({ version: 1, words, other: 'parts' }))
+  }
+  // clip_01's words file can't be written (a folder is in the way): its parts stay.
+  fs.mkdirSync(path.join(remix, 'clip_01.words.json'))
+  const result = await f.main.runCleanup(['remixParts'], {})
+  assert.ok(!fs.existsSync(path.join(remix, '.edit', 'clip_00')))
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(remix, 'clip_00.words.json'), 'utf8')), { version: 1, words })
+  assert.ok(fs.existsSync(path.join(remix, '.edit', 'clip_01', 'moment.mp4')), 'parts whose words could not be kept stay')
+  assert.equal(result.skipped.length, 1)
+  assert.deepEqual(fs.readdirSync(remix).filter((name) => name.endsWith('.tmp')), [])
+  // A later plan never offers the words file for removal.
+  const plan = await f.main.cleanupPlan({})
+  for (const group of plan.groups) for (const run of group.runs) assert.ok(group.id === 'remixParts' || run.outputDir !== remix, `${group.id} has nothing of the remix but its parts`)
+})

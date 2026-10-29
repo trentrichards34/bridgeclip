@@ -223,7 +223,15 @@ export async function editorDesignCustom(path: unknown, candidateId: unknown, at
   // The moment: what is said from the playhead, through the end of that thought (3–8 s), inside the clip.
   const words = (await readChatTranscript(run, Math.max(0, at - 2000), at + 12000) ?? []).flatMap((s) => s.words).filter((w) => inCut(candidate, w.start_ms))
   const ahead = words.filter((w) => w.start_ms >= at - 200 && w.start_ms < at + REEL_HERO_MAX_MS).sort((a, b) => a.start_ms - b.start_ms)
-  if (!ahead.length) throw new Error('Nothing is said here. A custom graphic shows only the words you say, so move the playhead to where you speak.')
+  if (!ahead.length) {
+    if (project.automatic?.remix) {
+      // A Remix video made before its words were kept apart, whose re-make parts were then freed: no words at all.
+      const [from, to] = [candidate.ranges[0][0], candidate.ranges[candidate.ranges.length - 1][1]]
+      const any = (await readChatTranscript(run, from, to) ?? []).some((s) => s.words.some((w) => inCut(candidate, w.start_ms)))
+      if (!any) throw new Error('This video’s words weren’t kept with it (Free up space removed its Remix parts), and a custom graphic shows only words that are said. Add a graphic from the gallery instead.')
+    }
+    throw new Error('Nothing is said here. A custom graphic shows only the words you say, so move the playhead to where you speak.')
+  }
   const clipEnd = candidate.ranges[candidate.ranges.length - 1][1]
   let end = at + REEL_HERO_MIN_MS
   for (const w of ahead) {

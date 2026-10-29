@@ -310,6 +310,37 @@ test('a Remix run opens in the editor from its finished videos, and is marked on
   assert.equal(calls.worker[1].revision, 0)
 })
 
+test('a Remix video re-made with "Edit hook text & captions" is swapped into the editor when it opens next; its mark then comes off', async () => {
+  const { run, module, calls, setWorker } = setup({ metrics: { remix: true }, transcript: false })
+  let revision = 0
+  setWorker((req) => {
+    fs.writeFileSync(path.join(run, 'editor-project.json'), JSON.stringify(remixProject({ source_id: req.media_id, revision: req.revision === undefined ? 0 : req.revision + 1 })))
+    for (const kind of ['source', 'preview']) fs.writeFileSync(path.join(run, `editor-${kind}-${req.media_id}.mp4`), kind)
+    return { ok: true }
+  })
+  await module.prepareAutomaticEditor(run)
+  // Re-made in Remix (remix.ts marks it while the run has an editor project).
+  const job = read(run, 'job_output.json')
+  job.clips[0].editor_stale = true
+  fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify(job))
+  const info = plain(await module.automaticEditInfo(run))
+  assert.deepEqual(info, { videoLabel: 'The talk', clipCount: 1, source: 'kept', remix: true, state: 'restore', refreshVideos: 1 })
+  assert.equal((await module.prepareAutomaticEditor(run)).state, 'ready')
+  assert.deepEqual(calls.worker[1], { media_id: calls.worker[1].media_id, mode: 'remix', revision, refresh: [0] })
+  assert.equal(read(run, 'job_output.json').clips[0].editor_stale, undefined)
+  assert.equal((await module.automaticEditInfo(run)).state, 'ready')
+  // With its editor video freed, it is made again from the Library's videos (no refresh), and the mark comes off too.
+  job.clips[0].editor_stale = true
+  job.editor_project = true
+  fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify(job))
+  for (const file of fs.readdirSync(run)) if (/^editor-(source|preview)-/.test(file)) fs.rmSync(path.join(run, file))
+  revision = 1
+  assert.equal((await module.automaticEditInfo(run)).refreshVideos, undefined)
+  await module.prepareAutomaticEditor(run)
+  assert.deepEqual(calls.worker[2], { media_id: calls.worker[2].media_id, mode: 'remix', revision })
+  assert.equal(read(run, 'job_output.json').clips[0].editor_stale, undefined)
+})
+
 test('a Remix run being made or re-made waits; a failed conversion leaves nothing behind', async () => {
   const busy = setup({ metrics: { remix: true }, transcript: false, remixBusy: 'render' })
   await assert.rejects(busy.module.automaticEditInfo(busy.run), /Wait for this remix to finish/)

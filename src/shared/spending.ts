@@ -2,7 +2,7 @@
 // (or its own estimate when a provider reports none), plus the checks made
 // before a paid run. Pure functions, shared by the main process and the UI.
 
-export const SPEND_KINDS = ['create', 'edit', 'remix', 'avatar', 'broll', 'posting', 'chat'] as const
+export const SPEND_KINDS = ['create', 'edit', 'remix', 'brollvideo', 'avatar', 'broll', 'posting', 'chat'] as const
 export type SpendKind = (typeof SPEND_KINDS)[number]
 export type SpendProvider = 'openrouter' | 'fal' | 'heygen'
 export const SPEND_PROVIDERS: readonly SpendProvider[] = ['openrouter', 'fal', 'heygen']
@@ -16,6 +16,7 @@ export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
   create: 'Clip',
   edit: 'Edit my recording',
   remix: 'Remix',
+  brollvideo: 'B-roll video',
   // Voice previews and AI media (pictures and video) made outside a tool's own run, plus avatar videos.
   avatar: 'Voices & AI media',
   broll: 'B-roll library',
@@ -103,6 +104,18 @@ export function cleanLabel(value: unknown): string {
   return text.slice(0, MAX_LABEL_CHARS) || 'AI request'
 }
 
+/**
+ * The tool a Library run was made with, from its folder name, for costs paid inside it (the clip editor's graphics):
+ * a Remix, an Edit my recording reel, a B-roll video, or else a Clip run.
+ */
+export function spendKindForRun(runId: string | undefined): SpendKind {
+  if (!runId) return 'create'
+  if (runId.startsWith('remix-')) return 'remix'
+  if (runId.startsWith('edit-')) return 'edit'
+  if (runId.startsWith('broll-video-')) return 'brollvideo'
+  return 'create'
+}
+
 /** One stored entry, or null when it is unreadable. Unknown fields are dropped. */
 export function parseSpendEntry(value: unknown): SpendEntry | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -113,6 +126,8 @@ export function parseSpendEntry(value: unknown): SpendEntry | null {
   if (!money(raw.usd)) return null
   const entry: SpendEntry = { at: new Date(Date.parse(raw.at)).toISOString(), kind: raw.kind as SpendKind, provider: raw.provider, usd: raw.usd, label: cleanLabel(raw.label) }
   if (typeof raw.runId === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(raw.runId)) entry.runId = raw.runId
+  // Earlier ledgers filed B-roll videos under the B-roll library: read them under B-roll video.
+  if (entry.kind === 'broll' && (entry.runId?.startsWith('broll-video-') || entry.label.startsWith('B-roll video'))) entry.kind = 'brollvideo'
   if (raw.estimated === true) entry.estimated = true
   if (raw.backfilled === true) entry.backfilled = true
   if (typeof raw.ref === 'string' && SPEND_REF.test(raw.ref)) entry.ref = raw.ref

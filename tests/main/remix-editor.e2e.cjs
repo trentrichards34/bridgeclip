@@ -115,11 +115,24 @@ test('Remix in the editor: open a finished remix from the Library, add a templat
   const runName = fs.readdirSync(library).find((name) => name.startsWith('remix-'))
   const run = path.join(library, runName)
   const clipFile = path.join(run, 'clip_00.mp4')
+  // A call to action at its end (a picture card), then "Free up space" removes the copy without it: the video, CTA included,
+  // is all there is. The editor must not add the call to action a second time.
+  const card = path.join(root, 'follow-card.png')
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xff00aa:s=360x640:d=1', '-frames:v', '1', card])
+  await dialogs([card])
+  const cta = await page.evaluate(() => window.bridgeclip.ctas.add('Follow for more'))
+  const ctaId = (Array.isArray(cta) ? cta.find((c) => c.name === 'Follow for more') : cta)?.id
+  assert.ok(ctaId, JSON.stringify(cta))
+  const withoutCta = probe(ffmpeg, clipFile)
+  await page.evaluate(([dir, id]) => window.bridgeclip.clips.setCta(dir, 0, id), [run, ctaId])
+  assert.ok(fs.existsSync(path.join(run, 'clip_00.original.mp4')))
+  fs.rmSync(path.join(run, 'clip_00.original.mp4'))
   const original = path.join(root, 'remix-as-made.mp4')
   fs.copyFileSync(clipFile, original)
   const made = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).clips[0]
-  assert.ok(made.headline && made.editable, JSON.stringify(made))
+  assert.ok(made.headline && made.editable && made.cta?.id === ctaId, JSON.stringify(made))
   const before = probe(ffmpeg, original)
+  assert.ok(before.seconds > withoutCta.seconds + 1, `the call to action was added: ${before.seconds} vs ${withoutCta.seconds}`)
 
   // 2. The Library: the remix's ⋯ menu offers "Open in editor" (and no "Edit headline": its hook text is in the picture).
   await page.getByRole('button', { name: /^Library/ }).first().click()
@@ -139,6 +152,8 @@ test('Remix in the editor: open a finished remix from the Library, add a templat
   assert.equal(project.candidates.length, 1)
   const [candidate] = project.candidates
   assert.deepEqual([candidate.library_clip, candidate.status, candidate.captions, candidate.hook, candidate.scenes[0].crops[0]], [0, 'baked', false, null, [0, 0, 1, 1]])
+  // Its call to action is already in the picture: remembered, never added again.
+  assert.deepEqual([candidate.cta_in_picture, candidate.cta_id], [true, null])
   assert.ok(Math.abs(candidate.ranges[0][1] - before.seconds * 1000) < 100, `${candidate.ranges[0][1]} vs ${before.seconds}`)
   assert.equal(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).editor_project, true)
   // The words said, from the remix's captions, in the video's time: "Honestly…" starts the member's take after their 6 s clip.
@@ -147,6 +162,25 @@ test('Remix in the editor: open a finished remix from the Library, add a templat
   const honestly = words.findLast((w) => w.word === 'Honestly')
   assert.ok(honestly && honestly.start_time_ms > 5500, JSON.stringify(words))
   await shot(app, 'remix-editor-open.png')
+
+  // Controls that would double the text already in the picture, crop it or grade it are not offered; a line says why.
+  const inspector = editor.locator('.editor-inspector')
+  await inspector.getByRole('button', { name: 'Captions', exact: true }).click()
+  await inspector.getByTestId('remix-unavailable').waitFor()
+  assert.equal(await inspector.getByRole('switch', { name: 'Burn in captions' }).count(), 0)
+  assert.equal(await inspector.getByTestId('editor-color-grade').count(), 0)
+  await inspector.getByRole('button', { name: 'Hook & CTA', exact: true }).click()
+  await inspector.getByTestId('remix-unavailable').waitFor()
+  assert.equal(await inspector.getByRole('switch', { name: 'Hook text at the top' }).count(), 0)
+  assert.equal(await inspector.getByRole('button', { name: 'Suggest hooks' }).count(), 0)
+  assert.equal(await inspector.getByTestId('make-trial-reels').count(), 0)
+  await inspector.getByTestId('cta-in-picture').waitFor()
+  await inspector.getByRole('button', { name: 'More tabs' }).click()
+  await page.getByRole('menuitemradio', { name: 'Framing' }).click()
+  await inspector.getByTestId('remix-unavailable').waitFor()
+  assert.equal(await inspector.getByRole('button', { name: /^Split$/ }).count(), 0)
+  assert.equal(await editor.getByRole('button', { name: 'Fix layout' }).count(), 0)
+  await inspector.getByRole('button', { name: 'Graphics', exact: true }).click()
 
   const graphics = () => saved().candidates[0].graphics ?? []
   const savedWhen = async (check, what) => {
@@ -200,6 +234,9 @@ test('Remix in the editor: open a finished remix from the Library, add a templat
   // Its hook text is still on the card (it is in the picture); "Edit hook text & captions" would undo the editor's work, so it is gone.
   assert.equal(entry.headline, made.headline)
   assert.equal(entry.editable, undefined)
+  // One call to action: the card keeps it, and the video is as long as before (not a second one added).
+  assert.equal(entry.cta?.id, ctaId)
+  assert.equal(fs.existsSync(path.join(run, 'clip_00.original.mp4')), false)
   // It plays: decodes cleanly, same size, same length, with sound.
   execFileSync(ffmpeg, ['-v', 'error', '-xerror', '-i', clipFile, '-f', 'null', '-'])
   const after = probe(ffmpeg, clipFile)

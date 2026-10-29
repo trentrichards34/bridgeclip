@@ -119,6 +119,10 @@ export interface EditorCandidate extends CandidateEdit {
   caption_language?: CaptionLanguage
   /** Main-owned: the call to action was changed in the editor (an Automatic clip's export then keeps it instead of the Library clip's current one). */
   cta_edited?: true
+  /** A Remix editor clip whose base video already ends with its call to action (its copy without one was freed): never added again. */
+  cta_in_picture?: true
+  /** A Remix editor clip: where its finished video sits in the joined source (a re-made video is swapped in there). */
+  remix_span?: [number, number]
 }
 /** What an Automatic run drew that the editor can't make again; shown before a clip is baked again. */
 export type AutomaticOmission = 'broll' | 'hook_preview' | 'background' | 'title_card'
@@ -183,6 +187,8 @@ export interface AutomaticEditInfo {
   estimatedCuts?: boolean
   /** A Remix run: the editor works over its finished videos (graphics go on top; their layout, captions and hook text stay). */
   remix?: true
+  /** A Remix run whose editor video is in place but some of its videos were re-made in Remix since: how many (restore refreshes them). */
+  refreshVideos?: number
 }
 /** Status counts for Library and Jobs, without sending the project to the renderer. */
 export interface EditorProgressSummary {
@@ -399,9 +405,16 @@ export function parseEditorProject(value: unknown): EditorProject {
     const auto = c.auto === undefined ? undefined : parseAutoBaseline(c.auto, duration)
     const baked_hash = typeof c.baked_hash === 'string' && /^[a-f0-9]{64}$/.test(c.baked_hash) ? c.baked_hash : undefined
     const library_clip = c.library_clip === undefined ? undefined : Number.isInteger(c.library_clip) ? num(c.library_clip, 0, 999) : fail()
+    let remix_span: [number, number] | undefined
+    if (c.remix_span !== undefined) {
+      const span = arr(c.remix_span, 2)
+      if (span.length !== 2 || !span.every(Number.isInteger)) fail()
+      remix_span = [num(span[0], 0, duration), num(span[1], 0, duration)]
+      if (remix_span[1] <= remix_span[0]) fail()
+    }
     if (c.caption_language !== undefined && !isCaptionLanguage(c.caption_language)) fail()
     return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(auto ? { auto } : {}), ...(baked_hash ? { baked_hash } : {}),
-      ...(library_clip !== undefined ? { library_clip } : {}), ...(c.cta_edited === true ? { cta_edited: true as const } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
+      ...(library_clip !== undefined ? { library_clip } : {}), ...(c.cta_edited === true ? { cta_edited: true as const } : {}), ...(c.cta_in_picture === true ? { cta_in_picture: true as const } : {}), ...(remix_span ? { remix_span } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
       requires_visual_context: c.requires_visual_context === true, score: num(c.score, 0, 100), reason: clampText(c.reason, 4000), review,
       exports: arr(c.exports, 1000).map((n) => num(n, 0, 999)) }
   })
@@ -452,6 +465,16 @@ function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
   if (v.cta_offer !== undefined) origin.cta_offer = str(v.cta_offer, 200)
   if (v.remix !== undefined) { if (v.remix !== true) fail(); origin.remix = true }
   return origin
+}
+/**
+ * The clip's picture already ends with a call to action: a Remix editor clip made from a video whose copy without one
+ * was freed, or another clip (a variant, a clip from lines) cut from such a video's last second.
+ */
+export function ctaInPicture(project: EditorProject, candidate: EditorCandidate): boolean {
+  if (candidate.cta_in_picture) return true
+  if (!project.automatic?.remix) return false
+  const end = candidate.ranges[candidate.ranges.length - 1]?.[1] ?? 0
+  return project.candidates.some((c) => c.cta_in_picture && c.remix_span && end > c.remix_span[1] - 1000 && candidate.ranges.some(([a]) => a < c.remix_span![1]) && end <= c.remix_span[1] + 1)
 }
 export function candidateEdit(c: CandidateEdit): CandidateEdit {
   const { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges = [], dismissed_camera_markers } = c

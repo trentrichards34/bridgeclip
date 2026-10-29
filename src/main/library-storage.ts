@@ -377,6 +377,36 @@ async function stillPlanned(item: PlannedItem): Promise<boolean> {
   } catch { return false }
 }
 
+/**
+ * Before a Remix video's re-make parts go: keep the words it says (its captions' timing, from the parts' edit.json) as
+ * clip_NN.words.json beside it, so the clip editor can still be made for it and its graphics can still use what is said
+ * (engine remix_editor.bundle_words reads it). True when there is nothing to keep or it was kept.
+ */
+export async function keepRemixWords(run: string, part: string): Promise<boolean> {
+  if (!REMIX_PART.test(part)) return true
+  let words: unknown
+  try {
+    const file = join(run, '.edit', part, 'edit.json')
+    const info = await lstat(file)
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024 * 1024) return true
+    const data = JSON.parse(await readFile(file, 'utf8')) as { words?: unknown }
+    words = data && typeof data === 'object' ? data.words : undefined
+  } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError }
+  if (!Array.isArray(words) || !words.length) return true
+  const target = join(run, `${part}.words.json`)
+  const temporary = join(run, `.words-${randomUUID()}.tmp`)
+  try {
+    const existing = await lstat(target).catch(() => null)
+    if (existing && (existing.isSymbolicLink() || !existing.isFile())) return false
+    await writeFile(temporary, JSON.stringify({ version: 1, words }), { mode: 0o600, flag: 'wx' })
+    await rename(temporary, target)
+    return true
+  } catch {
+    await rm(temporary, { force: true }).catch(() => undefined)
+    return false
+  }
+}
+
 /** Drop `editable` from these clips so the Library stops offering "Edit hook text & captions" (no parts to re-make from). */
 async function markNotEditable(run: string, indices: number[]): Promise<void> {
   const file = join(run, 'job_output.json')
@@ -450,6 +480,8 @@ async function cleanRun(plan: RunPlan, groups: Set<CleanupGroupId>, result: Clea
     let failed = 0
     for (const item of remaining) {
       if (!(await stillPlanned(item))) { failed++; continue }
+      // A Remix video's words stay (the clip editor's graphics use them); if they can't be kept, neither are its parts.
+      if (item.group === 'remixParts' && item.clipIndex !== undefined && !(await keepRemixWords(plan.run, basename(item.path)))) { failed++; continue }
       try {
         // rm never follows links inside a folder: it removes the links themselves.
         await rm(item.path, { recursive: item.isDir, force: false })

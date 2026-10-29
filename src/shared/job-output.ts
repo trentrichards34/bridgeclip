@@ -43,6 +43,10 @@ export interface ClipArtifact {
   remix_settings?: RemixClipSettings | null
   /** When the video was last re-made (thumbnails refresh on it). */
   edited_at?: string | null
+  /** Remix: re-made ("Edit hook text & captions") after the run's editor project was made; the editor's copy is refreshed when it opens next. */
+  editor_stale?: true
+  /** The editor candidate whose bake made this video (set by a bake). */
+  editor_candidate?: string
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
@@ -301,6 +305,8 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
       editable: record(item.editable) ? { split: item.editable.split === true } : null,
       edited_at: boundedText(item.edited_at, 64),
+      ...(item.editor_stale === true ? { editor_stale: true as const } : {}),
+      ...(typeof item.editor_candidate === 'string' ? { editor_candidate: item.editor_candidate.slice(0, 64) } : {}),
       // The engine keeps the last-made settings inside `editable`; the box size as made is split_value.
       remix_settings: record(item.editable) ? remixSettings({ ...(record(item.editable.settings) ? item.editable.settings : {}),
         split: typeof item.editable.split_value === 'number' ? item.editable.split_value : record(item.editable.settings) ? item.editable.settings.split : null }) : null,

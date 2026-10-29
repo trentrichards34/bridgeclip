@@ -28,7 +28,7 @@ import { aiShotEstimateUsd, isBrollSource, usesAi, BROLL_LIBRARY_IMAGE_EXTENSION
 import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, recordSpend, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
 import { readTimecodeScreenshot } from './moment-take'
 import { MAX_TIMECODE_IMAGE_BYTES, type TimecodeRead } from '../shared/moment-take'
-import { friendlyCreditError, type SpendProvider } from '../shared/spending'
+import { friendlyCreditError, spendKindForRun, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost } from '../shared/remix'
 import { REFERENCE_EXTENSIONS } from '../shared/purpose'
@@ -113,12 +113,17 @@ import {
   retryPost
 } from './zernio/posts'
 
+/** A Library run's folder name (its id in the spending ledger) from the path the renderer sent. */
+function runIdOf(path: unknown): string | undefined {
+  return typeof path === 'string' ? path.split(/[\\/]/).pop() || undefined : undefined
+}
+
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
   registerCustomGraphics()
   // Clips exported from the editor end with their call to action, like the run's.
   onEditorRunLock(withRunLock)
   // Editor AI calls (caption translation on a bake, hook ideas) join the spending ledger.
-  onEditorSpend((usd, label) => recordSpend({ kind: 'create', provider: 'openrouter', usd, label }))
+  onEditorSpend((usd, label, run) => recordSpend({ kind: spendKindForRun(runIdOf(run)), provider: 'openrouter', usd, label }))
   // A headline changed in the clip editor is the one an edited recording (or that moment of a Create video) keeps next time.
   onEditorHookSaved((run, candidateId, text, range) => editorHeadlineSaved(run, candidateId, text, range))
   // Runs inside the export's run lock (onEditorRunLock), so it uses the in-lock version.
@@ -418,7 +423,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   // B-roll video: the voiceover comes from the dialog here (or a recording on the page); making one is paid (word timings,
   // the plan, a script's voice, AI shots): the spending check first, every cost to the ledger.
-  onBrollVideoSpend((usd, label, runId) => recordSpend({ kind: 'broll', provider: 'openrouter', usd, label, runId: runId || undefined }))
+  onBrollVideoSpend((usd, label, runId) => recordSpend({ kind: 'brollvideo', provider: 'openrouter', usd, label, runId: runId || undefined }))
   onBrollVideoStatus((status) => sendToWindow('brollVideo:status', status))
   handle('brollVideo:chooseVoiceover', async () => {
     const window = getMainWindow()
@@ -433,7 +438,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     let estimate: number | null = null
     try { estimate = brollVideoSpendCheck(request) } catch { /* the start itself reports a bad request */ }
     await assertSpendAllowed('brollVideo:start', 'openrouter', estimate)
-    return startBrollVideo(request, { meter: (work) => metered('broll', 'B-roll video: voice', work) })
+    return startBrollVideo(request, { meter: (work) => metered('brollvideo', 'B-roll video: voice', work) })
   })
   handle('brollVideo:cancel', () => cancelBrollVideo())
   handle('brollVideo:status', () => brollVideoStatus())
@@ -846,21 +851,21 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('edit:libraryAdd', 'openrouter', () => LIBRARY_ADD_ESTIMATE_USD, (request) => addEditLibraryGraphic(request))
   paid('editor:libraryAdd', 'openrouter', () => LIBRARY_ADD_ESTIMATE_USD, async (path, candidateId, itemId, atMs) => {
     const result = await editorAddLibraryGraphic(path, candidateId, itemId, atMs)
-    if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Library graphic', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {})
+    if (result.costUsd > 0) void recordSpend({ kind: spendKindForRun(runIdOf(path)), provider: 'openrouter', usd: result.costUsd, label: 'Library graphic', runId: runIdOf(path) }).catch(() => {})
     return result
   })
   // ...and in the clip editor: what one is, and making it again with a note (recorded in the spending ledger).
   handle('editor:customInfo', (_event, path: unknown, comp: unknown) => editorCustomInfo(path, comp))
   paid('editor:customGraphic', 'openrouter', () => EDITOR_REMAKE_ESTIMATE_USD, async (path, candidateId, graphic, note) => {
     const result = await editorRemakeCustom(path, candidateId, graphic, note)
-    if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Custom graphic', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {})
+    if (result.costUsd > 0) void recordSpend({ kind: spendKindForRun(runIdOf(path)), provider: 'openrouter', usd: result.costUsd, label: 'Custom graphic', runId: runIdOf(path) }).catch(() => {})
     return result
   })
   // ...and a new one designed at the playhead, in any editor project: its estimate first (free), then the design (paid, in the ledger).
   handle('editor:designInfo', (_event, path: unknown) => editorDesignInfo(path))
   // `quality`: Best (the default) or Lower cost (one design, no revisions); each one's estimate is shown before it runs.
   paid('editor:designCustom', 'openrouter', (path, _candidate, _at, _note, quality) => editorDesignEstimate(path, quality), (path, candidateId, atMs, note, quality) => editorDesignCustom(path, candidateId, atMs, note, {
-    onSpend: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: quality === 'lower' ? 'Custom graphic (designed here, lower cost)' : 'Custom graphic (designed here)', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {}) }
+    onSpend: (usd) => { void recordSpend({ kind: spendKindForRun(runIdOf(path)), provider: 'openrouter', usd, label: quality === 'lower' ? 'Custom graphic (designed here, lower cost)' : 'Custom graphic (designed here)', runId: runIdOf(path) }).catch(() => {}) }
   }, quality))
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
@@ -1055,7 +1060,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       apiKey: settings.openrouterApiKey, model, ffmpeg: resolveBinary('ffmpeg'),
       url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
       // Recorded with OpenRouter's reported cost, also when the turn fails part way.
-      onCost: (usd) => { void recordSpend({ kind: 'create', provider: 'openrouter', usd, label: 'Clip editor chat' }).catch(() => {}) }
+      onCost: (usd) => { void recordSpend({ kind: spendKindForRun(runIdOf(path)), provider: 'openrouter', usd, label: 'Clip editor chat' }).catch(() => {}) }
     }, points)
   })
   handle('editor:chatReset', async (_event, path: unknown, candidateId: unknown) => {

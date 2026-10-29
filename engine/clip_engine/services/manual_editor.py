@@ -741,6 +741,18 @@ def remix_project(project):
     return isinstance(extras, dict) and extras.get('remix') is True
 
 
+def remix_render_candidate(project, c):
+    """A Remix editor clip as it is baked: no captions, hook text, layout change, stage scenes or color grade (the
+    finished picture already has its captions and hook text, and its layout and colors are the remix's own). Graphics,
+    cuts, speed, look extras and sound effects go on top as usual. The saved clip is not changed."""
+    ratio = 9 / 16 if project['aspect_ratio'] == '9:16' else 16 / 9
+    out = {**c, 'captions': False, 'hook': None, 'caption_edits': [], 'caption_suppression_ranges': [], 'caption_y': None,
+           'scenes': [{'at_ms': 0, 'layout': 'fill', 'crops': [default_crop(project['width'], project['height'], ratio)]}]}
+    for key in ('grade', 'stage_scenes', 'zooms', 'caption_language'):
+        out.pop(key, None)
+    return out
+
+
 def automatic_extras(run, project):
     """What an Automatic run drew on its clips that the editor draws again: the brand handle/logo and the comment keyword."""
     from clip_engine.services.brand_mark import validate_brand_mark
@@ -842,6 +854,9 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     if remix_project(project):
         # Made over a finished Remix video: more bits, so a bake that changes nothing keeps the picture as it was.
         renderer.quality_scale = 1.5
+        # Its captions, hook text and layout are in the picture: never drawn again, cropped or graded over it.
+        c = remix_render_candidate(project, c)
+        scenes = None
     a, b = c['ranges'][0][0], c['ranges'][-1][1]
     # Absent hook (a project made before hooks were editable): the run's
     # original is not recorded for those, so none is drawn, as before.
@@ -1003,7 +1018,9 @@ def replace_library_clip(run, output, index, result, c, project, hook, a, b, cap
         if not hook:
             hook = {'text': entry['headline']} if isinstance(entry.get('headline'), str) and entry['headline'] else None
     entry.update(duration_ms=result.duration_ms, start_time_ms=a, end_time_ms=b, layout_type=result.layout_type,
-                 summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None, cta=None,
+                 summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None,
+                 # A video whose call to action is already in its picture (its copy without one was freed) keeps it as it is.
+                 cta=entry.get('cta') if c.get('cta_in_picture') is True else None,
                  caption_language=caption_language,
                  editor_candidate=c['id'], editor_revision=project['revision'],
                  # The Library reloads the card's thumbnail when this changes.

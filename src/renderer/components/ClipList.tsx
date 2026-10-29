@@ -378,9 +378,9 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
-              // Once a Remix video has an editor project, the editor owns it: remaking it from Remix would leave the editor's copy
-              // out of date (and a later bake would overwrite that change).
-              onEditVideo={outputDir && clip.editable && !output.editor_project ? () => setEditClip(clip) : undefined}
+              // A Remix video baked in the clip editor loses `editable` (the bake would be undone by a re-make); until then a
+              // re-make is fine: the editor's copy of that video is refreshed when the editor opens next.
+              onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
               onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
               onEditHeadline={editor && !isRemixOutput(output) ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
@@ -596,7 +596,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
           noticeTimer.current = setTimeout(() => setNotice(null), 6000)
         }}
       />}
-      {editClip && outputDir && <RemixEditDialog outputDir={outputDir} clip={editClip} onClose={() => setEditClip(null)}
+      {editClip && outputDir && <RemixEditDialog outputDir={outputDir} clip={editClip} inEditor={output.editor_project === true} onClose={() => setEditClip(null)}
         onDone={(fresh, note) => {
           if (fresh) onOutputChanged(fresh)
           setNotice(note ?? 'The video was made again with your changes. Copies already queued in an automation keep their earlier version.')

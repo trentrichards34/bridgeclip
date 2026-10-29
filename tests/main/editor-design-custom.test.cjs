@@ -216,7 +216,7 @@ test('the IPC is paid: gated, estimated before spending, recorded in the ledger,
   const handlers = fs.readFileSync(path.join(ROOT, 'src/main/ipc-handlers.ts'), 'utf8')
   // The quality the member chose is estimated before spending (Lower cost: its own, smaller estimate) and passed to the design.
   assert.match(handlers, /paid\('editor:designCustom', 'openrouter', \(path, _candidate, _at, _note, quality\) => editorDesignEstimate\(path, quality\)/)
-  assert.match(handlers, /editorDesignCustom\(path, candidateId, atMs, note, \{\s*onSpend: \(usd\) => \{ void recordSpend\(\{ kind: 'edit', provider: 'openrouter', usd/)
+  assert.match(handlers, /editorDesignCustom\(path, candidateId, atMs, note, \{\s*onSpend: \(usd\) => \{ void recordSpend\(\{ kind: spendKindForRun\(runIdOf\(path\)\), provider: 'openrouter', usd/)
   assert.match(handlers, /\}, quality\)\)/)
   assert.match(handlers, /handle\('editor:designInfo'/)
   const spending = fs.readFileSync(path.join(ROOT, 'src/main/spending.ts'), 'utf8')
