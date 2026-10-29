@@ -405,9 +405,10 @@ test('floating text with a text background: the row, the preview\'s per-line box
   await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Floating text' }).click()
   const bgs = page.getByRole('radiogroup', { name: 'Text background' })
   await bgs.waitFor()
-  for (const name of ['None', 'Dark box', 'Light box', 'Brand color']) await bgs.getByRole('radio', { name, exact: true }).waitFor()
+  const textBgNames = ['None', 'Dark box', 'Light box', 'Brand color', 'Key words in color']
+  for (const name of textBgNames) await bgs.getByRole('radio', { name, exact: true }).waitFor()
   assert.equal(await checked(bgs.getByRole('radio', { name: 'None', exact: true })), true)
-  assert.equal(await bgs.locator('[data-look-tile]').count(), 4, 'each option is a tile on the member\'s frame')
+  assert.equal(await bgs.locator('[data-look-tile]').count(), textBgNames.length, 'each option is a tile on the member\'s frame')
 
   // Dark box: one rounded outline behind the lines, each line's box as wide as that line (not the frame).
   await bgs.getByRole('radio', { name: 'Dark box' }).click()

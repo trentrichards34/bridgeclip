@@ -65,6 +65,8 @@ test('caption styles preview word progression in the style board, pause and play
       await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('[data-testid="style-preview"] [data-caption-state="future"]')).opacity) < 1, null, { timeout: 5000 })
     }
     if (name === 'Spotlight' || name === 'Headline') {
+      // (Polled: reduced motion shortens transitions to a hair, so the pill lands a frame after the style changes.)
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-testid="style-preview"] [data-caption-state="active"]')).backgroundColor !== 'rgba(0, 0, 0, 0)', null, { timeout: 5000 })
       assert.notEqual(await preview.locator('[data-caption-state="active"]').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
       assert.equal(await preview.locator('[data-caption-state="past"]').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
     }
