@@ -1,19 +1,99 @@
+import { importLogoIntoRun } from './logo-library'
 import { execFile, spawn, type ChildProcess } from 'child_process'
-import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent } from 'fs'
+import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent } from 'fs'
 import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { EDITOR_REVISION_CONFLICT, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, renderEditKey, type CandidateEdit, type EditorBatch, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession } from '../shared/clip-editor'
+import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, ctaInPicture, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
+import { isCaptionLanguage } from '../shared/caption-language'
+import type { SummaryEditorClip } from '../shared/library-summary'
 import { loadSettings, getSettingsForBridge } from './settings-store'
 import { assertAbsolutePath, assertMediaPath, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getJobOutput } from './file-manager'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment } from './pipeline-runner'
 import { resolveBinary } from './tools'
 import { logger } from './logger'
+import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
+import { outputScenes, parseScenes, type StageScene } from '../shared/scenes'
+import { firstChapterSourceMs, graphicsCap, parseGraphics } from '../shared/motion-graphics'
+import { bakeSoundEvents } from '../shared/sound-design'
+import { soundPaletteForEngine } from './sound-library'
 
-type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source'
+type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare' | 'fix-layout'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
 const operations = new Map<string, EditorOperation>()
+
+/** Adds a call to action to a newly exported clip (set by the IPC layer, which owns the CTA library). */
+type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promise<void>
+let applyExportCta: EditorCtaApplier | null = null
+export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
+/** Records what an editor AI call cost in the spending ledger (set by the IPC layer, which owns it). */
+type EditorSpendRecorder = (usd: number, label: string, run: string) => Promise<unknown>
+let recordEditorSpend: EditorSpendRecorder | null = null
+export function onEditorSpend(recorder: EditorSpendRecorder): void { recordEditorSpend = recorder }
+/** Exports rewrite the run's clips and job_output.json: they wait for other changes to the run (CTA changes, re-makes). */
+type RunLock = <T>(run: string, work: () => Promise<T>) => Promise<T>
+let runExclusive: RunLock = (_run, work) => work()
+export function onEditorRunLock(lock: RunLock): void { runExclusive = lock }
+/** A clip's hook text changed on save (run folder, clip id, the new text ('' for none), and the clip's range of the source). */
+type EditorHookListener = (run: string, candidateId: string, text: string, range: [number, number]) => void
+let hookSaved: EditorHookListener = () => undefined
+export function onEditorHookSaved(listener: EditorHookListener): void { hookSaved = listener }
+
+/** The run's own call to action: the one most of its made clips end with. */
+async function runCtaId(run: string): Promise<string | null> {
+  try {
+    const counts = new Map<string, number>()
+    for (const clip of (await getJobOutput(run))?.clips ?? []) if (clip.cta?.id) counts.set(clip.cta.id, (counts.get(clip.cta.id) ?? 0) + 1)
+    return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  } catch { return null }
+}
+
+/**
+ * The call to action on the Library clip an Automatic clip's export replaces, read before the
+ * render (which clears it). Undefined when the editor's choice applies: a clip that adds a new
+ * Library clip, a replaced clip that is gone, or a call to action changed in the editor since.
+ */
+async function libraryClipCta(run: string, candidate: EditorCandidate): Promise<string | null | undefined> {
+  if (candidate.library_clip === undefined || candidate.cta_edited) return undefined
+  try {
+    const clip = (await getJobOutput(run))?.clips?.find((x) => x.clip_index === candidate.library_clip)
+    if (!clip) return undefined
+    return typeof clip.cta?.id === 'string' ? clip.cta.id : null
+  } catch { return undefined }
+}
+
+/**
+ * After an export: end the new clip with a call to action. A re-baked Automatic clip keeps the
+ * one its Library clip had (`libraryCta`, null when it was removed there) unless it was changed in the
+ * editor; otherwise the candidate's (or the run's). A failure leaves the clip as rendered.
+ */
+async function addExportCta(run: string, candidateId: string, libraryCta?: string | null): Promise<void> {
+  if (!applyExportCta) return
+  try {
+    const project = readProject(run)
+    const candidate = project.candidates.find((c) => c.id === candidateId)
+    // A Remix video whose call to action is already in its picture (its copy without one was freed): never a second one.
+    if (candidate && ctaInPicture(project, candidate)) return
+    const index = candidate?.exports.at(-1)
+    const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
+      : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
+    if (!candidate || index === undefined) return
+    if (ctaId) await applyExportCta(run, ctaId, index)
+    // The Library clip now ends as the editor chose: from here on a call to action changed in the Library wins again.
+    if (candidate.cta_edited && index === candidate.library_clip) clearCtaEdited(run, candidateId)
+  } catch (error) {
+    // The clip stays as rendered; the Library can add the call to action later.
+    logger.warn('editor.cta.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+  }
+}
+function clearCtaEdited(run: string, candidateId: string): void {
+  const project = readProject(run)
+  const candidate = project.candidates.find((c) => c.id === candidateId)
+  if (!candidate?.cta_edited) return
+  delete candidate.cta_edited
+  writeProject(run, project)
+}
 export function editorBusy(path: string): boolean { return operations.has(realpathSync(path)) }
 function runPath(path: unknown): string {
   assertAbsolutePath(path)
@@ -67,14 +147,20 @@ function sweepEditorFiles(run: string, project?: EditorProject): void {
   let removed = 0
   for (const entry of entries) {
     const temporary = entry.name.startsWith('.editor-')
-    if (!temporary && !(keep && EDITOR_MEDIA.test(entry.name) && !keep.has(entry.name) && (entry.isFile() || entry.isSymbolicLink()))) continue
-    try { rmSync(join(run, entry.name), { recursive: temporary && entry.isDirectory(), force: true }); removed++ } catch { /* A playing preview can stay open on Windows; retry next time. */ }
+    // The screen zooms' sharper pictures go with the editor media (the project is read-only then).
+    const zoomPictures = entry.name === '.zoom' && keep !== null && keep.size === 0 && entry.isDirectory() && !entry.isSymbolicLink()
+    if (!temporary && !zoomPictures && !(keep && EDITOR_MEDIA.test(entry.name) && !keep.has(entry.name) && (entry.isFile() || entry.isSymbolicLink()))) continue
+    try { rmSync(join(run, entry.name), { recursive: (temporary || zoomPictures) && entry.isDirectory(), force: true }); removed++ } catch { /* A playing preview can stay open on Windows; retry next time. */ }
   }
   if (removed) logger.info('editor.sweep', { removed })
 }
 
 function mediaSize(paths: string[]): number {
   return paths.reduce((total, file) => { try { return total + statSync(file).size } catch { return total } }, 0)
+}
+/** A regular file (not a link) directly inside the run. */
+function runFile(file: string, run: string): boolean {
+  try { const stat = lstatSync(file); return stat.isFile() && !stat.isSymbolicLink() && isWithinDirectory(file, run) } catch { return false }
 }
 export async function openEditor(path: unknown): Promise<EditorSession> {
   const run = runPath(path)
@@ -83,8 +169,10 @@ export async function openEditor(path: unknown): Promise<EditorSession> {
   sweepEditorFiles(run, project)
   const operation = operations.get(run)
   const state = { progress: operation?.progress ? { ...operation.progress } : undefined, operation: operation?.action ?? null, batch: operation?.batch ? { ...operation.batch } : undefined }
-  if (project.media_freed) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state }
+  if (project.media_freed) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state, ...(project.automatic ? { mediaMissing: true } : {}) }
   const sourcePath = join(run, names.source), previewPath = join(run, names.preview)
+  // A project made from an Automatic run gets its video again (download or the original file) instead of failing.
+  if (project.automatic && (!runFile(sourcePath, run) || !runFile(previewPath, run))) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state, mediaMissing: true }
   for (const file of [sourcePath, previewPath]) {
     if (lstatSync(file).isSymbolicLink() || !isWithinDirectory(file, run)) throw new Error('Editor source is missing')
     assertMediaPath(file, loadSettings().outputDirectory)
@@ -123,6 +211,25 @@ export async function readEditorProgress(path: unknown): Promise<EditorProgressS
     ...(operation?.batch ? { batch: { ...operation.batch } } : {}), ...(operation?.progress ? { progress: { ...operation.progress } } : {}) }
 }
 
+/** Each clip's title, status, length and score for the Library's clip grid, cached until the project file changes. */
+const clipListCache = new Map<string, { mtimeMs: number; size: number; ino: number; value: { clips: SummaryEditorClip[]; previewPath: string | null } }>()
+export async function readEditorClips(path: unknown): Promise<{ clips: SummaryEditorClip[]; previewPath: string | null }> {
+  const run = runPath(path)
+  const stat = lstatSync(join(run, 'editor-project.json'))
+  if (!stat.isFile()) throw new Error('This run has no editor project')
+  const cached = clipListCache.get(run)
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) return cached.value
+  const project = readProject(run)
+  let previewPath: string | null = project.media_freed ? null : join(run, mediaNames(project).preview)
+  try { if (previewPath && (lstatSync(previewPath).isSymbolicLink() || !isWithinDirectory(previewPath, run))) previewPath = null } catch { previewPath = null }
+  const value = { previewPath, clips: project.candidates.map((c) => ({ title: c.title, status: c.status, durationMs: editDuration(c), score: c.score, startMs: c.ranges[0][0] })) }
+  clipListCache.delete(run)
+  clipListCache.set(run, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, value })
+  if (clipListCache.size > 1000) clipListCache.delete(clipListCache.keys().next().value!)
+  return value
+}
+
+const ctaChoice = (id: string | null | undefined): string => id === undefined ? 'run' : id ?? 'none'
 const bakedHash = (c: CandidateEdit): string => createHash('sha256').update(renderEditKey(c)).digest('hex')
 export async function saveEditor(path: unknown, revision: unknown, edits: unknown): Promise<EditorSession> {
   const run = runPath(path)
@@ -133,12 +240,22 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
     if (!Number.isSafeInteger(revision) || project.revision !== revision) throw new Error(EDITOR_REVISION_CONFLICT)
     if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
     if (!Array.isArray(edits) || edits.length !== project.candidates.length) throw new Error('Invalid candidate edits')
-    const clean = edits.map((c) => parseCandidateEdit(c, project.duration_ms, project.transcript.length))
+    const clean = edits.map((c) => parseCandidateEdit(c, project.duration_ms, project.transcript.length, graphicsCap(project)))
     if (new Set(clean.map((c) => c.id)).size !== clean.length) throw new Error('Duplicate candidates')
+    const hooks: [string, string, [number, number]][] = []
     project.candidates = project.candidates.map((c) => {
       const edit = clean.find((e) => e.id === c.id)
       if (!edit) throw new Error('Candidate is missing')
       const next = { ...c, ...edit }
+      if (edit.hook !== undefined && (edit.hook?.text ?? '') !== (c.hook?.text ?? '')) hooks.push([c.id, edit.hook?.text ?? '', [next.ranges[0][0], next.ranges[next.ranges.length - 1][1]]])
+      // Graphics absent from the edit means none (undo back to before the first one): don't keep the stored ones.
+      if (edit.graphics === undefined) delete next.graphics
+      if (edit.stage_scenes === undefined) delete next.stage_scenes
+      if (edit.look_extras === undefined) delete next.look_extras
+      if (edit.sound === undefined) delete next.sound
+      if (edit.grade === undefined) delete next.grade
+      // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
+      if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {
         // Unchanged since its render, or restored to the exact render "Refine again" left.
         const unchanged = c.status === 'baked' ? renderEditKey(edit) === renderEditKey(c) : !!c.baked_hash && c.exports.length > 0 && bakedHash(edit) === c.baked_hash
@@ -149,6 +266,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
     })
     project.revision++
     writeProject(run, project)
+    for (const [id, text, range] of hooks) { try { hookSaved(run, id, text, range) } catch { /* only not remembered */ } }
   } finally { operations.delete(run) }
   return openEditor(run)
 }
@@ -208,24 +326,27 @@ function safeTail(stderr: string): Record<string, string> {
 /** Generous for long sources on CPU encoders, yet bounded if a worker hangs. */
 const workerLimitMs = (durationMs: number): number => 30 * 60 * 1000 + 3 * durationMs
 
-function runWorker(run: string, operation: EditorOperation, action: WorkerAction, env: Record<string, string | undefined>, python: string, limitMs: number, request: Record<string, unknown>): Promise<void> {
+type WorkerResult = { ok: boolean; error?: unknown } & Record<string, unknown>
+/** A failed worker run, with its result line (it can report what paid calls cost before the failure). */
+class WorkerFailure extends Error { result?: WorkerResult }
+function runWorker(run: string, operation: EditorOperation, action: WorkerAction, env: Record<string, string | undefined>, python: string, limitMs: number, request: Record<string, unknown>): Promise<WorkerResult> {
   const engine = env.PYTHONPATH!
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<WorkerResult>((resolve, reject) => {
     const child = spawn(python, [join(dirname(getBridgeRunnerPath()), 'editor_runner.py')],
       { cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true })
     operation.child = child
     let stdout = '', stderr = '', settled = false, protocolFailed = false, timedOut = false
-    let result: { ok: boolean; error?: unknown } | undefined
+    let result: WorkerResult | undefined
     const consume = (line: string): void => {
       if (!line.trim()) return
       if (line.length > 16384) { protocolFailed = true; stop(child); return }
       try {
         const value = JSON.parse(line)
         if (value?.type === 'progress') {
-          if (action === 'scan-cameras' && (value.phase === 'scan' || value.phase === 'preview') &&
-              typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100) {
+          const phases = action === 'scan-cameras' ? ['scan', 'preview'] : action === 'prepare' ? ['copy', 'download', 'preview'] : []
+          if (phases.includes(value.phase) && typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100) {
             const previous = operation.progress
-            if (!previous || (previous.phase === 'scan' && value.phase === 'preview') ||
+            if (!previous || phases.indexOf(previous.phase) < phases.indexOf(value.phase) ||
                 (previous.phase === value.phase && value.percent >= previous.percent)) {
               operation.progress = { phase: value.phase, percent: Math.floor(value.percent) }
             }
@@ -235,7 +356,7 @@ function runWorker(run: string, operation: EditorOperation, action: WorkerAction
       } catch { protocolFailed = true }
     }
     const timer = setTimeout(() => { timedOut = true; stop(child, true) }, limitMs)
-    const finish = (error?: Error): void => { if (settled) return; settled = true; clearTimeout(timer); if (error) reject(error); else resolve() }
+    const finish = (error?: Error): void => { if (settled) return; settled = true; clearTimeout(timer); if (error) reject(error); else resolve(result!) }
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
       let end: number
@@ -253,7 +374,9 @@ function runWorker(run: string, operation: EditorOperation, action: WorkerAction
       if (exitCode === 0 && !protocolFailed && result?.ok === true) return finish()
       const code: EditorErrorCode | undefined = timedOut ? 'timeout' : operation.cancelled ? 'cancelled' : isEditorErrorCode(result?.error) ? result.error : undefined
       logger.warn('editor.worker.failed', { action, code: code ?? 'unknown', exitCode, signal, protocolFailed, ...safeTail(stderr) })
-      finish(new Error(editorFailureMessage(action === 'export-all' ? 'export' : action, code)))
+      const failure = new WorkerFailure(editorFailureMessage(action === 'export-all' ? 'export' : action, code))
+      failure.result = result
+      finish(failure)
     })
     child.stdin.on('error', () => {})
     child.stdin.end(JSON.stringify(request))
@@ -270,10 +393,23 @@ function batchFailure(batch: EditorBatch, failed: { title: string; error: Error 
     parts.push(`Could not bake ${failed.slice(0, 3).map((f) => quote(f.title)).join(', ')}${failed.length > 3 ? ` and ${failed.length - 3} more` : ''}:`,
       reasons.length === 1 ? reasons[0] : `${reasons[0]} (and other errors)`)
   }
-  if (cancelled) parts.push('Batch cancelled.')
+  if (cancelled) parts.push('Batch canceled.')
   else if (stoppedBy !== undefined) parts.push(`Batch stopped: ${stoppedBy instanceof Error ? stoppedBy.message : 'Export failed.'}`)
   if (batch.completed < batch.total) parts.push('Clips that were not baked are still ready.')
   return new BatchError(parts.join(' '))
+}
+/** A bake's `sound` (engine sound_design.parse_request): the register, the music's level and what happens on screen. */
+export function candidateSoundRequest(project: EditorProject, candidate: EditorCandidate): Record<string, unknown> {
+  const sound = candidate.sound!
+  return { register: sound.register, ...(sound.music_db !== undefined ? { music_db: sound.music_db } : {}),
+    events: bakeSoundEvents(candidate, project.aspect_ratio === '9:16' && !!candidate.hook), palette: soundPaletteForEngine().slice(0, 60) }
+}
+function workerSetup(settings: ReturnType<typeof loadSettings>): { env: Record<string, string | undefined>; python: string } {
+  const engine = getEnginePath()
+  const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge({ ...settings, jevEnabled: 'on' }), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
+  const ffmpeg = resolveBinary('ffmpeg')
+  if (ffmpeg !== 'ffmpeg') env.PATH = `${dirname(ffmpeg)}${delimiter}${env.PATH ?? ''}`
+  return { env, python: resolvePythonPath(engine, settings.pythonPath) }
 }
 async function executeEditor(path: unknown, revision: unknown, candidateId: unknown, action: WorkerAction, replacement?: string): Promise<EditorSession> {
   const run = runPath(path)
@@ -294,25 +430,65 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       const media = await openAuthorizedMedia(replacement!, loadSettings().outputDirectory)
       operation.abort = new AbortController()
       try {
-        if (operation.cancelled) throw new Error('Source replacement cancelled.')
+        if (operation.cancelled) throw new Error('Source replacement canceled.')
         await pipeline(media.handle.createReadStream({ autoClose: false }), createWriteStream(join(run, `editor-source-${sourceId}.mp4`), { flags: 'wx', mode: 0o600 }), { signal: operation.abort.signal })
       } finally { await media.handle.close() }
       previousMedia = [session.sourcePath, session.previewPath]
     }
     if (action === 'export' && session.project.candidates.find((c) => c.id === candidateId)!.status !== 'ready') throw new Error('Mark this clip ready before baking it')
+    if ((action === 'export' || action === 'export-all') && session.project.automatic?.remix && (await getJobOutput(run))?.clips.some((clip) => clip.editor_stale)) {
+      throw new Error('A video in this run was changed with “Edit hook text & captions”. Open the run in the editor again from the Library to update its copy here, then bake.')
+    }
     const candidates = action === 'replace-source' ? session.project.candidates.slice(0, 1) : action === 'export-all' ? session.project.candidates.filter((c) => c.status === 'ready') : session.project.candidates.filter((c) => c.id === candidateId)
     if (!candidates.length) throw new Error('Mark at least one clip ready before baking.')
     if (action === 'export-all') operation.batch = { completed: 0, total: candidates.length }
-    const settings = loadSettings(), engine = getEnginePath()
+    const settings = loadSettings()
     if (action === 'review' && !settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings to run this review.')
-    const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge({ ...settings, jevEnabled: 'on' }), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
-    const ffmpeg = resolveBinary('ffmpeg')
-    if (ffmpeg !== 'ffmpeg') env.PATH = `${dirname(ffmpeg)}${delimiter}${env.PATH ?? ''}`
-    const python = resolvePythonPath(engine, settings.pythonPath), limitMs = workerLimitMs(session.project.duration_ms)
+    const { env, python } = workerSetup(settings), limitMs = workerLimitMs(session.project.duration_ms)
     for (const candidate of candidates) {
       if (operation.cancelled) break
       try {
-        await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+        const exporting = action === 'export' || action === 'export-all'
+        const work = async (): Promise<void> => {
+          const libraryCta = exporting ? await libraryClipCta(run, candidate) : undefined
+          // Motion graphics are drawn first (offscreen, cached in the run's .graphics/), then layered by the engine.
+          let graphics: RenderedGraphic[] = []
+          if (exporting && candidate.graphics?.length) {
+            try { graphics = await renderCandidateGraphics(run, session.project, candidate, () => !!operation.cancelled) } catch (error) {
+              if (operation.cancelled) throw new Error(editorFailureMessage('export', 'cancelled'))
+              logger.warn('editor.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+              throw new Error("Could not draw this clip's graphics. Your edits are saved. Try again, or remove a graphic and bake again.")
+            }
+          }
+          let result: WorkerResult
+          try {
+            result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size, depth, min_top, inset }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}), ...(depth ? { depth } : {}), ...(min_top !== undefined ? { min_top } : {}), ...(inset ? { inset } : {}) })) } : {}),
+              // The hook hands over to the first chapter header (it fades out as that starts).
+              ...(exporting && firstChapterSourceMs(candidate) !== null ? { hook_end_source_ms: firstChapterSourceMs(candidate) } : {}),
+              // Scenes on the finished clip's clock (vertical clips only).
+              ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}),
+              // Sound effects that follow this clip's graphics, scenes and cuts (with the member's own sounds first).
+              ...(exporting && candidate.sound?.on ? { sound: candidateSoundRequest(session.project, candidate) } : {}) })
+          } catch (error) {
+            // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
+            const failedResult = (error as WorkerFailure).result
+            if (exporting && failedResult) await recordEditorCost(run, failedResult, 'editor_caption_translation', true)
+            if (action === 'review' && failedResult) await recordEditorCost(run, failedResult, 'editor_review')
+            throw error
+          }
+          // The coherence judgments (and any looks at the video's frames) of a review.
+          if (action === 'review') await recordEditorCost(run, result, 'editor_review')
+          if (exporting) {
+            // Translated captions (a clip from an Automatic run in another caption language) cost one OpenRouter call.
+            await recordEditorCost(run, result, 'editor_caption_translation', true)
+            if (!operation.cancelled) await addExportCta(run, candidate.id, libraryCta)
+            // Renders no clip uses any more are removed (they are made again if undo brings a graphic back).
+            if (graphics.length) { try { sweepGraphicRenders(run, readProject(run)) } catch { /* best effort */ } }
+          }
+        }
+        if (exporting) await runExclusive(run, work)
+        else await work()
         if (operation.batch) operation.batch.completed++
       } catch (error) {
         // One failed clip must not strand the rest of "Bake all".
@@ -348,6 +524,208 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
   }
   return openEditor(run)
 }
+/**
+ * Add a clip: one made from transcript lines, or a copy of `sourceId` for A/B
+ * testing. Main assigns its id; the new clip starts refining, unreviewed and
+ * unexported. A copy keeps its source's score, reason and camera scan.
+ */
+export async function addEditorCandidate(path: unknown, revision: unknown, candidate: unknown, sourceId?: unknown): Promise<EditorSession> {
+  const run = runPath(path)
+  if (operations.has(run)) throw new Error('Wait for the current editor operation to finish')
+  operations.set(run, { action: 'save' })
+  try {
+    const { project } = await openEditor(run)
+    if (!Number.isSafeInteger(revision) || project.revision !== revision) throw new Error(EDITOR_REVISION_CONFLICT)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    if (project.candidates.length >= MAX_EDITOR_CANDIDATES) throw new Error(`A project can hold up to ${MAX_EDITOR_CANDIDATES} clips. This one is full.`)
+    let source: EditorCandidate | undefined
+    if (sourceId !== undefined && sourceId !== null) {
+      source = typeof sourceId === 'string' ? project.candidates.find((c) => c.id === sourceId) : undefined
+      if (!source) throw new Error('The clip to copy is missing. Reopen the editor and try again.')
+    }
+    const edit = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length, graphicsCap(project))
+    if (!source) {
+      // From transcript lines: one stretch of the source, 3 seconds to 3 minutes.
+      const length = edit.ranges.length === 1 ? edit.ranges[0][1] - edit.ranges[0][0] : -1
+      if (length < Math.min(TRANSCRIPT_CLIP_MS.min, project.duration_ms) || length > TRANSCRIPT_CLIP_MS.max) throw new Error('Invalid candidate edits')
+    }
+    const ids = new Set(project.candidates.map((c) => c.id))
+    let id: string
+    do id = `clip-${randomUUID().replaceAll('-', '').slice(0, 12)}`; while (ids.has(id))
+    const added: EditorCandidate = { ...edit, id, status: 'refining', score: source?.score ?? 0, reason: source?.reason ?? '', review: null, exports: [],
+      requires_visual_context: source?.requires_visual_context === true, ...(source?.camera_scan ? { camera_scan: structuredClone(source.camera_scan) } : {}) }
+    project.candidates.push(added)
+    project.revision++
+    writeProject(run, project)
+  } finally { operations.delete(run) }
+  return openEditor(run)
+}
+
+/**
+ * Before a bake: how many clips will have their captions translated (one OpenRouter call each),
+ * and an estimate from what this run's translations cost so far (null when none is recorded).
+ */
+export async function editorTranslationEstimate(path: unknown, candidateId: unknown, action: unknown): Promise<{ clips: number; estimateUsd: number | null }> {
+  if (action !== 'export' && action !== 'export-all') return { clips: 0, estimateUsd: null }
+  const run = runPath(path)
+  const project = readProject(run)
+  const chosen = action === 'export-all' ? project.candidates.filter((c) => c.status === 'ready') : project.candidates.filter((c) => c.id === candidateId)
+  const clips = chosen.filter((c) => c.captions && isCaptionLanguage(c.caption_language)).length
+  if (!clips) return { clips: 0, estimateUsd: null }
+  const each = await recordedCostEach(run, ['caption_translation', 'editor_caption_translation'])
+  return { clips, estimateUsd: each === null ? null : Math.round(each * clips * 1e6) / 1e6 }
+}
+
+/**
+ * Before an editor review or hook ideas: an estimate from what this run's earlier ones cost
+ * (null when none is recorded: the spending check then asks for its minimum balance).
+ */
+export async function editorCallEstimate(path: unknown, action: 'review' | 'suggest-hooks'): Promise<number | null> {
+  const each = await recordedCostEach(runPath(path), [action === 'review' ? 'editor_review' : 'editor_hooks'])
+  return each === null ? null : Math.round(each * 1e6) / 1e6
+}
+
+/** The average recorded cost of one call in these job_output cost sections, or null. */
+async function recordedCostEach(run: string, sections: string[]): Promise<number | null> {
+  let usd = 0, attempts = 0
+  try {
+    const costs = (await getJobOutput(run))?.metrics?.api_costs as Record<string, unknown> | undefined
+    for (const section of sections) {
+      const entry = costs?.[section] as { estimated_cost_usd?: unknown; attempts?: unknown } | undefined
+      const cost = entry?.estimated_cost_usd, count = entry?.attempts
+      if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && typeof count === 'number' && Number.isFinite(count) && count > 0) { usd += cost; attempts += count }
+    }
+  } catch { /* no recorded cost: no estimate */ }
+  return attempts ? usd / attempts : null
+}
+
+/** Record what an editor AI call cost in the run's job_output.json (metrics.api_costs[section]). */
+const EDITOR_SPEND_LABELS = { editor_hooks: 'Editor hook ideas', editor_caption_translation: 'Editor caption translation', editor_review: 'Editor review' } as const
+async function recordEditorCost(run: string, result: WorkerResult, section: keyof typeof EDITOR_SPEND_LABELS, locked = false): Promise<void> {
+  const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd >= 0 && result.cost_usd < 1000 ? result.cost_usd : 0
+  const incomplete = result.cost_incomplete === true
+  const model = typeof result.model === 'string' && /^[\w.:/-]{1,120}$/.test(result.model) ? result.model : undefined
+  if (!cost && !incomplete) return
+  if (cost && recordEditorSpend) {
+    // The spending ledger (Settings → Spending), apart from the run's own cost record.
+    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section], run) } catch { /* never breaks the editor */ }
+  }
+  const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
+  try {
+    const work = async (): Promise<void> => {
+      const file = join(run, 'job_output.json')
+      const stat = lstatSync(file)
+      if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('Invalid job output')
+      const output = object(JSON.parse(readFileSync(file, 'utf8')))
+      const metrics = object(output.metrics), costs = object(metrics.api_costs), current = object(costs[section])
+      const add = (x: unknown, n: number): number => Math.round(((typeof x === 'number' && Number.isFinite(x) ? x : 0) + n) * 1e6) / 1e6
+      costs[section] = { ...current, provider: 'openrouter', ...(model ? { model } : {}), estimated_cost_usd: add(current.estimated_cost_usd, cost),
+        attempts: add(current.attempts, 1), ...(incomplete || current.cost_incomplete === true ? { cost_incomplete: true } : {}) }
+      costs.total_estimated_cost_usd = add(costs.total_estimated_cost_usd, cost)
+      if (incomplete) costs.cost_incomplete = true
+      metrics.api_costs = costs; output.metrics = metrics
+      const temporary = join(run, `.editor-${randomUUID()}.tmp`)
+      try {
+        writeFileSync(temporary, JSON.stringify(output), { mode: 0o600, flag: 'wx' })
+        renameSync(temporary, file)
+      } finally { try { unlinkSync(temporary) } catch { /* Already committed. */ } }
+    }
+    // An export already holds the run's lock.
+    if (locked) await work()
+    else await runExclusive(run, work)
+  } catch (error) {
+    // The result is still used; only the cost record is missing.
+    logger.warn('editor.cost.notRecorded', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+  }
+}
+
+/** Hook ideas for one clip, from its own words (OpenRouter, the member's key). The project is not changed. */
+export async function suggestEditorHooks(path: unknown, revision: unknown, candidateId: unknown): Promise<{ hooks: HookIdea[] }> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'suggest-hooks' }
+  operations.set(run, operation)
+  try {
+    const { project } = await openEditor(run)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    if (revision !== project.revision || typeof candidateId !== 'string' || !project.candidates.some((c) => c.id === candidateId)) throw new Error('Project changed. Reopen it and retry.')
+    const settings = loadSettings()
+    if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings to get hook ideas.')
+    const { env, python } = workerSetup(settings)
+    let result: WorkerResult
+    try {
+      result = await runWorker(run, operation, 'suggest-hooks', env, python, 10 * 60 * 1000,
+        { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'suggest-hooks' })
+    } catch (error) {
+      // Paid before it failed: still recorded.
+      const failedResult = (error as WorkerFailure).result
+      if (failedResult) await recordEditorCost(run, failedResult, 'editor_hooks')
+      throw error
+    }
+    if (operation.cancelled) throw new Error(editorFailureMessage('suggest-hooks', 'cancelled'))
+    await recordEditorCost(run, result, 'editor_hooks')
+    return { hooks: parseHookIdeas(result.hooks) }
+  } finally {
+    operation.child = undefined
+    operations.delete(run)
+  }
+}
+
+/**
+ * "Fix layout" (free, local): the clip's stage scenes worked out again from its graphics (the ones in the editor now,
+ * unsaved edits included), the way the reel was laid out (edit_direction.layout_scenes: stage and Visual scenes, custom
+ * scenes on their theme, screen cards over filmed screens, never overlapping). The project is not changed: the editor
+ * applies the scenes as one edit the member can undo.
+ */
+export async function fixEditorLayout(path: unknown, revision: unknown, candidateId: unknown, graphics: unknown): Promise<{ stage_scenes: StageScene[] }> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'fix-layout' }
+  operations.set(run, operation)
+  try {
+    const { project } = await openEditor(run)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    const candidate = project.candidates.find((c) => c.id === candidateId)
+    if (revision !== project.revision || !candidate) throw new Error('Project changed. Reopen it and retry.')
+    const list = parseGraphics(graphics ?? candidate.graphics ?? [], 120)
+    const settings = loadSettings()
+    const { env, python } = workerSetup(settings)
+    const result = await runWorker(run, operation, 'fix-layout', env, python, 15 * 60 * 1000,
+      { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'fix-layout', graphics: list })
+    if (operation.cancelled) throw new Error(editorFailureMessage('fix-layout', 'cancelled'))
+    return { stage_scenes: parseScenes(result.stage_scenes ?? [], project.duration_ms) }
+  } finally {
+    operation.child = undefined
+    operations.delete(run)
+  }
+}
+
+/**
+ * A picture for a graphic (Logo pop), chosen in main's file dialog: checked and
+ * copied into the run's .graphics/images/. Returns its name for the graphic's
+ * `image` field.
+ */
+export function addEditorGraphicImage(path: unknown, file: unknown): string {
+  const run = runPath(path)
+  assertAbsolutePath(file)
+  return importGraphicImage(run, file)
+}
+
+/** One of My logos for a Logo pop graphic: copied into the run's .graphics/images/. Returns its name for `image`. */
+export function addEditorLogoImage(path: unknown, logoId: unknown): string {
+  return importLogoIntoRun(runPath(path), logoId)
+}
+
+/**
+ * A video for a graphic (Screen recording), chosen in main's file dialog: checked and copied into the run's
+ * .graphics/videos/. Returns its name for the graphic's `video` field.
+ */
+export async function addEditorGraphicVideo(path: unknown, file: unknown): Promise<string> {
+  const run = runPath(path)
+  assertAbsolutePath(file)
+  return importGraphicVideo(run, file)
+}
+
 // Keep IPC's editable surface narrow; no media paths, reviews or export records come from React.
 export type { CandidateEdit }
 
@@ -358,4 +736,47 @@ export function editorCloseReady(saved: unknown): void {
   const resume = resumeAfterSave
   resumeAfterSave = null
   if (saved === true && resume) setImmediate(resume)
+}
+
+/**
+ * Work that prepares a run for the editor (edit-automatic.ts): while it runs,
+ * the run counts as busy for the editor (no delete, move, cleanup or other
+ * editor operation) and "Cancel" stops it. `worker` runs the engine's
+ * "prepare" action with this operation's progress.
+ */
+export interface EditorPreparation {
+  run: string
+  signal: AbortSignal
+  cancelled: () => boolean
+  setProgress: (progress: NonNullable<EditorSession['progress']>) => void
+  worker: (request: Record<string, unknown>, durationMs: number) => Promise<Record<string, unknown>>
+}
+export async function withEditorPreparation<T>(path: unknown, work: (prep: EditorPreparation) => Promise<T>): Promise<T> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'prepare', abort: new AbortController() }
+  operations.set(run, operation)
+  try {
+    return await runExclusive(run, () => work({
+      run, signal: operation.abort!.signal, cancelled: () => !!operation.cancelled,
+      setProgress: (progress) => { operation.progress = { ...progress } },
+      worker: async (request, durationMs) => {
+        if (operation.cancelled) throw new Error(editorFailureMessage('prepare', 'cancelled'))
+        const settings = loadSettings()
+        const { env, python } = workerSetup(settings)
+        try {
+          return await runWorker(run, operation, 'prepare', env, python, workerLimitMs(durationMs),
+            { ...request, run, library: realpathSync(settings.outputDirectory), action: 'prepare' })
+        } finally { operation.child = undefined }
+      }
+    }))
+  } finally {
+    operations.delete(run)
+    try { sweepEditorFiles(run) } catch { /* Cleanup is best effort. */ }
+  }
+}
+/** What a running editor operation is doing (also before a run has an editor project). */
+export function editorOperationStatus(path: unknown): { operation: EditorSession['operation']; progress?: EditorSession['progress'] } {
+  const operation = operations.get(runPath(path))
+  return { operation: operation?.action ?? null, ...(operation?.progress ? { progress: { ...operation.progress } } : {}) }
 }

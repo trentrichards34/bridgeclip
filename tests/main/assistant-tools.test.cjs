@@ -7,12 +7,14 @@ const { loadMain, tempDir, fakeElectron } = require('../zernio/support/load-main
 
 const ROOT = path.join(__dirname, '../..')
 
-function loadTools(t) {
+/** avatarStudio: Avatar Studio switched on, as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does (it's off for members; see shared/features). */
+function loadTools(t, { avatarStudio = true } = {}) {
   const { dir, cleanup } = tempDir('bridgeclip-assistant-tools-')
   t.after(cleanup)
   const { electron } = fakeElectron(dir)
   const host = { changed: [], shown: [] }
-  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateJobConfig } from './src/main/validation'", { electron: { ...electron, dialog: {} } })
+  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateJobConfig } from './src/main/validation'; export { setAvatarStudioForTests } from './src/shared/features'", { electron: { ...electron, dialog: {} } })
+  mod.setAvatarStudioForTests(avatarStudio)
   const tools = mod.createBridgeClipTools({
     getMainWindow: () => null,
     dataChanged: (scope) => host.changed.push(scope),
@@ -21,7 +23,7 @@ function loadTools(t) {
   return { mod, tools, host, dir }
 }
 
-test('every BridgeClip tool has a strict schema, and anything that publishes, deletes or spends asks first', (t) => {
+test('every CreatorClips tool has a strict schema, and anything that publishes, deletes or spends asks first', (t) => {
   const { tools } = loadTools(t)
   const names = tools.map((tool) => tool.name)
   assert.equal(new Set(names).size, names.length, 'names are unique')
@@ -34,11 +36,18 @@ test('every BridgeClip tool has a strict schema, and anything that publishes, de
     if (tool.destructive) assert.equal(typeof tool.confirm, 'function', `${tool.name} is destructive and must ask`)
     if (tool.readOnly) assert.equal(tool.confirm, undefined, `${tool.name} is read-only`)
   }
-  for (const name of ['start_clip_job', 'post_clip', 'run_automation_now', 'delete_library_run', 'delete_clips', 'delete_automation', 'cancel_job', 'cancel_scheduled_post', 'retry_post', 'reschedule_post', 'update_settings', 'update_automation', 'remove_automation_clip']) {
+  for (const name of ['start_clip_job', 'post_clip', 'run_automation_now', 'delete_library_run', 'delete_clips', 'delete_automation', 'cancel_job', 'cancel_scheduled_post', 'retry_post', 'reschedule_post', 'update_settings', 'update_automation', 'remove_automation_clip',
+    'start_remix', 'make_remix_videos', 'cancel_remix', 'recompose_remix_video', 'set_clip_cta', 'save_brand_identity', 'write_avatar_script', 'start_avatar_video']) {
     assert.equal(typeof tools.find((tool) => tool.name === name)?.confirm, 'function', `${name} asks first`)
   }
   // Never exposed: keys, updates, TikTok consent, account sign-in.
   for (const forbidden of ['replace_api_key', 'install_update', 'approve_tiktok_review', 'connect_account']) assert.ok(!names.includes(forbidden))
+})
+
+test('with Avatar Studio switched off the assistant has no avatar tools', (t) => {
+  const names = loadTools(t, { avatarStudio: false }).tools.map((tool) => tool.name)
+  for (const name of ['list_avatars', 'write_avatar_script', 'start_avatar_video', 'get_avatar_video_status']) assert.ok(!names.includes(name), name)
+  assert.ok(names.includes('start_remix'))
 })
 
 test('start_clip_job builds a request the Create page’s validator accepts, with its defaults', (t) => {
@@ -59,6 +68,7 @@ test('start_clip_job builds a request the Create page’s validator accepts, wit
     includeCaptions: true,
     captionPreset: 'pop',
     includeTitle: true,
+    titleStyle: 'headline',
     startTimeSeconds: null,
     endTimeSeconds: null,
     bannerPlatform: null,
@@ -75,6 +85,10 @@ test('start_clip_job builds a request the Create page’s validator accepts, wit
   const validated = mod.validateJobConfig(custom)
   assert.equal(validated.maxClips, 4)
   assert.equal(validated.captionPreset, 'neon')
+  // B-roll from: one of the four sources, only with B-roll on (Automatic).
+  assert.equal(mod.validateJobConfig({ ...minimal, broll: 'after-hook', brollSource: 'library_ai' }).brollSource, 'library_ai')
+  assert.throws(() => mod.validateJobConfig({ ...minimal, broll: 'after-hook', brollSource: 'giphy' }), /B-roll source/)
+  assert.throws(() => mod.validateJobConfig({ ...minimal, brollSource: 'library' }), /B-roll source/)
 })
 
 test('job validation drops fields it doesn’t know, so a typo can’t ride along in the job record', (t) => {
@@ -90,7 +104,7 @@ test('job validation drops fields it doesn’t know, so a typo can’t ride alon
 test('tools refuse run ids that could leave the Library', async (t) => {
   const { tools } = loadTools(t)
   const getRun = tools.find((tool) => tool.name === 'get_library_run')
-  for (const runId of ['../secrets', '/etc', 'C:\\Windows', '11111111-1111-4111-8111-11111111111']) {
+  for (const runId of ['../secrets', '/etc', 'C:\\Windows', '11111111-1111-4111-8111-11111111111', 'remix-../x', 'remix-11111111-1111-4111-8111-111111111111/..']) {
     await assert.rejects(getRun.run({ runId }, { conversationId: 'c', signal: new AbortController().signal }), /run id/)
   }
 })

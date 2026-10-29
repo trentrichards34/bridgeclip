@@ -1,5 +1,5 @@
 'use strict'
-// End to end: an isolated BridgeClip (hidden window, own userData, mock
+// End to end: an isolated CreatorClips (hidden window, own userData, mock
 // keychain) posts a real clip from the Library to a local mock Zernio, then
 // cancels a scheduled post from the Accounts page. No real key or account.
 //
@@ -95,7 +95,7 @@ async function start(t, { titles, key = true, tiktokLane = null } = {}) {
   if (tiktokLane) mock.setHealth(accounts.tiktok._id, { integrationLane: tiktokLane })
   const userDataDir = path.join(work, 'userData')
   // launchApp seeds settings (no keys) with this folder, inside the isolated dir, as the Library.
-  const clipPaths = seedLibrary(path.join(userDataDir, 'BridgeClip'), titles)
+  const clipPaths = seedLibrary(path.join(userDataDir, 'CreatorClips'), titles)
   appDir ??= buildApp(process.env.BRIDGECLIP_E2E_APP_DIR || path.join(os.tmpdir(), 'bridgeclip-posts-e2e-app'))
   app = await launchApp({ appDir, userDataDir, mock })
   // Links never reach a real browser from a test run.
@@ -254,7 +254,7 @@ test('post a Library clip now and on a schedule, then cancel the scheduled one',
   await scheduledGroup.waitFor({ state: 'detached', timeout: 15_000 })
   assert.equal(posting.state.posts.has(scheduledId), false, 'DELETE /v1/posts/{id} reached Zernio')
   assert.equal(mock.requestsTo('DELETE', `/api/v1/posts/${scheduledId}`).length, 1)
-  await page.getByText(/^Cancelled · created/).waitFor()
+  await page.getByText(/^Canceled · created/).waitFor()
   await shot(page, '07-cancelled')
 
   const historyPath = path.join(userDataDir, `zernio-posts-${crypto.createHash('sha256').update(KEY).digest('hex')}.json`)
@@ -288,7 +288,9 @@ test('retry displays a channel restriction instead of an unrelated API countdown
   await shot(page, 'retry-channel-restriction')
   assert.equal(posting.state.creates.length, 1)
   await page.getByRole('button', { name: 'Retry', exact: true }).click()
-  await page.waitForFunction(async () => (await window.bridgeclip.zernio.posts.list())[0].status === 'published')
+  for (let start = Date.now(); (await page.evaluate(async () => (await window.bridgeclip.zernio.posts.list())[0].status)) !== 'published';) {
+    assert.ok(Date.now() - start < 60_000, 'the retried post is published'); await page.waitForTimeout(200)
+  }
   assert.equal(posting.state.creates.length, 1, 'successful retry uses the existing post')
 })
 

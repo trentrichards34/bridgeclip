@@ -307,9 +307,9 @@ class TestGeometry:
     @pytest.mark.parametrize(
         ("cam", "expected_top"),
         [
-            (Box(0.62, 0.55, 0.36, 0.43), 1152),  # large webcam: screen 60%, cam 40%
-            (Box(0.75, 0.72, 0.22, 0.22), 1304),  # cam height sets the upscale budget
-            (Box(0.758, 0.764, 0.168, 0.168), 1344),  # floor at a 30% cam panel
+            (Box(0.62, 0.55, 0.36, 0.43), 960),  # large webcam: screen 50%, cam 50%
+            (Box(0.75, 0.72, 0.22, 0.22), 1152),  # small webcam: the seam moves down...
+            (Box(0.758, 0.764, 0.168, 0.168), 1152),  # ...to at most 60/40
         ],
     )
     def test_screen_cam_split_adapts_to_webcam_size(self, cam, expected_top):
@@ -337,9 +337,11 @@ class TestGeometry:
         cam = Box(0.75, 0.72, 0.22, 0.22)
         shot = ShotLayout(0, 1000, LayoutType.SCREEN_CAM, cam_box=cam)
         _, bottom_h = stacked_panel_heights(shot, SRC_H, 1920)
+        # Near 50/50 wins over the upscale budget: the seam stops at 60/40.
+        assert bottom_h == 768
         rect = cam_crop(cam, None, SRC_W, SRC_H, 1080, bottom_h)
         assert rect[0] / rect[1] == pytest.approx(1080 / bottom_h, rel=0.02)
-        assert max(1080 / rect[0], bottom_h / rect[1]) <= MAX_UPSCALE * 1.02
+        assert max(1080 / rect[0], bottom_h / rect[1]) <= bottom_h / (cam.h * SRC_H) * 1.02
 
     def test_screen_crop_narrows_when_it_cannot_slide(self):
         # Full-height screen crop can't slide clear of a wide right-side webcam.
@@ -402,7 +404,7 @@ class TestFilterGraph:
         shot = ShotLayout(0, 5000, LayoutType.SCREEN_CAM, cam_box=Box(.78, .70, .2, .28),
                           cam_face=Box(.85, .75, .06, .12), screen_box=Box(0, 0, 1, 1), screen_focus=focus)
         top, _ = stacked_panel_heights(shot, SRC_H, 1920)
-        assert top == 1152
+        assert top == 1134
         (w, h, x, y), destination = screen_view(shot, SRC_W, SRC_H, 1080, top)
         assert destination == (0, 0, 1080, top)
         assert w / h == pytest.approx(1080 / top, rel=.01)
@@ -432,8 +434,8 @@ class TestFilterGraph:
             source_height=360,
         )
         graph = build_layout_graph(plan, 360, 640)
-        assert "scale=360:384:flags=lanczos[top0]" in graph
-        assert "scale=360:448:flags=lanczos[top1]" in graph
+        assert "scale=360:320:flags=lanczos[top0]" in graph
+        assert "scale=360:384:flags=lanczos[top1]" in graph
         out = tmp_path / "adaptive.mp4"
         subprocess.run([
             TEST_FFMPEG, "-v", "error", "-y",

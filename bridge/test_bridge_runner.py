@@ -75,10 +75,55 @@ class BridgeTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(include_title=False))))
         self.assertFalse(requests[-1]["include_title"])
+        self.assertEqual(requests[-1]["title_style"], "card")
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(title_style="headline"))))
+        self.assertEqual(requests[-1]["title_style"], "headline")
+        self.assertIsNone(requests[-1]["headline_look"])
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(title_style="headline", headline_look={"look": "floating", "font": "condensed"}))))
+        self.assertEqual(requests[-1]["headline_look"], {"look": "floating", "font": "condensed"})
         self.assertIsNone(requests[-1]["clip_request"])
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(clip_request="the pricing debate"))))
         self.assertEqual(requests[-1]["clip_request"], "the pricing debate")
+        self.assertEqual(requests[-1]["screen_focus"], "smart")
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(screen_focus="presenter"))))
+        self.assertEqual(requests[-1]["screen_focus"], "presenter")
+        self.assertIsNone(requests[-1]["audio"])
+        audio = {"voice_cleanup": True, "music": {"track": "calm-pad"}, "music_level_db": -24}
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(audio=audio))))
+        self.assertEqual(requests[-1]["audio"], audio)
+
+    def test_voice_cleanup_and_music_are_checked(self):
+        bridge.validate_config(self.config(audio={"voice_cleanup": True}))
+        bridge.validate_config(self.config(audio={"music": {"track": "lofi-beat"}, "music_level_db": -12}))
+        with tempfile.TemporaryDirectory() as folder:
+            song = os.path.join(folder, "song.mp3")
+            with open(song, "wb") as handle:
+                handle.write(b"x")
+            bridge.validate_config(self.config(audio={"music": {"path": song}}))
+            for bad in ({"voice_cleanup": "yes"}, {"music": {"track": "not-a-track"}}, {"music": {"path": os.path.join(folder, "gone.mp3")}},
+                        {"music": {"path": "song.mp3"}}, {"music_level_db": 3}, "on"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(audio=bad))
+
+    def test_look_extras_are_checked_and_passed_on(self):
+        checked = bridge.validate_config(self.config(look_extras=["progress_bar", "glow", "punch_zoom"], look_extras_color="#2f6bff"))
+        self.assertEqual((checked["look_extras"], checked["look_extras_color"]), (["punch_zoom", "progress_bar"], "#2F6BFF"))
+        self.assertEqual((bridge.validate_config(self.config())["look_extras"], bridge.validate_config(self.config())["look_extras_color"]), ([], None))
+        for bad in ({"look_extras": "punch_zoom"}, {"look_extras": ["progress_bar"], "look_extras_color": "blue"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+
+    def test_screen_focus_is_smart_split_or_presenter(self):
+        for value in ("smart", "split", "presenter"):
+            self.assertEqual(bridge.validate_config(self.config(screen_focus=value))["screen_focus"], value)
+        for bad in ("mixed", "", None, 1, "Presenter"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "screen share framing"):
+                bridge.validate_config(self.config(screen_focus=bad))
 
     def test_clip_request_validation_and_no_match_message(self):
         self.assertEqual(bridge.validate_config(self.config(clip_request="x" * 1000))["clip_request"], "x" * 1000)
@@ -91,6 +136,45 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(failure["message"], "No moments matched what you asked to clip.")
         self.assertIn("What to clip", failure["hint"])
 
+    def test_caption_language_and_more_clips_fields(self):
+        config = bridge.validate_config(self.config(caption_language="es"))
+        self.assertEqual(config["caption_language"], "es")
+        for value in ("xx", "EN", 3, ""):
+            with self.subTest(language=value), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(caption_language=value))
+        with tempfile.TemporaryDirectory() as folder:
+            transcript = os.path.join(folder, "transcript.json")
+            kept = os.path.join(folder, "editor-source.mp4")
+            with open(kept, "w") as handle:
+                handle.write("x")
+            ok = bridge.validate_config(self.config(reuse_transcript_path=transcript, exclude_ranges_ms=[[0, 30000], [60000, 90000]],
+                                                    reuse_expected_duration_seconds=300.5, reuse_transcript_partial=True))
+            self.assertEqual(ok["exclude_ranges_ms"], [[0, 30000], [60000, 90000]])
+            self.assertIs(ok["reuse_transcript_partial"], True)
+            # The earlier run's local file is gone; its kept copy is used instead.
+            missing = os.path.join(folder, "gone.mp4")
+            self.assertEqual(bridge.validate_config(self.config(video_url=missing, reuse_source_path=kept,
+                reuse_source_meta={"title": "Talk", "channel": None, "description": "d"}))["video_url"], missing)
+            with self.assertRaises(ValueError):
+                bridge.validate_config(self.config(video_url=missing))
+            for bad in ({"reuse_transcript_path": "transcript.json"}, {"reuse_transcript_path": os.path.join(folder, "other.json")},
+                        {"reuse_source_path": os.path.join(folder, "notes.txt")}, {"reuse_source_meta": {"path": "/x"}},
+                        {"exclude_ranges_ms": [[5, 1]]}, {"exclude_ranges_ms": [[0, 1.5]]}, {"exclude_ranges_ms": [[0, 1]] * 201},
+                        {"reuse_expected_duration_seconds": -1}, {"reuse_transcript_partial": "yes"}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(**bad))
+        failure = bridge.describe_failure("No new moments were left to clip")
+        self.assertEqual(failure["message"], "Every strong moment in this video has already been clipped.")
+
+    def test_kept_headlines_are_checked(self):
+        kept = [{"start_ms": 0, "end_ms": 20000, "headline": "She built it in a weekend"}]
+        self.assertEqual(bridge.validate_config(self.config(kept_headlines=kept))["kept_headlines"], kept)
+        for bad in ("x", [{"start_ms": 5, "end_ms": 1, "headline": "Two words"}], [{"start_ms": 0, "end_ms": 1.5, "headline": "Two words"}],
+                    [{"start_ms": 0, "end_ms": 1, "headline": ""}], [{"start_ms": 0, "end_ms": 1, "headline": "x" * 121}],
+                    [{"start_ms": 0, "end_ms": 1, "headline": "Two words", "path": "/x"}], kept * 61):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(kept_headlines=bad))
+
     def test_video_speed_validation(self):
         for speed in (1, 1.1, 1.25, 1.5, 1.75, 2):
             self.assertEqual(bridge.validate_config(self.config(video_speed=speed))["video_speed"], speed)
@@ -99,9 +183,64 @@ class BridgeTests(unittest.TestCase):
                 bridge.validate_config(self.config(video_speed=speed))
 
     def test_rejects_invalid_config_without_importing_bridgeclip(self):
-        for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(include_title="false"), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):
+        for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(include_title="false"), self.config(title_style="banner"), self.config(headline_look={"look": "neon"}), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bridge.validate_config(value)
+
+    def test_background_video_must_be_an_existing_absolute_video_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            text = os.path.join(folder, "notes.txt")
+            for path in (video, text):
+                with open(path, "w") as handle:
+                    handle.write("x")
+            bridge.validate_config(self.config(background_video_path=video))
+            for bad in (text, os.path.join(folder, "missing.mp4"), "gameplay.mp4", 5, video + "\0"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(background_video_path=bad))
+
+    def test_headline_voice_is_creator_or_clipper(self):
+        self.assertEqual(bridge.validate_config(self.config(headline_voice="creator"))["headline_voice"], "creator")
+        with self.assertRaisesRegex(ValueError, "headline voice"):
+            bridge.validate_config(self.config(headline_voice="me"))
+
+    def test_brand_fields_are_bounded_and_the_mark_is_checked(self):
+        config = bridge.validate_config(self.config(brand_identity="Voice: plain.", brand_name="Pull-Up Lab", cta_keyword="SALES", cta_offer="my plan",
+                                                    brand_mark={"handle": "@coach", "position": "top-left"}))
+        self.assertEqual(config["brand_mark"], {"handle": "@coach", "logo_path": None, "position": "top-left"})
+        for bad in ({"brand_identity": "x" * 60001}, {"brand_name": 5}, {"cta_keyword": "two words"}, {"cta_keyword": "sales"},
+                    {"cta_offer": "a\0b"}, {"brand_mark": {"handle": "@a", "position": "center"}}, {"brand_mark": "@a"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+
+    def test_purpose_and_reference_image_are_checked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            picture = os.path.join(folder, "reference.jpg")
+            with open(picture, "wb") as handle:
+                handle.write(b"\xff\xd8\xff")
+            bridge.validate_config(self.config(purpose="Instagram reel selling my coaching call", reference_image_path=picture))
+            for bad in ({"purpose": "x" * 201}, {"purpose": 3}, {"reference_image_path": "reference.jpg"},
+                        {"reference_image_path": os.path.join(folder, "gone.png")}, {"reference_image_path": os.path.join(folder, "notes.txt")}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(**bad))
+
+    def test_broll_options_are_booleans_and_exclude_a_background(self):
+        bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
+        bridge.validate_config(self.config(hook_preview=True, motion_graphics=True, stage_layouts=True))
+        for bad in ({"broll_enabled": "yes"}, {"broll_keep_hook": 1}, {"hook_preview": "on"}, {"motion_graphics": "auto"}, {"stage_layouts": "on"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            with open(video, "w") as handle:
+                handle.write("x")
+            with self.assertRaises(ValueError):
+                bridge.validate_config(self.config(background_video_path=video, broll_enabled=True))
+
+    def test_a_rejected_pexels_key_gets_a_clear_message(self):
+        failure = bridge.describe_failure(Exception("Pexels rejected the API key. Check it in Settings."))
+        self.assertIn("Pexels rejected your API key", failure["message"])
+        self.assertIn("Settings", failure["hint"])
 
     def test_output_and_local_mode_are_set_before_settings_load(self):
         observed = []
@@ -186,7 +325,7 @@ class BridgeTests(unittest.TestCase):
             return True
         with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(json.dumps(self.config()))), patch.object(bridge, "run", success):
             self.assertEqual(bridge.main(), 0)
-        with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(" " * 65537)), redirect_stdout(io.StringIO()):
+        with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(" " * (bridge.MAX_CONFIG_CHARS + 1))), redirect_stdout(io.StringIO()):
             self.assertEqual(bridge.main(), 1)
 
     def test_provider_errors_do_not_disclose_exception_text(self):
@@ -243,7 +382,7 @@ class BridgeTests(unittest.TestCase):
             self.assertLessEqual(len(failure['hint']), 300)
             self.assertNotRegex(failure['hint'], r'https?://|[\\/]')
         empty = bridge.describe_failure("No clip-worthy moments found (the video may have no speech, or the selected time range is too short for the chosen clip length)")
-        self.assertEqual(empty["message"], "BridgeClip couldn't find any clips in this video.")
+        self.assertEqual(empty["message"], "CreatorClips couldn't find any clips in this video.")
         no_candidates = bridge.describe_failure('The planner returned no clip candidates ' + secret)
         self.assertEqual(no_candidates['message'], 'The planner returned no clip candidates.')
         self.assertIn('planner response', no_candidates['hint'])

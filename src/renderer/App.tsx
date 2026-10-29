@@ -1,15 +1,25 @@
 import { commitBeforeNavigation } from './lib/navigation'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
-import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, type Page } from './components/Sidebar'
+import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, pageAvailable, type Page } from './components/Sidebar'
 import { ClipPage } from './pages/ClipPage'
+import { AvatarStudioPage } from './pages/AvatarStudioPage'
+import { RemixPage } from './pages/RemixPage'
+import { EditRecordingPage } from './pages/EditRecordingPage'
 import { LibraryPage } from './pages/LibraryPage'
+import { BrollLibraryPage } from './pages/BrollLibraryPage'
+import { BrollVideoPage } from './pages/BrollVideoPage'
+import { AiVideoPage } from './pages/AiVideoPage'
 import { JobsPage } from './pages/JobsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { PostsPage } from './pages/PostsPage'
 import { AutomationsPage } from './pages/AutomationsPage'
 import { AssistantPage } from './pages/AssistantPage'
+import { GuidesPage } from './pages/GuidesPage'
+import { BrandLookPage } from './pages/BrandLookPage'
+import { OnboardingFlow } from './components/OnboardingFlow'
+import { useOnboarding } from './store/use-onboarding-store'
 import { BridgeClipLogo } from './components/brand/BridgeClipLogo'
 import { useSettingsStore } from './store/use-settings-store'
 import { useJobStore } from './store/use-job-store'
@@ -19,15 +29,31 @@ import { useChangelogStore } from './store/use-changelog-store'
 import { useAssistantStore } from './store/use-assistant-store'
 import { useDataVersionStore } from './store/use-data-version-store'
 import { usePostsStore } from './store/use-posts-store'
+import { useMemberPrefsStore } from './store/use-member-prefs-store'
 import { requestSettingsSection } from './lib/settings-focus'
-import { ChangelogDialog } from './components/Changelog'
+import { ChangelogDialog, WhatsNewDialog, releaseNotesFor } from './components/Changelog'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { ReportDialog } from './components/SupportReport'
+import { APP_VERSION } from './config/brand'
+import { whatsNewOnLaunch } from '../shared/changelog'
+import type { ChangelogRelease } from '../shared/changelog'
+import { SpendingAlerts } from './components/spending/SpendingAlerts'
 import { Button } from './components/ui/Button'
 import { getApi } from './lib/ipc'
+import { isMac } from './lib/utils'
 
+/** The whole app sits inside a crash screen, so a render error never leaves a blank window. */
 export default function App(): React.JSX.Element {
+  return <ErrorBoundary><AppShell /></ErrorBoundary>
+}
+
+function AppShell(): React.JSX.Element {
   const [loadError, setLoadError] = useState(false)
   const [retry, setRetry] = useState(0)
-  const [page, setPage] = useState<Page>('clip')
+  const [page, setPageState] = useState<Page>('clip')
+  // A tool switched off for launch (Avatar Studio) opens Clip instead, wherever the request came from
+  // (a button, the assistant, a notification or a remembered page).
+  const setPage = useCallback((destination: Page): void => setPageState(pageAvailable(destination) ? destination : 'clip'), [])
   const [pageVisit, setPageVisit] = useState(0)
   const [libraryRun, setLibraryRun] = useState<{ outputDir: string; clipIndex?: number } | null>(null)
   /** Set when Help → Check for Updates… asks for Settings → About. */
@@ -37,7 +63,18 @@ export default function App(): React.JSX.Element {
   const checkTools = useSettingsStore((s) => s.checkTools)
   const settingsLoaded = useSettingsStore((s) => s.loaded)
   const changelogOpen = useChangelogStore((s) => s.open)
+  // The guided setup opens on its own for a new profile, and whenever the member asks for it.
+  const prefsLoaded = useMemberPrefsStore((s) => s.loaded)
+  const firstLaunch = useMemberPrefsStore((s) => s.profile.onboarding === 'new')
+  const onboardingOpen = useOnboarding((s) => s.open)
   const closeChangelog = useCallback(() => useChangelogStore.getState().setOpen(false), [])
+  /** Help → Report an Issue… shows the support report first. */
+  const [reportOpen, setReportOpen] = useState(false)
+  const closeReport = useCallback(() => setReportOpen(false), [])
+  /** "What's new in X.Y.Z", once after an update. */
+  const [whatsNew, setWhatsNew] = useState<ChangelogRelease | null>(null)
+  const closeWhatsNew = useCallback(() => setWhatsNew(null), [])
+  const showAllChanges = useCallback(() => { setWhatsNew(null); useChangelogStore.getState().setOpen(true) }, [])
 
   // Sidebar destinations always open the page root, even when already active.
   // In-page navigation keeps setPage so links to a specific job retain focus.
@@ -54,18 +91,20 @@ export default function App(): React.JSX.Element {
     void commitBeforeNavigation().then(go, () => {
       if (window.confirm('Your latest clip edits could not be saved. Leave the editor and discard them?')) go()
     })
-  }, [])
+  }, [setPage])
 
   useEffect(() => { if (page !== 'library') setLibraryRun(null) }, [page])
   const viewLibraryRun = useCallback((outputDir: string, clipIndex?: number): void => {
     setLibraryRun({ outputDir, clipIndex })
     setPage('library')
     setPageVisit((visit) => visit + 1)
-  }, [])
+  }, [setPage])
 
   useEffect(() => {
     setLoadError(false)
     void loadSettings().then(() => checkTools()).catch(() => setLoadError(true))
+    // The member's remembered styles and preferences; the forms keep their defaults if this fails.
+    void useMemberPrefsStore.getState().load().catch(() => {})
   }, [loadSettings, checkTools, retry])
 
   // The main process owns the job list. Subscribe first, then load the list,
@@ -94,11 +133,27 @@ export default function App(): React.JSX.Element {
       api.app.onNavigate(({ page: destination, runDir }) => {
         if (runDir) viewLibraryRun(runDir)
         else navigateRoot(destination)
-      })
+      }),
+      // A finished-job notification was clicked.
+      ...(api.app.onOpenPage ? [api.app.onOpenPage(({ page: destination, runDir, jobId }) => {
+        if (destination === 'library' && runDir) viewLibraryRun(runDir)
+        else if (destination === 'jobs' && jobId) {
+          void commitBeforeNavigation().then(() => {
+            useJobStore.getState().focusJob(jobId)
+            setPage('jobs')
+            setPageVisit((visit) => visit + 1)
+          }, () => undefined)
+        } else navigateRoot(destination)
+      })] : [])
     ]
     void assistant.init().catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [navigateRoot, viewLibraryRun])
+  }, [navigateRoot, viewLibraryRun, setPage])
+
+  const openSpending = useCallback((): void => {
+    requestSettingsSection('spending')
+    navigateRoot('settings')
+  }, [navigateRoot])
 
   const openAssistantSettings = useCallback((section: 'assistant' | 'keys' = 'assistant'): void => {
     requestSettingsSection(section)
@@ -118,7 +173,7 @@ export default function App(): React.JSX.Element {
     ]
     void api.update.getState().then((state) => useUpdateStore.getState().set(state)).catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [setPage])
 
   // Optional: a renderer hot-reloaded over an older preload has no changelog bridge.
   useEffect(() => getApi().changelog?.onShow(() => {
@@ -127,7 +182,22 @@ export default function App(): React.JSX.Element {
     useChangelogStore.getState().setOpen(true)
   }), [])
 
-  // ⌘1 Create, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
+  // Optional: a renderer hot-reloaded over an older preload has no support bridge for this.
+  useEffect(() => getApi().support?.onShow?.(() => setReportOpen(true)), [])
+
+  // Once the member's prefs are in: after an update, show what's new in this version once (never on a first install).
+  useEffect(() => {
+    if (!prefsLoaded) return
+    const { lastSeenVersion, profile } = useMemberPrefsStore.getState()
+    const decision = whatsNewOnLaunch(lastSeenVersion, APP_VERSION, profile.onboarding === 'new')
+    if (decision === 'none') return
+    const release = decision === 'show' ? releaseNotesFor(APP_VERSION) : null
+    if (release) setWhatsNew(release)
+    void useMemberPrefsStore.getState().saveApp({ lastSeenVersion: APP_VERSION }).catch(() => {})
+  }, [prefsLoaded])
+
+  // ⌘K (top bar) and ⌘J (Ask) live in TopBar.
+  // ⌘1 Clip, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
   // ⌘\ collapse or expand the sidebar (Ctrl on Windows/Linux).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -137,7 +207,9 @@ export default function App(): React.JSX.Element {
         useSidebarStore.getState().toggle()
         return
       }
-      const item = NAV_ITEMS.find((n) => n.shortcut === e.key)
+      // A letter shortcut (⌘E) needs the platform's own modifier: Ctrl+E on a Mac moves to the end of a line in text fields.
+      const letter = (n: (typeof NAV_ITEMS)[number]): boolean => /^[A-Z]$/.test(n.shortcut) && n.shortcut === e.key.toUpperCase() && (isMac ? e.metaKey : e.ctrlKey)
+      const item = NAV_ITEMS.find((n) => n.shortcut === e.key || letter(n))
       if (!item) return
       e.preventDefault()
       navigateRoot(item.id)
@@ -155,16 +227,27 @@ export default function App(): React.JSX.Element {
     <>
       {settingsLoaded ? (
         <Layout currentPage={page} onNavigate={navigateRoot}>
+          {/* A page that crashes shows the crash screen in its place; the sidebar keeps working, and navigating resets it. */}
+          <ErrorBoundary scope="page" key={`${page}:${pageVisit}`}>
           <Fragment key={pageVisit}>
-            {page === 'clip' && <ClipPage onNavigate={setPage} />}
+            {page === 'clip' && <ClipPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'avatar' && pageAvailable('avatar') && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'edit' && <EditRecordingPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'remix' && <RemixPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
+            {page === 'broll' && <BrollLibraryPage onNavigate={setPage} />}
+            {page === 'brollvideo' && <BrollVideoPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'aivideo' && <AiVideoPage />}
+            {page === 'brand' && <BrandLookPage />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'assistant' && <AssistantPage onOpenSettings={openAssistantSettings} />}
             {page === 'accounts' && <AccountsPage onNavigate={setPage} />}
             {page === 'posts' && <PostsPage onNavigate={setPage} />}
             {page === 'automations' && <AutomationsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
-            {page === 'settings' && <SettingsPage showUpdates={showUpdates} />}
+            {page === 'guides' && <GuidesPage onNavigate={setPage} />}
+            {page === 'settings' && <SettingsPage showUpdates={showUpdates} onNavigate={setPage} />}
           </Fragment>
+          </ErrorBoundary>
         </Layout>
       ) : (
         <div className="app-backdrop drag flex h-screen items-center justify-center">
@@ -176,7 +259,11 @@ export default function App(): React.JSX.Element {
           ) : <BridgeClipLogo className="h-7 animate-pulse opacity-80" />}
         </div>
       )}
+      {settingsLoaded && prefsLoaded && (onboardingOpen || firstLaunch) && <OnboardingFlow onNavigate={navigateRoot} />}
       {changelogOpen && <ChangelogDialog onClose={closeChangelog} />}
+      {whatsNew && !changelogOpen && !(onboardingOpen || firstLaunch) && <WhatsNewDialog release={whatsNew} onClose={closeWhatsNew} onShowAll={showAllChanges} />}
+      {reportOpen && <ReportDialog onClose={closeReport} />}
+      {settingsLoaded && <SpendingAlerts onOpenSpending={openSpending} />}
     </>
   )
 }

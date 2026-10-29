@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from 'react'
 import { ArrowUpRight, History, X } from 'lucide-react'
 import changelogMarkdown from '../../../CHANGELOG.md?raw'
-import { UNRELEASED, hasChanges, parseChangelog, parseChangelogText, type ChangelogRelease } from '../../shared/changelog'
+import { UNRELEASED, hasChanges, isBridgeClipRelease, parseChangelog, parseChangelogText, type ChangelogRelease } from '../../shared/changelog'
 import { APP_NAME, APP_VERSION, RELEASES_URL } from '../config/brand'
 import { getApi } from '../lib/ipc'
 import { Badge } from './ui/Badge'
@@ -12,11 +12,16 @@ import { IconTile } from './ui/IconTile'
 /** Bundled at build time, so the list always matches the running version. */
 const RELEASES = parseChangelog(changelogMarkdown).filter(hasChanges)
 
+/** One version's section of the bundled changelog (null when it lists nothing). */
+export function releaseNotesFor(version: string): ChangelogRelease | null {
+  return RELEASES.find((release) => release.version === version) ?? null
+}
+
 function formatReleaseDate(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function RichText({ text }: { text: string }): React.JSX.Element {
+export function RichText({ text }: { text: string }): React.JSX.Element {
   return (
     <>
       {parseChangelogText(text).map((part, index) =>
@@ -31,13 +36,15 @@ function RichText({ text }: { text: string }): React.JSX.Element {
 function ReleaseNotes({ release }: { release: ChangelogRelease }): React.JSX.Element {
   const headingId = useId()
   const unreleased = release.version === UNRELEASED
+  // The BridgeClip versions CreatorClips is built on: one credit line, not a version of CreatorClips.
+  const earlier = isBridgeClipRelease(release.version) && release.version !== APP_VERSION
   return (
     <section aria-labelledby={headingId} className="py-5 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 id={headingId} className="text-sm font-semibold text-ink">{unreleased ? 'Unreleased' : `Version ${release.version}`}</h3>
+        <h3 id={headingId} className="text-sm font-semibold text-ink">{unreleased ? 'Unreleased' : earlier ? 'Earlier versions' : `Version ${release.version}`}</h3>
         {release.version === APP_VERSION && <Badge tone="accent">This version</Badge>}
         {unreleased && <Badge>Not in a release yet</Badge>}
-        {release.date && <span className="ml-auto font-mono text-2xs tabular text-ink-subtle">{formatReleaseDate(release.date)}</span>}
+        {release.date && !earlier && <span className="ml-auto font-mono text-2xs tabular text-ink-subtle">{formatReleaseDate(release.date)}</span>}
       </div>
       {release.notes.map((note, index) => (
         <p key={index} className="mt-1.5 text-sm leading-relaxed text-ink-muted"><RichText text={note} /></p>
@@ -110,6 +117,48 @@ export function ChangelogDialog({ onClose }: { onClose: () => void }): React.JSX
         >
           All releases on GitHub
         </Button>
+        <Button onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </Dialog>
+  )
+}
+
+/** Shown once when the app starts on a newer version than last ran: that version's changelog section. */
+export function WhatsNewDialog({ release, onClose, onShowAll }: { release: ChangelogRelease; onClose: () => void; onShowAll: () => void }): React.JSX.Element {
+  const titleId = useId()
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panelRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Escape') { event.preventDefault(); onClose() } }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown); previousFocus?.focus() }
+  }, [onClose])
+  return (
+    <Dialog ref={panelRef} aria-labelledby={titleId} onBackdropMouseDown={onClose} panelClassName="max-h-[min(640px,85dvh)] max-w-[560px]">
+      <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.07] px-5 py-4">
+        <IconTile><History /></IconTile>
+        <div className="min-w-0 flex-1">
+          <h2 id={titleId} className="text-base font-semibold text-ink">What’s new in {release.version}</h2>
+          <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} updated. Here’s what changed.</p>
+        </div>
+        <Button iconOnly variant="ghost" aria-label="Close what’s new" icon={<X className="h-4 w-4" />} onClick={onClose} />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5" data-selectable>
+        {release.notes.map((note, index) => (
+          <p key={index} className="mb-3 text-sm leading-relaxed text-ink-muted"><RichText text={note} /></p>
+        ))}
+        {release.sections.filter((section) => section.items.length > 0).map((section) => (
+          <div key={section.heading} className="mt-3 first:mt-0">
+            <p className="eyebrow">{section.heading}</p>
+            <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm leading-relaxed text-ink-muted marker:text-ink-faint">
+              {section.items.map((item, index) => <li key={index}><RichText text={item} /></li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <DialogFooter className="justify-between">
+        <Button size="sm" variant="ghost" onClick={onShowAll}>See all changes</Button>
         <Button onClick={onClose}>Done</Button>
       </DialogFooter>
     </Dialog>

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { APP_NAME, ISSUES_URL, REPO_URL } from '../shared/brand'
+import { APP_NAME, REPO_URL } from '../shared/brand'
 import { getLogFilePath } from './logger'
 import { checkForUpdatesFromMenu } from './auto-updater'
 
@@ -87,7 +87,12 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Report an Issue…',
           click: (): void => {
-            shell.openExternal(ISSUES_URL)
+            // The window shows the support report first (no keys), with Save to a file, Copy and the support page:
+            // the report is never added to a page for the member, since the default page is public.
+            if (mainWindow.isDestroyed()) return
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.show()
+            mainWindow.webContents.send('support:show')
           }
         },
         { type: 'separator' as const },

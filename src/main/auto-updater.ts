@@ -3,7 +3,7 @@ import { execFile } from 'child_process'
 import { posix } from 'path'
 import { autoUpdater } from 'electron-updater'
 import { is } from '@electron-toolkit/utils'
-import { REPO_URL } from '../shared/brand'
+import { RELEASE_IDENTITY, RELEASES_URL } from '../shared/brand'
 import {
   UPDATE_CHECK_DELAY_MS, UPDATE_CHECK_INTERVAL_MS, updateErrorMessage,
   type UpdateState, type UpdatesOffReason
@@ -12,8 +12,14 @@ import { assertTrustedSender } from './security'
 import { logger } from './logger'
 import { PlatformGitHubProvider } from './update-provider'
 
-/** The Developer ID team that signs official macOS builds (electron-builder.yml `mac.identity`). */
-const MAC_TEAM_ID = '9CBJCDR3J2'
+/**
+ * The Developer ID team that signs official macOS builds, and the Authenticode
+ * publisher of official Windows builds. Both are compiled in from the release
+ * build's environment (src/shared/release-identity.ts); empty means this build
+ * has no trusted signer on that platform and never updates itself.
+ */
+const MAC_TEAM_ID = RELEASE_IDENTITY.macTeamId
+const WINDOWS_PUBLISHER = RELEASE_IDENTITY.windowsPublisher
 
 let getWindow: () => BrowserWindow | null = () => null
 let lastCheckedAt: string | null = null
@@ -38,13 +44,14 @@ function errorCode(error: unknown): string {
 }
 
 function macBundlePath(): string {
-  // …/BridgeClip.app/Contents/MacOS/BridgeClip. A macOS path, so resolve it
+  // …/CreatorClips.app/Contents/MacOS/CreatorClips. A macOS path, so resolve it
   // with POSIX rules on every host (the tests run on Windows too).
   return posix.resolve(app.getPath('exe'), '..', '..', '..')
 }
 
-/** Official builds carry BridgeMind's Developer ID; a local `npm run dist:mac` build doesn't. */
-function signedByBridgeMind(): Promise<boolean> {
+/** Official builds carry our Apple Developer ID signature; a local `npm run dist:mac` build doesn't. */
+function signedByReleaseTeam(): Promise<boolean> {
+  if (!/^[A-Z0-9]{10}$/.test(MAC_TEAM_ID)) return Promise.resolve(false)
   return new Promise((done) => {
     execFile('/usr/bin/codesign', ['--display', '--verbose=2', macBundlePath()], { timeout: 10_000 }, (error, _stdout, stderr) => {
       done(!error && new RegExp(`^TeamIdentifier=${MAC_TEAM_ID}$`, 'm').test(stderr) && /^Authority=Developer ID Application: /m.test(stderr))
@@ -56,12 +63,16 @@ async function updatesOffReason(): Promise<UpdatesOffReason | null> {
   if (process.env.BRIDGECLIP_DISABLE_AUTO_UPDATE === '1') return 'disabled'
   if (is.dev || !app.isPackaged) return 'development'
   if (process.platform === 'darwin') {
-    if (!(await signedByBridgeMind())) return 'unofficial'
+    if (!(await signedByReleaseTeam())) return 'unofficial'
     // Squirrel.Mac replaces the app bundle in place. It can't from the
     // read-only disk image or a quarantined copy macOS runs from a random path.
     const bundle = macBundlePath()
     if (bundle.startsWith('/Volumes/') || bundle.includes('/AppTranslocation/')) return 'move-to-applications'
   }
+  // A Windows build is only compiled with a publisher when release CI signed it
+  // (scripts/release/builder-config.cjs). electron-updater then checks every
+  // downloaded installer against that publisher before running it.
+  if (process.platform === 'win32' && !WINDOWS_PUBLISHER) return 'unofficial'
   return null
 }
 
@@ -122,8 +133,8 @@ function registerIpc(): void {
             buttons: ['Replace', 'Cancel'],
             defaultId: 1,
             cancelId: 1,
-            message: 'Replace the BridgeClip in your Applications folder?',
-            detail: 'Applications already has a copy of BridgeClip. Replacing it moves that copy to the Trash.'
+            message: 'Replace the CreatorClips in your Applications folder?',
+            detail: 'Applications already has a copy of CreatorClips. Replacing it moves that copy to the Trash.'
           }
           const window = getWindow()
           return (window ? dialog.showMessageBoxSync(window, options) : dialog.showMessageBoxSync(options)) === 0
@@ -137,7 +148,7 @@ function registerIpc(): void {
   handle('update:openReleaseNotes', async () => {
     const version = state.status === 'downloading' || state.status === 'ready' ? state.version : state.currentVersion
     if (!/^\d+\.\d+\.\d+$/.test(version)) return false
-    await shell.openExternal(`${REPO_URL}/releases/tag/v${version}`)
+    await shell.openExternal(`${RELEASES_URL}/tag/v${version}`)
     return true
   })
 }

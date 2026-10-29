@@ -1,5 +1,5 @@
 'use strict'
-// End-to-end: the real BridgeClip app (production build, isolated userData,
+// End-to-end: the real CreatorClips app (production build, isolated userData,
 // hidden window) against the mock Zernio and its scripted browser.
 //
 //   npm run test:e2e
@@ -94,7 +94,7 @@ test('accounts: set up, connect, reconnect, disconnect, recover and work offline
   await t.test('an error redirect shows a friendly message', async () => {
     mock.setBrowser('instagram', { error: 'oauth_denied' })
     await click('Connect Instagram')
-    await expectNotice('Instagram sign-in was cancelled')
+    await expectNotice('Instagram sign-in was canceled')
     assert.equal(await row('instagram').getAttribute('data-state'), 'disconnected')
     assert.match(mock.state.visits.at(-1).body, /didn.t finish/)
     await shot('05-error-redirect')

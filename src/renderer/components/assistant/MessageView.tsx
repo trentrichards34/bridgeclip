@@ -154,6 +154,7 @@ export function ApprovalCard({ request, onAnswer }: { request: AssistantApproval
         <div className="flex items-start gap-3">
           <IconTile tone="warning" size="sm"><ShieldQuestion /></IconTile>
           <div className="min-w-0 flex-1">
+            <p className="eyebrow mb-1 text-warning">Needs your approval</p>
             <p className="text-sm font-semibold text-ink">{request.title}?</p>
             <ul className="mt-1 space-y-0.5 text-xs text-ink-muted [overflow-wrap:anywhere]">
               {details.map((line, index) => <li key={index}>{line}</li>)}

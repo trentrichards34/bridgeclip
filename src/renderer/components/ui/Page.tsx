@@ -4,9 +4,9 @@ import { cn } from '../../lib/utils'
 const WIDTHS = {
   /** Progress, failure: one focused column. */
   focus: 'max-w-[720px]',
-  /** Settings, Accounts: forms and lists. */
+  /** Reading pages (Guides) and job progress: one column of text. */
   narrow: 'max-w-[880px]',
-  /** Create: main column plus settings rail. */
+  /** The standard width: Create, Remix, Edit, Avatar Studio, Jobs and the Workspace pages. */
   default: 'max-w-[1280px]',
   /** Library, History, results: grids of media that fill wide screens. */
   wide: 'max-w-[1680px]'

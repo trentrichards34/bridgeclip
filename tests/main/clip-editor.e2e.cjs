@@ -5,15 +5,15 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
-const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
+const { editorTools, linkEngine, openEditorTab } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
-test('review editor refines candidates, restores discards, edits captions and bakes only ready clips', { timeout: 180000 }, async (t) => {
+test('review editor refines candidates, restores discards, edits captions and bakes only ready clips', { timeout: 600000 }, async (t) => {
   const tools = editorTools(t, { python: true, captions: true })
   if (!tools) return
   const ffmpeg = tools.ffmpeg
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-editor-e2e-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip'), run = path.join(library, 'review-run')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips'), run = path.join(library, 'review-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
     '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '45', ...tools.encoder,
@@ -62,8 +62,13 @@ test('review editor refines candidates, restores discards, edits captions and ba
     const [a, b] = project.candidates[0].ranges[index]
     const piece = page.locator('.editor-timeline-piece').nth(index)
     const box = await piece.boundingBox()
-    await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2)
-    const expected = a + (b - a) * fraction
+    // Mouse events land on whole pixels; on a narrow cut one pixel is tens of
+    // milliseconds, so expect the time under the pixel actually clicked.
+    const at = { x: Math.round(box.x + box.width * fraction), y: Math.round(box.y + box.height / 2) }
+    // The click must land on the cut itself, not on one of its trim handles.
+    assert.equal(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.editor-piece-body'), at), true)
+    await page.mouse.click(at.x, at.y)
+    const expected = a + (b - a) * (at.x - box.x) / box.width
     await page.waitForFunction(t => Math.abs(document.querySelector('.editor-source-frame video').currentTime * 1000 - t) < 40, expected)
     assert.equal(await page.locator('.editor-source-frame video').evaluate(v => v.paused), true)
   }
@@ -71,12 +76,15 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await clickCut(1, .5)
   await page.getByRole('combobox', { name: 'Timeline zoom', exact: true }).click()
   await page.getByRole('option', { name: 'Full source', exact: true }).click()
-  await clickCut(1, .75)
+  // At full-source zoom a 3 s cut is only a few dozen pixels wide, so its last
+  // quarter is the end trim handle; click inside the cut, past its middle.
+  await clickCut(1, .6)
   await page.getByRole('combobox', { name: 'Timeline zoom', exact: true }).click()
   await page.getByRole('option', { name: 'Clip', exact: true }).click()
   await page.getByRole('button', { name: 'Seek within cut 1', exact: true }).press('Enter')
   await page.waitForFunction(() => Math.abs(document.querySelector('.editor-source-frame video').currentTime - 1) < .04)
   // Leaving the editor for Settings saves pending edits and keeps the app mounted.
+  await openEditorTab(page, 'Hook & CTA')
   const originalTitle = await page.getByLabel('Title', { exact: true }).inputValue()
   await page.getByLabel('Title', { exact: true }).fill('Saved when opening Settings')
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
@@ -84,6 +92,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await libraryCard.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await editor.waitFor()
+  await openEditorTab(page, 'Hook & CTA')
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), 'Saved when opening Settings')
   await page.getByLabel('Title', { exact: true }).fill(originalTitle)
   const reopenFromLibrary = async (remaining) => {
@@ -100,6 +109,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Discard', exact: true }).click()
   await reopenFromLibrary(1)
   await editor.waitFor()
+  await openEditorTab(page, 'Hook & CTA')
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), 'Why the ending matters')
   assert.equal(await stage.innerText(), 'Refining')
   assert.equal(await page.locator('.editor-discarded').getAttribute('open'), null)
@@ -118,6 +128,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.locator('.editor-candidate').filter({ hasText: 'Why the ending matters' }).click()
   await page.getByRole('button', { name: 'Discard', exact: true }).click()
   await page.waitForFunction(() => document.querySelector('.editor-stagebar .editor-status').textContent === 'Discarded')
+  await openEditorTab(page, 'Hook & CTA')
   assert.equal(await page.getByLabel('Title', { exact: true }).isDisabled(), true)
   assert.equal(await page.getByRole('button', { name: 'Bake captions', exact: true }).isDisabled(), true)
   await page.getByRole('button', { name: 'Undo', exact: true }).click()
@@ -125,13 +136,16 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Discard', exact: true }).click()
   await page.getByRole('button', { name: 'Restore clip', exact: true }).click()
   await page.getByRole('button', { name: 'Discard', exact: true }).click()
+  await openEditorTab(page, 'Quality check')
   await page.locator('.editor-candidate').filter({ hasText: 'The result' }).click()
   assert.equal(await page.locator('.editor-discarded').getAttribute('open'), null)
   assert.equal(await page.locator('.editor-question').count(), 11)
   await page.getByRole('button', { name: 'Play / pause', exact: true }).click()
   await page.waitForFunction(() => document.querySelector('.editor-source-frame video').currentTime > 1.5)
   await page.getByRole('button', { name: 'Play / pause', exact: true }).click()
+  await openEditorTab(page, 'Hook & CTA')
   await page.getByLabel('Title', { exact: true }).fill('My deliberate cut')
+  await openEditorTab(page, 'Quality check')
   await page.getByText('Review out of date', { exact: true }).waitFor()
   await page.getByLabel('Cut 1 start', { exact: true }).fill('0:02.000')
   await page.getByLabel('Cut 1 start', { exact: true }).press('Enter')
@@ -145,21 +159,24 @@ test('review editor refines candidates, restores discards, edits captions and ba
   }
   // The viewport must not shift while extending a handle. The source allows
   // more time than the initial zoomed timeline, in both directions.
-  const dragEdge = async (name, deltaMs) => {
+  const dragEdge = async (name, deltaMs, field, reached) => {
     const handle = page.getByRole('button', { name, exact: true })
     const box = await handle.boundingBox(), track = await page.locator('.editor-track').boundingBox()
     const x = box.x + box.width / 2, y = box.y + box.height / 2
     await page.mouse.move(x, y); await page.mouse.down()
     await page.mouse.move(x + deltaMs / 20000 * track.width, y, { steps: 8 })
+    // The cut follows the pointer during the drag (pointer moves arrive with
+    // the next frame, so release only once the last one has landed).
+    await page.waitForFunction(([label, source]) => new RegExp(source).test(document.querySelector(`input[aria-label="${label}"]`).value), [field, reached.source])
     // End label remains at 20s until the drag is released.
     assert.match(await page.locator('.editor-timeline-tools').innerText(), /0:20\.0/)
     await page.mouse.up()
   }
-  await dragEdge('Trim start of cut 1', -1000)
+  await dragEdge('Trim start of cut 1', -1000, 'Cut 1 start', /0:0[01]\.[09]/)
   assert.match(await page.getByLabel('Cut 1 start', { exact: true }).inputValue(), /0:0[01]\.[09]/)
   await page.getByRole('button', { name: 'Undo', exact: true }).click()
   await page.waitForFunction(() => document.querySelector('input[aria-label="Cut 1 start"]').value === '0:02.000')
-  await dragEdge('Trim end of cut 2', 2000)
+  await dragEdge('Trim end of cut 2', 2000, 'Cut 2 end', /0:1[12]\.[09]/)
   assert.match(await page.getByLabel('Cut 2 end', { exact: true }).inputValue(), /0:1[12]\.[09]/)
   await page.getByRole('button', { name: 'Undo', exact: true }).click()
   await page.waitForFunction(() => document.querySelector('input[aria-label="Cut 2 end"]').value === '0:10.000')
@@ -192,7 +209,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await seek(3000)
   assert.equal(await page.getByRole('button', { name: 'Extend to playhead', exact: true }).isDisabled(), true)
   await page.getByRole('checkbox', { name: 'Play cuts only' }).check()
-  await page.getByRole('button', { name: 'Framing', exact: true }).click()
+  await openEditorTab(page, 'Framing')
   const crops = () => page.locator('.editor-crop').evaluateAll(nodes => nodes.map(el => [el.style.left, el.style.top, el.style.width, el.style.height].map(n => parseFloat(n) / 100)))
   const closeCrop = (actual, expected) => actual.forEach((n, i) => assert.ok(Math.abs(n - expected[i]) < 1e-7, `${actual} != ${expected}`))
   const resizeCorner = async (name, corner, scale) => {
@@ -406,7 +423,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   assert.deepEqual(saved.candidates[0].scenes[2].crops, project.candidates[0].scenes[1].crops)
   const savedCrops = await crops()
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'editor-framing.png') }) }
-  await page.getByRole('button', { name: 'Jev', exact: true }).click()
+  await openEditorTab(page, 'Quality check')
   if (shots) await page.screenshot({ path: path.join(shots, 'editor-review.png') })
   // The monitor stays in place both between captions and on short/long lines.
   const outputCanvas = page.locator('.editor-output-monitor canvas')
@@ -418,7 +435,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Mark ready', exact: true }).click()
   await seek(3300)
   await page.getByRole('button', { name: 'Play / pause', exact: true }).click()
-  await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+  await openEditorTab(page, 'Transcript')
   await page.getByRole('button', { name: 'Edit caption at 0:03.000', exact: true }).click()
   assert.equal(await page.locator('.editor-source-frame video').evaluate(v => v.paused), true)
   const caption = page.getByRole('textbox', { name: 'Caption at 0:03.000', exact: true })
@@ -449,7 +466,8 @@ test('review editor refines candidates, restores discards, edits captions and ba
   assert.equal(await hiddenStart.inputValue(), '0:03.000')
   assert.equal(await hiddenEnd.inputValue(), '0:04.500')
   await seek(3500)
-  await page.getByText('Captions suppressed', { exact: true }).waitFor()
+  // The output heading names the state next to its graphic and preview buttons.
+  await page.locator('.editor-output-monitor .editor-pane-heading > span').getByText('Captions suppressed').waitFor()
   assert.equal(await page.getByRole('button', { name: 'Add another section', exact: true }).isDisabled(), false)
   assert.equal(await page.locator('.editor-caption-track button').count(), 1)
   await page.getByRole('button', { name: 'Remove caption-free section 1', exact: true }).click()
@@ -493,6 +511,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: /^Library/ }).first().click()
   await page.getByRole('button', { name: new RegExp(project.title) }).first().click()
   await editor.waitFor()
+  await openEditorTab(page, 'Hook & CTA')
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), 'My deliberate cut')
   assert.equal(await stage.innerText(), 'Ready')
   const reopened = JSON.parse(fs.readFileSync(path.join(run, 'editor-project.json')))
@@ -504,7 +523,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   assert.deepEqual(reopened.transcript, project.transcript)
   assert.deepEqual(reopened.candidates[0].scenes, saved.candidates[0].scenes)
   assert.equal(JSON.parse(fs.readFileSync(path.join(run, 'transcript.json'))).segments[1].text, 'The event happened.')
-  await page.getByRole('button', { name: 'Framing', exact: true }).click()
+  await openEditorTab(page, 'Framing')
   await seek(4000)
   assert.equal(await page.getByRole('checkbox', { name: 'Smooth movement', exact: true }).isChecked(), true)
   assert.equal(await page.getByRole('slider', { name: 'Movement duration' }).inputValue(), '700')
@@ -537,7 +556,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   // A correction after baking returns to Refining; undoing it restores the
   // untouched bake, and both states save cleanly.
   await seek(3300)
-  await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+  await openEditorTab(page, 'Transcript')
   await page.getByRole('button', { name: 'Edit caption at 0:03.000', exact: true }).click()
   await caption.fill('Another correction.')
   await page.getByRole('button', { name: 'Done', exact: true }).click()
@@ -568,11 +587,12 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Continue editing', exact: true }).click()
   await editor.waitFor()
   assert.equal(await stage.innerText(), 'Refining')
+  await openEditorTab(page, 'Hook & CTA')
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), 'My deliberate cut')
   // Follow captions outside the clip too, without moving the whole editor.
   await page.getByRole('checkbox', { name: 'Play cuts only' }).uncheck()
   await seek(30030)
-  await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+  await openEditorTab(page, 'Transcript')
   const pageScroll = await page.locator('#page-scroll').evaluate((el) => el.scrollTop)
   const inspector = page.locator('.editor-inspector-body')
   await inspector.evaluate((el) => { el.scrollTo({ top: 0, behavior: 'instant' }) })
@@ -609,7 +629,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   assert.equal(await bakeOptions.evaluate(el => el === document.activeElement), true)
   await page.getByRole('button', { name: 'Restore clip', exact: true }).click()
   await page.getByRole('button', { name: 'Captions', exact: true }).click()
-  await page.getByRole('switch').uncheck()
+  await page.getByRole('switch', { name: 'Burn in captions', exact: true }).uncheck()
   await page.getByRole('button', { name: 'Mark ready', exact: true }).click()
   // Invoke immediately: the batch must flush the latest edits before starting.
   await bakeOptions.click()
@@ -655,7 +675,8 @@ test('review editor refines candidates, restores discards, edits captions and ba
   await page.getByRole('button', { name: 'Replace source', exact: true }).click()
   await page.getByText('Replacing source and preparing preview…', { exact: false }).waitFor()
   assert.equal(await page.getByRole('button', { name: 'Replace source video', exact: true }).isDisabled(), true)
-  await page.getByText('Source replaced. Your edits are preserved.', { exact: false }).waitFor({ timeout: 60000 })
+  // (A 45 s 720p re-encode for the preview: over a minute on a busy two-core machine.)
+  await page.getByText('Source replaced. Your edits are preserved.', { exact: false }).waitFor({ timeout: 180000 })
   const upgraded = JSON.parse(fs.readFileSync(path.join(run, 'editor-project.json')))
   assert.match(upgraded.source_id, /^[a-f0-9]{32}$/)
   assert.equal(upgraded.revision, batchProject.revision + 1)
@@ -688,7 +709,7 @@ test('closing with unsaved edits asks first: Cancel keeps the window, Save write
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-editor-close-'))
-  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'BridgeClip', 'close-run')
+  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'CreatorClips', 'close-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=12', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
   fs.copyFileSync(path.join(run, 'editor-source.mp4'), path.join(run, 'editor-preview.mp4'))
@@ -708,6 +729,7 @@ test('closing with unsaved edits asks first: Cancel keeps the window, Save write
   await page.getByRole('button', { name: 'Open Close prompt', exact: true }).click()
   // Main answers the blocked unload (will-prevent-unload); no browser dialog is shown for Playwright to accept.
   page.on('dialog', () => {})
+  await openEditorTab(page, 'Hook & CTA')
   const title = page.getByLabel('Title', { exact: true })
   const windows = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
   const log = () => fs.readFileSync(path.join(userDataDir, 'logs', 'bridgeclip.log'), 'utf8')

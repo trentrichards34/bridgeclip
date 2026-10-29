@@ -61,6 +61,39 @@ class EditorRunnerTests(unittest.TestCase):
         self.assertIn('Editor request failed (unknown)', result.stderr)
         self.assertNotIn('/Users/someone', result.stdout + result.stderr)
 
+    def test_a_failure_reports_what_paid_calls_cost(self):
+        error = RuntimeError('render failed')
+        self.assertEqual(editor_runner.failure_message(error, 'render_failed'), {'ok': False, 'error': 'render_failed'})
+        error.usage = {'cost_usd': 0.002, 'cost_incomplete': False, 'model': 'google/model', 'path': '/private'}
+        self.assertEqual(editor_runner.failure_message(error, 'render_failed'),
+                         {'ok': False, 'error': 'render_failed', 'cost_usd': 0.002, 'model': 'google/model'})
+
+    def test_hook_ideas_fit_the_result_line(self):
+        self.assertEqual(editor_runner.result_message(None), {'ok': True})
+        idea = {'text': '日本語' * 60, 'grade': 'B', 'score': 7, 'hook_type': 'story', 'evidence': '証拠' * 120,
+                'elements': {'qualifier': '前' * 100, 'main_statement': None, 'twist': None}, 'why': '理由' * 100}
+        message = editor_runner.result_message({'hooks': [idea] * 5, 'cost_usd': 0.01, 'cost_incomplete': False, 'model': 'm', 'extra': 'no'})
+        self.assertLessEqual(len(json.dumps(message)), editor_runner.MAX_RESULT_CHARS)
+        self.assertTrue(message['ok'] and message['hooks'] and message['cost_usd'] == 0.01 and 'extra' not in message)
+        self.assertEqual(message['hooks'][0]['why'], '')
+        self.assertIn('hooks_unavailable', editor_runner.ERROR_CODES)
+        self.assertIn('suggest-hooks', editor_runner.ACTIONS)
+
+    def test_opening_an_automatic_run_has_its_own_action_and_codes(self):
+        self.assertIn('prepare', editor_runner.ACTIONS)
+        from clip_engine.services.manual_editor import EDITOR_ERROR_CODES
+        for code in ('transcript_missing', 'source_changed', 'download_failed', 'translation_failed'):
+            self.assertIn(code, editor_runner.ERROR_CODES)
+            self.assertIn(code, EDITOR_ERROR_CODES)
+        self.assertEqual(set(EDITOR_ERROR_CODES) | {'cancelled'}, set(editor_runner.ERROR_CODES))
+
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_fix_layout_returns_the_scenes():
+    import editor_runner
+    assert 'fix-layout' in editor_runner.ACTIONS
+    scenes = [{'scene': 'stage', 'start_ms': 0, 'end_ms': 5000, 'backdrop': 'dark', 'card': 'screen'}]
+    assert editor_runner.result_message({'stage_scenes': scenes}) == {'ok': True, 'stage_scenes': scenes}

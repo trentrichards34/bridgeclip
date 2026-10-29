@@ -115,7 +115,7 @@ export function startCallbackServer(
     server.listen(0, '127.0.0.1', () => {
       if (startedIn !== callbackGeneration) {
         server.close()
-        reject(new Error('This sign-in was cancelled.'))
+        reject(new Error('This sign-in was canceled.'))
         return
       }
       const { port } = server.address() as AddressInfo

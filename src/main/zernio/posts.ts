@@ -12,15 +12,19 @@ import { logger } from '../logger'
 import { getClient, onZernioReset, readCachedOverview } from './service'
 import { ZernioApiError, ZernioDuplicatePostError, type CreatedPost, type ZernioClient } from './client'
 import { putFile, videoContentType } from './posts-upload'
+import { checkPickedCoverImage, describeClipSubtitles, extractCoverFrame, findClipSubtitles, readCoverImage, readSubtitles, uploadBytes } from './post-extras'
+import { coverFrameError, coverPlatforms, postsAsYouTubeShort, type ClipSubtitles } from '../../shared/zernio-extras'
 import {
   applyZernioPost,
   buildCreatePostBody,
   isPostUrl,
+  type ResolvedCover,
   parsePostClipRequest,
   parseTikTokCreatorInfo,
   tiktokOptionsError
 } from './posts-payload'
 import { parsePostRecord, PostsStore } from './posts-store'
+import { mergePostStats, parsePostAnalytics, STATS_BATCH, STATS_REQUEST_GAP_MS, statsDue, statsFromDate, statsOrder } from './post-stats'
 import { quarantineUnbound, readableCache, workspaceId } from './workspace-cache'
 import { isPostableAccount, isZernioId, isZernioPlatform, type ZernioAccount } from '../../shared/zernio'
 import {
@@ -38,6 +42,7 @@ import {
   type PostProgress,
   type PostRecord,
   type PostsRefreshResult,
+  type PostStatsRefreshResult,
   type TikTokCreatorInfo
 } from '../../shared/zernio-posts'
 
@@ -137,6 +142,17 @@ interface Attempt {
   payloadKey: string | null
   requestStartedAt: number | null
   retryAfterAt: number | null
+  /** The cover image and subtitle file uploaded for this attempt, by what they were made from. */
+  cover?: UploadedExtra | null
+  subtitles?: UploadedExtra | null
+}
+
+interface UploadedExtra { key: string; url: string }
+
+function uploadedExtra(value: unknown): UploadedExtra | null {
+  if (!value || typeof value !== 'object') return null
+  const { key, url } = value as Record<string, unknown>
+  return typeof key === 'string' && key.length <= 8192 && typeof url === 'string' && url.length <= 2048 ? { key, url } : null
 }
 
 /**
@@ -188,7 +204,7 @@ function loadAttempts(): void {
           (value.requestId !== null && typeof value.requestId !== 'string') ||
           (value.payloadKey !== null && typeof value.payloadKey !== 'string') ||
           (value.requestStartedAt !== null && !Number.isFinite(value.requestStartedAt))) continue
-      attempts.set(row[0].slice(0, 128), { ...value, retryAfterAt: Number.isFinite(value.retryAfterAt) ? value.retryAfterAt : null })
+      attempts.set(row[0].slice(0, 128), { ...value, retryAfterAt: Number.isFinite(value.retryAfterAt) ? value.retryAfterAt : null, cover: uploadedExtra(value.cover), subtitles: uploadedExtra(value.subtitles) })
     }
   } catch { quarantineUnbound(path) }
 }
@@ -287,7 +303,7 @@ function outcomeOf(record: PostRecord, created: CreatedPost, request: PostClipRe
     case 'scheduled':
       if (created.httpStatus === 207) return { outcome: 'retrying', message: 'Zernio hit a temporary problem and will retry automatically.' }
       if (request.timing.mode === 'now') return { outcome: 'publishing', message: 'Zernio queued the post and will publish it shortly.' }
-      return { outcome: 'scheduled', message: 'Zernio publishes it even when BridgeClip is closed.' }
+      return { outcome: 'scheduled', message: 'Zernio publishes it even when CreatorClips is closed.' }
     default:
       return { outcome: 'publishing', message: 'Zernio is still publishing. Check Posts on the Accounts page for the result.' }
   }
@@ -444,8 +460,12 @@ async function publish(request: PostClipRequest, signal: AbortSignal, notify: (p
     throw new Error('The scheduled time passed while the clip uploaded. Pick a later time and post again; the upload is kept.')
   }
 
+  const extras = await uploadExtras(client, request, media, attempt, signal, generation)
+
   const body = buildCreatePostBody(request, {
     publicUrl: attempt.publicUrl,
+    cover: extras.cover,
+    youtubeSubtitles: extras.youtubeSubtitles,
     tiktokInteractions: Object.fromEntries(tiktokInfos.map((info) => [info.accountId, info.interactions])),
     facebookFormat: request.options.facebook?.format
   })
@@ -525,6 +545,69 @@ async function publish(request: PostClipRequest, signal: AbortSignal, notify: (p
     logger.info('zernio.post.created', { targets: record.targets.length, mode: request.timing.mode, status: record.status, replayed: created.replayed })
     return { post: record, outcome, message, warnings: created.warnings }
   } finally { releaseHistoryReservation() }
+}
+
+const IMAGE_COVER_PLATFORMS = new Set(['facebook', 'linkedin', 'youtube'])
+
+/**
+ * The cover and YouTube captions for this post, uploaded once per attempt:
+ * trying again reuses them while they were made from the same frame, image
+ * or subtitle file, so a retry sends the same request body.
+ */
+async function uploadExtras(client: ZernioClient, request: PostClipRequest, media: ClipMediaInfo, attempt: Attempt, signal: AbortSignal, generation: number): Promise<{ cover: ResolvedCover | null; youtubeSubtitles: { url: string; language: string } | null }> {
+  let cover: ResolvedCover | null = null
+  let youtubeSubtitles: { url: string; language: string } | null = null
+  const reuse = async (slot: 'cover' | 'subtitles', key: string, make: () => Promise<string>): Promise<string> => {
+    const kept = attempt[slot]
+    if (kept && kept.key === key) return kept.url
+    const url = await make()
+    assertWorkspace(generation)
+    attempt[slot] = { key, url }
+    saveAttempts()
+    return url
+  }
+
+  const choice = request.options.cover
+  const platforms = coverPlatforms(request.targets.map((t) => t.platform), postsAsYouTubeShort(media)).supported
+  if (choice && platforms.length > 0) {
+    if (choice.kind === 'frame') {
+      const problem = coverFrameError(choice.atMs, media.durationMs)
+      if (problem) throw new Error(problem)
+      // TikTok and Instagram take the time; the rest need the frame as an image.
+      const imageUrl = platforms.some((p) => IMAGE_COVER_PLATFORMS.has(p))
+        ? await reuse('cover', `frame:${choice.atMs}`, async () => {
+          const frame = await extractCoverFrame(request.clipPath, choice.atMs)
+          try { return await uploadBytes(client, `${basename(request.clipPath).replace(/\.[^.]+$/, '')}-cover.jpg`, 'image/jpeg', frame.bytes, signal) } finally { await frame.cleanup() }
+        })
+        : null
+      cover = { platforms, atMs: choice.atMs, imageUrl, fromImage: false }
+    } else {
+      const image = await readCoverImage(choice.path, loadSettings().outputDirectory)
+      const imageUrl = await reuse('cover', image.key, () => uploadBytes(client, basename(image.path), image.contentType, image.bytes, signal))
+      cover = { platforms, atMs: null, imageUrl, fromImage: true }
+    }
+  }
+
+  const language = request.options.youtube?.subtitles?.language
+  if (language && request.targets.some((t) => t.platform === 'youtube')) {
+    const found = findClipSubtitles(request.clipPath)
+    if (!found) throw new Error('This clip has no subtitle file. Turn off “Add captions to YouTube” and post again.')
+    const file = await readSubtitles(found)
+    const url = await reuse('subtitles', file.key, () => uploadBytes(client, file.fileName, file.contentType, file.bytes, signal))
+    youtubeSubtitles = { url, language }
+  }
+  return { cover, youtubeSubtitles }
+}
+
+/** Whether the clip has a subtitle file the dialog can offer as YouTube captions. */
+export async function clipSubtitlesForPosting(clipPath: unknown): Promise<ClipSubtitles> {
+  assertMediaPath(clipPath, loadSettings().outputDirectory)
+  return describeClipSubtitles(clipPath)
+}
+
+/** An image picked in the cover file dialog: checked, then allowed for preview and posting. */
+export function coverImageForPosting(path: string): Promise<{ path: string; sizeBytes: number }> {
+  return checkPickedCoverImage(path, loadSettings().outputDirectory)
 }
 
 export function cancelUpload(attemptId: unknown): void {
@@ -622,10 +705,87 @@ export async function refreshPosts(force: unknown): Promise<PostsRefreshResult> 
   return { posts: posts().list(), error: failure }
 }
 
+/** One post from the local history, or null. */
+export function getPostRecord(id: string): PostRecord | null {
+  return isZernioId(id) ? posts().get(id) : null
+}
+
+// ---- Post performance -------------------------------------------------------
+
+/** Whole refreshes start at most this often unless the person asks. */
+const STATS_PASS_GAP_MS = 60_000
+const STATS_FORCED_PASS_GAP_MS = 10_000
+let statsPass: Promise<PostStatsRefreshResult> | null = null
+let lastStatsPassAt = 0
+/** Zernio said this workspace can't read analytics; asked again after this time. */
+let statsUnavailableUntil = 0
+const STATS_UNAVAILABLE_RETRY_MS = 6 * 3_600_000
+
+onZernioReset(() => {
+  lastStatsPassAt = 0
+  statsUnavailableUntil = 0
+})
+
+/**
+ * Fetches views, likes and more for published posts made from CreatorClips,
+ * a few at a time and spaced out (Zernio's analytics have a stricter
+ * per-second limit). Each post is asked about at most every 30 minutes
+ * (5 when the person presses refresh), and the answer is kept with the post.
+ */
+export function refreshPostStats(force: unknown): Promise<PostStatsRefreshResult> {
+  statsPass ??= runStatsPass(force === true).finally(() => { statsPass = null })
+  return statsPass
+}
+
+async function runStatsPass(force: boolean): Promise<PostStatsRefreshResult> {
+  const generation = workspaceGeneration
+  const started = Date.now()
+  const list = (error: string | null = null): PostStatsRefreshResult => ({ posts: posts().list(), error, unavailable: statsUnavailableUntil > Date.now() })
+  if (started - lastStatsPassAt < (force ? STATS_FORCED_PASS_GAP_MS : STATS_PASS_GAP_MS)) return list()
+  if (!force && statsUnavailableUntil > started) return list()
+  const due = posts().list().filter((post) => statsDue(post, started, force)).sort(statsOrder).slice(0, STATS_BATCH)
+  if (!due.length) return list()
+  let client: ZernioClient
+  try { client = getClient() } catch (error) { return list(error instanceof Error ? error.message : 'Add your Zernio API key to see post stats.') }
+  lastStatsPassAt = started
+  let failure: string | null = null
+  for (const [index, post] of due.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, STATS_REQUEST_GAP_MS))
+    if (generation !== workspaceGeneration) return list()
+    try {
+      const { status, body } = await client.getPostAnalytics(post.id, statsFromDate(post))
+      if (generation !== workspaceGeneration) return list()
+      statsUnavailableUntil = 0
+      const current = posts().get(post.id)
+      if (!current) continue
+      const stamp = new Date(Date.now()).toISOString()
+      posts().save({ ...current, stats: mergePostStats(current.stats, parsePostAnalytics(body, status, current, stamp)) })
+    } catch (error) {
+      if (generation !== workspaceGeneration) return list()
+      const status = error instanceof ZernioApiError ? error.status : -1
+      if (status === 404) {
+        // Zernio has no analytics for this post (yet): remember the try so it isn't asked again at once.
+        const current = posts().get(post.id)
+        if (current) posts().save({ ...current, stats: mergePostStats(current.stats, { fetchedAt: new Date(Date.now()).toISOString(), updatedAt: null, syncStatus: 'unavailable', total: null, targets: [], message: null }) })
+        continue
+      }
+      if (status === 402 || status === 403) {
+        statsUnavailableUntil = Date.now() + STATS_UNAVAILABLE_RETRY_MS
+        return list('Zernio didn’t share post stats for this workspace. Open each post on its platform to see its views and likes.')
+      }
+      failure = error instanceof Error ? error.message : 'Could not load post stats.'
+      // Rate limits, a bad key or no connection affect every request: stop here.
+      if (status === 429 || status === 401 || status === 0) break
+    }
+  }
+  logger.info('zernio.post.stats.refreshed', { asked: due.length, failed: failure !== null })
+  return list(failure)
+}
+
 export async function cancelPost(id: unknown): Promise<PostRecord[]> {
   const generation = workspaceGeneration
   const post = requirePost(id)
-  if (post.status !== 'scheduled') throw new Error('Only scheduled posts can be cancelled.')
+  if (post.status !== 'scheduled') throw new Error('Only scheduled posts can be canceled.')
   return changePost(post.id, async () => {
     const client = getClient()
     try {
@@ -637,7 +797,7 @@ export async function cancelPost(id: unknown): Promise<PostRecord[]> {
         const remote = await client.getPost(post.id).catch(() => null)
         assertWorkspace(generation)
         if (remote) posts().save(applyZernioPost(post, remote, { now: new Date().toISOString() }))
-        throw new Error('This post has already started publishing, so it can’t be cancelled.')
+        throw new Error('This post has already started publishing, so it can’t be canceled.')
       }
     }
     // A 404 still completes the cancellation; the key may have changed
@@ -650,6 +810,39 @@ export async function cancelPost(id: unknown): Promise<PostRecord[]> {
       targets: post.targets.map((t) => ({ ...t, status: 'cancelled' })),
       refreshedAt: new Date().toISOString()
     })
+  })
+}
+
+/**
+ * Cancels a post an automation scheduled ahead. 'cancelled' when Zernio no
+ * longer has it scheduled (deleted now, or already gone); 'started' when it
+ * began publishing and can't be stopped. Network and API errors throw, and
+ * the caller tries again later.
+ */
+export async function cancelAutomationPost(id: string): Promise<'cancelled' | 'started'> {
+  if (!isZernioId(id)) throw new Error('Invalid automation post.')
+  const generation = workspaceGeneration
+  return changePost(id, async () => {
+    const client = getClient()
+    let outcome: 'cancelled' | 'started' = 'cancelled'
+    try {
+      await client.deletePost(id)
+    } catch (error) {
+      if (!(error instanceof ZernioApiError) || (error.status !== 404 && error.status !== 400)) throw error
+      if (error.status === 400) outcome = 'started'
+    }
+    assertWorkspace(generation)
+    const current = posts().get(id)
+    const stamp = new Date().toISOString()
+    if (outcome === 'cancelled' && current) {
+      posts().save({ ...current, status: 'cancelled', targets: current.targets.map((t) => ({ ...t, status: 'cancelled' })), refreshedAt: stamp })
+    } else if (current) {
+      const remote = await client.getPost(id).catch(() => null)
+      assertWorkspace(generation)
+      if (remote) posts().save(applyZernioPost(current, remote, { now: stamp }))
+    }
+    logger.info('zernio.post.automation_cancel', { outcome })
+    return outcome
   })
 }
 
@@ -682,6 +875,12 @@ export async function retryPost(id: unknown): Promise<PostRecord[]> {
     assertWorkspace(generation)
     return posts().save(applyZernioPost(post, remote, { error, now: new Date().toISOString() }))
   })
+}
+
+/** Same post state; stats fetched meanwhile don't count as a change. */
+function sameRecord(a: PostRecord | null, b: PostRecord | null): boolean {
+  const strip = (post: PostRecord | null): string => JSON.stringify(post ? { ...post, stats: undefined } : null)
+  return strip(a) === strip(b)
 }
 
 /** Rebuild missing history from identified remote targets, never today's automation account selection. */
@@ -719,14 +918,14 @@ export async function inspectAutomationPost(id: string, clip: { clipPath: string
       assertWorkspace(generation)
       if (!(error instanceof ZernioApiError) || error.status !== 404) throw error
       const current = posts().get(id)
-      if (current && JSON.stringify(current) === JSON.stringify(previous)) {
+      if (current && sameRecord(current, previous)) {
         posts().save({ ...current, status: 'missing', error: 'This post is no longer in your Zernio workspace.', refreshedAt: new Date().toISOString() })
       }
       return { submitted: false, fullyFailed: false, missing: true }
     }
     assertWorkspace(generation)
     const current = posts().get(id)
-    if (JSON.stringify(current) !== JSON.stringify(previous)) throw new Error('The post changed while checking. Refresh its status again.')
+    if (!sameRecord(current, previous)) throw new Error('The post changed while checking. Refresh its status again.')
     const base = current ?? restoreAutomationPost(id, remote, clip)
     if (!base) return { submitted: false, fullyFailed: false }
     const record = applyZernioPost(base, remote, { now: new Date().toISOString() })

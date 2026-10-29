@@ -1,5 +1,6 @@
 /** A one-shot request for Settings to open at a section, e.g. Chat's "Connect" button. */
-type Section = 'assistant' | 'keys'
+export type SettingsSection = 'assistant' | 'keys' | 'spending' | 'system' | 'setup'
+type Section = SettingsSection
 
 let requested: Section | null = null
 

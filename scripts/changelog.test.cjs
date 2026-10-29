@@ -12,7 +12,7 @@ const bundle = buildSync({
 }).outputFiles[0].text
 const loaded = { exports: {} }
 vm.runInThisContext(`(function (module, exports) {\n${bundle}\n})`)(loaded, loaded.exports)
-const { CHANGELOG_CATEGORIES, UNRELEASED, hasChanges, parseChangelog, parseChangelogText } = loaded.exports
+const { CHANGELOG_CATEGORIES, UNRELEASED, BRIDGECLIP_LAST_VERSION, compareVersions, hasChanges, isBridgeClipRelease, parseChangelog, parseChangelogText } = loaded.exports
 
 const markdown = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')
 const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -50,7 +50,7 @@ test('CHANGELOG.md groups changes under Keep a Changelog types and links every v
     }
     assert.equal(new Set(release.sections.map((section) => section.heading)).size, release.sections.length, `${release.version} repeats a change type`)
     const escaped = release.version.replace(/\./g, '\\.')
-    assert.match(markdown, new RegExp(`^\\[${escaped}\\]: https://github\\.com/bridge-mind/bridgeclip/\\S+$`, 'm'), `Add a link definition for [${release.version}] at the end of CHANGELOG.md`)
+    assert.match(markdown, new RegExp(`^\\[${escaped}\\]: https://github\\.com/(?:bridge-mind/bridgeclip|trentrichards34/bridgeclip|trentrichards34/creatorclips-releases)/\\S+$`, 'm'), `Add a link definition for [${release.version}] at the end of CHANGELOG.md`)
   }
 })
 
@@ -109,4 +109,24 @@ test('changelog text keeps bold and code, and shows links as their text only', (
     { kind: 'text', text: ', see the docs.' }
   ])
   assert.deepEqual(parseChangelogText('Plain'), [{ kind: 'text', text: 'Plain' }])
+})
+
+test('members see CreatorClips changes only: BridgeClip history is a one-line credit (full history in docs/BRIDGECLIP-HISTORY.md)', () => {
+  const bridgeclip = releases.filter((release) => isBridgeClipRelease(release.version))
+  assert.ok(bridgeclip.length <= 1, 'Keep at most one BridgeClip-era section (the credit); move the rest to docs/BRIDGECLIP-HISTORY.md')
+  for (const release of bridgeclip) {
+    assert.deepEqual(release.sections, [], `${release.version}: only the credit line, no BridgeClip change lists`)
+    assert.deepEqual(release.notes, ['CreatorClips is built on BridgeClip by BridgeMind (MIT).'])
+  }
+  const shown = JSON.stringify(releases)
+  for (const banned of [/Windows (?:x64|installer)|for Windows|Windows:/, /\bLinux\b/, /Developer ID/, /BridgeMind's/]) assert.doesNotMatch(shown, banned)
+  const history = fs.readFileSync(path.join(root, 'docs/BRIDGECLIP-HISTORY.md'), 'utf8')
+  assert.match(history, /## \[0\.1\.17\] - 2026-09-25/)
+  assert.equal(BRIDGECLIP_LAST_VERSION, '0.1.19')
+  assert.equal(isBridgeClipRelease('0.1.19'), true)
+  assert.equal(isBridgeClipRelease('1.0.0'), false)
+  assert.equal(isBridgeClipRelease(UNRELEASED), false)
+  assert.equal(compareVersions('1.0.0', '0.1.19') > 0, true)
+  assert.equal(compareVersions('1.2.0', '1.10.0') < 0, true)
+  assert.equal(compareVersions('x', '1.0.0'), null)
 })

@@ -1,0 +1,88 @@
+<!--
+  CreatorClips unit "waffle-chart": a 10 x 10 grid of squares that fills to a said share ("90%", "1 in 10"),
+  remade from HyperFrames' data-chart block in its style and motion (https://github.com/heygen-com/hyperframes,
+  registry/blocks/data-chart, Copyright 2026 HeyGen, Inc., Apache License 2.0; see ../vendor/LICENSE and
+  ../vendor/NOTICE). The bars become a hundred squares filling in a quick wave, the figure lands on its word, and an
+  optional key names the rest ("everyone else"). Sized to its box (cq units), themed by the brand tokens, timed by
+  CreatorClips' shared motion (window.__ccMotion); seek-driven, nothing runs on the wall clock.
+
+  Variables: figure (the share as said: "90%", "1 in 10", "3 out of 4"), label (what the filled squares are, as said),
+  compare (what the rest are, as said; optional).
+-->
+<template>
+  <div id="root" data-composition-id="waffle-chart" data-duration="4">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .wf-card { box-sizing: border-box; width: 96cqw; height: 94cqh; padding: 5cqmin 5.5cqmin; border-radius: var(--radius, 28px);
+        background: var(--surface, rgba(15, 18, 26, 0.9)); border: 0.25cqmin solid var(--border, rgba(255, 255, 255, 0.16)); box-shadow: 0 2.4cqmin 6cqmin rgba(0, 0, 0, 0.28);
+        display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6cqmin; }
+      .wf-card.wf-tall { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); justify-items: center; gap: 4cqmin; }
+      .wf-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: var(--wf-gap); width: var(--wf-size); height: var(--wf-size); }
+      .wf-cell { border-radius: 22%; background: color-mix(in srgb, var(--fg, #f8fafc) 18%, transparent); position: relative; }
+      .wf-cell i { position: absolute; inset: 0; border-radius: inherit; background: var(--brand, #22c55e); transform: scale(0); }
+      .wf-side { display: flex; flex-direction: column; gap: 3.2cqmin; min-width: 0; }
+      .wf-tall .wf-side { align-items: center; text-align: center; gap: 2cqmin; }
+      .wf-figure { font: 900 24cqmin/0.88 var(--font-display, sans-serif); letter-spacing: -0.045em; color: var(--brand, #22c55e); white-space: nowrap; }
+      .wf-tall .wf-figure { font-size: 16cqmin; }
+      .wf-key { display: flex; flex-direction: column; gap: 1.6cqmin; }
+      .wf-tall .wf-key { flex-direction: row; flex-wrap: wrap; justify-content: center; column-gap: 4cqmin; }
+      .wf-row { display: flex; align-items: center; gap: 1.8cqmin; font: 800 5.4cqmin/1.12 var(--font-body, sans-serif); letter-spacing: 0.02em; text-transform: uppercase; }
+      .wf-row.wf-rest { color: var(--muted, rgba(226, 232, 240, 0.74)); }
+      .wf-swatch { flex: none; width: 3.4cqmin; height: 3.4cqmin; border-radius: 22%; background: var(--brand, #22c55e); }
+      .wf-rest .wf-swatch { background: color-mix(in srgb, var(--fg, #f8fafc) 13%, transparent); }
+      .wf-row:empty, .wf-row span:empty { display: none; }
+    </style>
+    <div class="wf-card"><div class="wf-grid"></div><div class="wf-side"><div class="wf-figure"></div><div class="wf-key"></div></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var figure = words(vars.figure);
+        // The share from the figure as said: "1 in 10" / "3 out of 4" / "2 of 5", else a percent ("90%", "90 percent").
+        var share = function (t) {
+          var m = /(\d+(?:\.\d+)?)\s*(?:in|out\s+of|of)\s*(\d+(?:\.\d+)?)/i.exec(t);
+          if (m && parseFloat(m[2]) > 0) return parseFloat(m[1]) / parseFloat(m[2]) * 100;
+          m = /(\d+(?:\.\d+)?)/.exec(t);
+          return m ? parseFloat(m[1]) : 0;
+        };
+        var filled = Math.max(0, Math.min(100, Math.round(share(figure))));
+        var card = root.querySelector('.wf-card');
+        var W = root.clientWidth, H = root.clientHeight;
+        var tall = W / Math.max(1, H) < 1.25;
+        if (tall) card.classList.add('wf-tall');
+        // The grid is square: the card's height (wide box) or most of its width (tall box), less its padding.
+        var u = Math.min(W, H) / 100;
+        var size = tall ? Math.min(W * 0.96 - 11 * u, H * 0.94 - 10 * u - 30 * u) : Math.min(H * 0.94 - 10 * u, W * 0.48);
+        card.style.setProperty('--wf-size', Math.max(40, size).toFixed(1) + 'px');
+        card.style.setProperty('--wf-gap', (Math.max(40, size) * 0.022).toFixed(1) + 'px');
+        root.querySelector('.wf-figure').textContent = figure;
+        var key = root.querySelector('.wf-key');
+        var row = function (cls, text) {
+          if (!text) return null;
+          var r = document.createElement('div'); r.className = 'wf-row ' + cls;
+          var s = document.createElement('i'); s.className = 'wf-swatch'; var l = document.createElement('span'); l.textContent = text;
+          r.appendChild(s); r.appendChild(l); key.appendChild(r); return r;
+        };
+        row('wf-mine', words(vars.label)); row('wf-rest', words(vars.compare));
+        var grid = root.querySelector('.wf-grid');
+        // Filled from the bottom-left, row by row (a column chart of a hundred), so the share reads at a glance.
+        var cells = [];
+        for (var i = 0; i < 100; i++) { var c = document.createElement('div'); c.className = 'wf-cell'; var dot = document.createElement('i'); c.appendChild(dot); grid.appendChild(c); cells.push(dot); }
+        var order = [];
+        for (var r = 9; r >= 0; r--) for (var k = 0; k < 10; k++) order.push(cells[r * 10 + k]);
+        var on = order.slice(0, filled);
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo('.wf-card', { opacity: 0, scale: M.from_scale }, { opacity: 1, scale: 1, duration: M.move_s * 1.4, ease: M.enter }, 0);
+        tl.fromTo('.wf-cell', { opacity: 0 }, { opacity: 1, duration: 0.2, stagger: 0.003, ease: 'power1.out' }, 0.1);
+        // The squares fill in a quick wave that ends as the figure lands on its word (sync 1.4 s).
+        if (on.length) tl.fromTo(on, { scale: 0 }, { scale: 1, duration: 0.32, ease: M.enter, stagger: Math.min(0.012, 0.85 / on.length) }, 1.4 - Math.min(0.85, on.length * 0.012) - 0.2);
+        tl.fromTo('.wf-figure', { opacity: 0, scale: M.from_scale, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: M.move_s * 1.2, ease: M.enter }, 1.3);
+        tl.fromTo('.wf-row', { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: M.move_s, ease: M.enter, stagger: M.stagger_s * 2 }, 1.55);
+        window.__timelines = window.__timelines || {};
+        window.__timelines['waffle-chart'] = tl;
+      })();
+    </script>
+  </div>
+</template>

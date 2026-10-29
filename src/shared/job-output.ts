@@ -1,9 +1,26 @@
 import { parseRunDiagnostics } from './run-diagnostics'
 import { parseStages } from './job-progress'
 import { parseEditorialSummary, type EditorialSummary } from './editorial'
+import { parseFrameworkGrade, type FrameworkGrade } from './framework-grade'
+import type { ClipCta } from './ctas'
+import type { CaptionLanguage } from './caption-language'
+
+// The codes of CAPTION_LANGUAGES (caption-language.ts), kept here so this parser stays dependency-light.
+const CAPTION_LANGUAGE_CODES: readonly string[] = ['en', 'es', 'pt', 'fr', 'de', 'it', 'hi', 'ar', 'ja', 'ko', 'zh']
+const isCaptionLanguage = (value: unknown): value is CaptionLanguage => typeof value === 'string' && CAPTION_LANGUAGE_CODES.includes(value)
+
+/** An absolute local path to an .srt file (POSIX or Windows), or null. */
+export function captionsSrtPath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 4096 || value.includes('\0') || !/\.srt$/i.test(value)) return null
+  if (!value.startsWith('/') && !/^[a-zA-Z]:[\\/]/.test(value) && !value.startsWith('\\\\')) return null
+  if (value.split(/[\\/]/).includes('..')) return null
+  return value
+}
 
 export interface ClipArtifact {
   editorial?: EditorialSummary | null
+  /** Paid Creators framework grade, when grading ran. */
+  framework?: FrameworkGrade | null
   clip_index: number
   s3_url: string
   duration_ms: number
@@ -12,9 +29,60 @@ export interface ClipArtifact {
   virality_score: number
   layout_type: string
   summary: string | null
+  /** Story headline drawn in the bar above the video (headline title style). */
+  headline?: string | null
+  /** Made with AI (Remix): posting starts with the platform's AI label on. */
+  ai_generated?: boolean
+  /** Ready-to-post caption (Remix: takeaways, call to action, credit). */
+  post_caption?: string | null
+  /** The call-to-action clip added to the end, if any. */
+  cta?: ClipCta | null
+  /** Remix: saved parts let it be re-made with new hook text, captions or box size (null: made before editing existed). */
+  editable?: { split: boolean } | null
+  /** Remix: the settings it was last made with, to start the edit from. */
+  remix_settings?: RemixClipSettings | null
+  /** When the video was last re-made (thumbnails refresh on it). */
+  edited_at?: string | null
+  /** Remix: re-made ("Edit hook text & captions") after the run's editor project was made; the editor's copy is refreshed when it opens next. */
+  editor_stale?: true
+  /** The editor candidate whose bake made this video (set by a bake). */
+  editor_candidate?: string
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
+  /** Local path of the clip's SRT captions file (closed captions for uploads), in its caption language. */
+  captions_srt?: string | null
+  /** The language the captions were translated into; null or missing: as spoken. */
+  caption_language?: CaptionLanguage | null
+  /** The language spoken in the source (two-letter code), when the run detected it. */
+  spoken_language?: string | null
+}
+
+export interface RemixClipSettings {
+  headline: string
+  headline_look: { look: string; color: string; font: string; textBg?: string; hideAfterS?: number } | null
+  include_captions: boolean
+  caption_preset: string
+  split: number | null
+}
+
+function remixSettings(value: unknown): RemixClipSettings | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  const look = raw.headline_look && typeof raw.headline_look === 'object' ? raw.headline_look as Record<string, unknown> : null
+  return {
+    headline: typeof raw.headline === 'string' ? raw.headline.slice(0, 200) : '',
+    headline_look: look && typeof look.look === 'string' ? {
+      look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean',
+      ...(typeof look.textBg === 'string' && look.textBg !== 'none' ? { textBg: look.textBg } : {}),
+      // headline-look's HEADLINE_HIDE_AFTER_S (not imported: main tests load this module on its own).
+      ...(typeof look.hideAfterS === 'number' && [3, 5, 8, 10, 15].includes(look.hideAfterS) ? { hideAfterS: look.hideAfterS } : {})
+    } : null,
+    include_captions: raw.include_captions !== false,
+    caption_preset: typeof raw.caption_preset === 'string' ? raw.caption_preset.slice(0, 64) : '',
+    // The box as made can be smaller than the slider's range (a wide clip defaults below 30%).
+    split: typeof raw.split === 'number' && Number.isFinite(raw.split) && raw.split > 0 && raw.split < 1 ? raw.split : null
+  }
 }
 
 export interface JobOutput {
@@ -73,6 +141,27 @@ function safeShot(value: unknown): Record<string, unknown> | null {
   return shot
 }
 
+/** How a screen share clip was framed: presenter only, split screen or a mix, why, and who decided. */
+export interface ClipScreenFocus {
+  decision: 'presenter' | 'screen' | 'mixed'
+  reason: string
+  source: 'planner' | 'speech' | 'mode' | 'default'
+  mode: 'smart' | 'split' | 'presenter'
+  /** False when the webcam was too small to fill the frame, so the split was kept. */
+  person_fits: boolean
+}
+
+function safeScreenFocus(value: unknown): ClipScreenFocus | null {
+  if (!record(value) || !['presenter', 'screen', 'mixed'].includes(value.decision as string)) return null
+  return {
+    decision: value.decision as ClipScreenFocus['decision'],
+    reason: boundedText(value.reason, 200) ?? '',
+    source: ['planner', 'speech', 'mode', 'default'].includes(value.source as string) ? value.source as ClipScreenFocus['source'] : 'default',
+    mode: ['split', 'presenter'].includes(value.mode as string) ? value.mode as ClipScreenFocus['mode'] : 'smart',
+    person_fits: value.person_fits !== false
+  }
+}
+
 function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (!record(value)) return null
   const result: Record<string, unknown> = {}
@@ -81,6 +170,24 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     result.transcription_status = value.transcription_status
   }
   if (value.planning_source === 'visual' || value.planning_source === 'transcript') result.planning_source = value.planning_source
+  if (typeof value.transcript_reused === 'boolean') result.transcript_reused = value.transcript_reused
+  // What made the run: Remix (and which kinds of remix) or Avatar Studio; Create runs have neither.
+  if (value.remix === true) result.remix = true
+  if (Array.isArray(value.remix_kinds)) {
+    const kinds = value.remix_kinds.filter((kind): kind is string => kind === 'ai' || kind === 'camera' || kind === 'image')
+    if (kinds.length) result.remix_kinds = [...new Set(kinds)]
+  }
+  if (typeof value.avatar_studio === 'string' && value.avatar_studio.length <= 32) result.avatar_studio = value.avatar_studio
+  // Edit my recording's reel (it has no saved transcript for the clip editor).
+  if (value.edit_recording === true) result.edit_recording = true
+  // Edit my recording: a YouTube video (landscape, long); missing: a reel.
+  if (value.format === 'youtube') result.format = 'youtube'
+  // A Top list video (Avatar Studio → Top list).
+  if (value.listicle === true) result.listicle = true
+  // A B-roll video (its one clip opens in the clip editor).
+  if (value.broll_video === true) result.broll_video = true
+  if (nonNegative(value.excluded_moment_count)) result.excluded_moment_count = value.excluded_moment_count
+  if (nonNegative(value.caption_translation_failures)) result.caption_translation_failures = value.caption_translation_failures
   if (value.captions_status === 'enabled' || value.captions_status === 'disabled_by_request' ||
       value.captions_status === 'unavailable_without_transcript') result.captions_status = value.captions_status
   if (nonNegative(value.visual_frame_count)) result.visual_frame_count = value.visual_frame_count
@@ -94,9 +201,18 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     }
     if (requested.aspect_ratio === '9:16' || requested.aspect_ratio === '16:9') safe.aspect_ratio = requested.aspect_ratio
     if (['auto', 'fill', 'fit'].includes(requested.layout_style as string)) safe.layout_style = requested.layout_style
+    if (['smart', 'split', 'presenter'].includes(requested.screen_focus as string)) safe.screen_focus = requested.screen_focus
     if (typeof requested.layout_vision_enabled === 'boolean') safe.layout_vision_enabled = requested.layout_vision_enabled
     if (requested.pacing === 'tight' || requested.pacing === 'natural') safe.pacing = requested.pacing
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
+    if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
+    if (isCaptionLanguage(requested.caption_language)) safe.caption_language = requested.caption_language
+    if (requested.headline_voice === 'creator' || requested.headline_voice === 'clipper') safe.headline_voice = requested.headline_voice
+    if (typeof requested.more_clips === 'boolean') safe.more_clips = requested.more_clips
+    const grading = requested.framework_grading
+    if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {
+      safe.framework_grading = { enabled: grading.enabled, candidates: grading.candidates, graded: grading.graded, kept: grading.kept }
+    }
     result.requested_settings = safe
   }
   for (const field of ['planned_clip_count', 'rendered_clip_count', 'failed_clip_count', 'uploaded_clip_count',
@@ -127,6 +243,8 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
       if (nonNegative(entry.pacing_removed_ms)) safe.pacing_removed_ms = entry.pacing_removed_ms
       const fallback = boundedText(entry.render_fallback, 64)
       if (fallback !== null) safe.render_fallback = fallback
+      const focus = safeScreenFocus(entry.screen_focus)
+      if (focus) safe.screen_focus = focus
       if (Array.isArray(entry.shots)) {
         safe.shot_count = entry.shots.length
         safe.shots = entry.shots.slice(0, 256).map(safeShot).filter((shot) => shot !== null)
@@ -138,7 +256,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (record(costs) && finite(costs.total_estimated_cost_usd) && costs.total_estimated_cost_usd >= 0) {
     const safeCosts: Record<string, unknown> = { total_estimated_cost_usd: costs.total_estimated_cost_usd }
     if (typeof costs.cost_incomplete === 'boolean') safeCosts.cost_incomplete = costs.cost_incomplete
-    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair']) {
+    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'framework_grading', 'editor_hooks', 'caption_translation', 'editor_caption_translation', 'editor_review']) {
       const section = costs[name]
       if (!record(section)) continue
       const safe: Record<string, unknown> = {}
@@ -172,6 +290,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
     indices.add(item.clip_index as number)
     clips.push({
       editorial: parseEditorialSummary(item.editorial),
+      framework: parseFrameworkGrade(item.framework),
       clip_index: item.clip_index as number,
       s3_url: item.s3_url,
       duration_ms: item.duration_ms,
@@ -180,8 +299,22 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       virality_score: item.virality_score,
       layout_type: typeof item.layout_type === 'string' && ['talking_head', 'two_shot', 'screen_cam', 'screen', 'fit', 'center_crop'].includes(item.layout_type) ? item.layout_type : '',
       summary: boundedText(item.summary, 2048),
+      headline: boundedText(item.headline, 512),
+      ai_generated: item.ai_generated === true,
+      post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
+      cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
+      editable: record(item.editable) ? { split: item.editable.split === true } : null,
+      edited_at: boundedText(item.edited_at, 64),
+      ...(item.editor_stale === true ? { editor_stale: true as const } : {}),
+      ...(typeof item.editor_candidate === 'string' ? { editor_candidate: item.editor_candidate.slice(0, 64) } : {}),
+      // The engine keeps the last-made settings inside `editable`; the box size as made is split_value.
+      remix_settings: record(item.editable) ? remixSettings({ ...(record(item.editable.settings) ? item.editable.settings : {}),
+        split: typeof item.editable.split_value === 'number' ? item.editable.split_value : record(item.editable.settings) ? item.editable.settings.split : null }) : null,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
-      render_fallback: boundedText(item.render_fallback, 256)
+      render_fallback: boundedText(item.render_fallback, 256),
+      ...(captionsSrtPath(item.captions_srt) ? { captions_srt: captionsSrtPath(item.captions_srt) } : {}),
+      ...(isCaptionLanguage(item.caption_language) ? { caption_language: item.caption_language } : {}),
+      ...(typeof item.spoken_language === 'string' && /^[a-z]{2}$/.test(item.spoken_language) ? { spoken_language: item.spoken_language } : {})
     })
   }
   return {

@@ -1,6 +1,23 @@
+import type { BrollSource } from './broll-library'
+/** Clip grading bar: A only, B or better, C or better, grade but keep everything, or no grading. */
+export type QualityBar = 'a' | 'b' | 'c' | 'all' | 'off'
+export const QUALITY_BARS: readonly QualityBar[] = ['a', 'b', 'c', 'all', 'off']
+/** Headline: a story headline above the video (see headline-look.ts for its look). Card: the short title over the video. */
+export type TitleStyle = 'headline' | 'card'
+export const TITLE_STYLES: readonly TitleStyle[] = ['headline', 'card']
+/**
+ * Screen share clips (Smart framing, 9:16): a mix chosen clip by clip (presenter only when the point
+ * stands without the screen, split screen when the screen matters), or one style for every clip.
+ */
+export type ScreenFocus = 'smart' | 'split' | 'presenter'
+export const SCREEN_FOCUS_MODES: readonly ScreenFocus[] = ['smart', 'split', 'presenter']
+
 import type { RunDiagnostics } from './run-diagnostics'
+import type { HeadlineLook } from './headline-look'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
+import type { CaptionLanguage } from './caption-language'
+import type { GraphicsRegister, LookExtraId } from './look-extras'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
@@ -19,6 +36,8 @@ export interface ClipJobRequest {
   aspectRatio: string
   layoutStyle: string
   layoutVision: boolean
+  /** Screen share clips under Smart framing. Older requests: 'smart'. */
+  screenFocus?: ScreenFocus
   pacing: string
   /** Export speed for every clip. Older requests default to normal speed. */
   videoSpeed?: number
@@ -26,6 +45,65 @@ export interface ClipJobRequest {
   captionPreset: string
   /** Title card at the top of Automatic clips. Older requests default to shown. */
   includeTitle?: boolean
+  /** How the title is drawn (9:16). Older requests default to the card. */
+  titleStyle?: TitleStyle
+  /** How the headline looks (bar color or floating text, and font). Older requests: the white bar. */
+  headlineLook?: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
+  /** A call to action from the member's library, added to the end of every clip. */
+  ctaId?: string
+  /** Gameplay split (9:16): a background-library file looped under the speaker. */
+  backgroundVideo?: string
+  /** B-roll mode: Pexels stock footage over the speaker, after the hook or for the whole clip. */
+  broll?: 'after-hook' | 'full'
+  /** Where the b-roll comes from (with broll on): the member's library, Pexels, AI, or the library then AI. Missing: Pexels (older requests). */
+  brollSource?: BrollSource
+  /** Hook preview: open each clip with its strongest line, then play it from the start. */
+  hookPreview?: boolean
+  /**
+   * Motion graphics: Auto (Automatic): the clip planner also picks up to 3 moments per clip for an animated
+   * card (a number, a list, a name said in the clip), drawn over the finished clips and editable in the editor.
+   */
+  motionGraphics?: boolean
+  /** How dense the motion graphics are: teaching, story or minimal (missing: read from what is said). */
+  register?: GraphicsRegister
+  /** Sound effects (Skills, with motion graphics): whooshes, pops and clicks as the cards, scenes and hook come in. Missing: off. */
+  soundEffects?: boolean
+  /**
+   * Stage layouts (with motion graphics, 9:16, no gameplay background): the big cards (statements, crossed-out
+   * lists, sticky notes, lists) are drawn on a stage at the top while the speaker sits in a card below; the
+   * clip switches to that layout around them and back to the full frame after.
+   */
+  stageLayouts?: boolean
+  /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
+  qualityBar?: QualityBar
+  /** Whose video it is: 'creator' writes headlines in the speaker's own voice (their own channel), 'clipper' in the third person. Defaults to 'clipper'. */
+  headlineVoice?: HeadlineVoice
+  /** Translate the captions (and the captions file) into this language. Omitted: the spoken language. */
+  captionLanguage?: CaptionLanguage
+  /**
+   * "More clips from this video": the finished Create run (its ID) whose saved
+   * transcript and source this run reuses, skipping the moments it already clipped.
+   */
+  reuseFrom?: string
+  /** A brand identity whose niche, voice and offer guide titles, hook text and descriptions (advisory). */
+  brandIdentityId?: string
+  /** Comment-keyword call to action (Automatic): the post caption ends with it and "Comment KEYWORD" shows at the end. */
+  ctaKeyword?: string
+  ctaOffer?: string
+  /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
+  showHandle?: boolean
+  /** Background music under the clips (Skills). Missing: off. */
+  music?: boolean
+  /** The music track (an id from the track list); only with music on. */
+  musicTrack?: string
+  /** Clean up the speaker's voice (Skills). Missing: off. */
+  voiceCleanup?: boolean
+  /** What the video is for, in the member's words (up to 200 characters): steers hooks, titles and graphics. */
+  purpose?: string
+  /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
+  referenceImage?: string
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null
@@ -77,3 +155,6 @@ export interface JobSnapshot {
   startedAt: string | null
   finishedAt: string | null
 }
+
+export const HEADLINE_VOICES = ['creator', 'clipper'] as const
+export type HeadlineVoice = (typeof HEADLINE_VOICES)[number]

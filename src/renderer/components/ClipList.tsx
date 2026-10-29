@@ -1,9 +1,14 @@
 import { SavedStageTimings } from './StageBreakdown'
-import { parseJobOutput } from '../../shared/job-output'
-import { editorProgress } from '../../shared/clip-editor'
+import { ClipCtaDialog } from './CtaPicker'
+import { RemixEditDialog } from './RemixEditDialog'
+import { MoreClipsButton } from './MoreClipsDialog'
+import { useJobStore } from '../store/use-job-store'
+import { parseJobOutput, type ClipScreenFocus } from '../../shared/job-output'
+import { editorProgress, type AutomaticEditInfo } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
+import { EditAutomaticDialog } from './EditAutomaticDialog'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Download, FolderOpen, ListPlus, Plus, Scissors, Search, Send, Trash2, Youtube } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Download, FileArchive, FolderOpen, ListPlus, Plus, Scissors, Search, Send, Trash2, Youtube } from 'lucide-react'
 import { basename, cn, errorMessage } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath } from '../lib/thumbnails'
@@ -16,6 +21,7 @@ import { youtubeSourceUrl } from '../../shared/video-source'
 import { RunStats } from './RunStats'
 import { AddToAutomationDialog } from './AddToAutomationDialog'
 import { PostDialog, type PostableClip } from './PostDialog'
+import { CoverMaker } from './CoverMaker'
 import { Page } from './ui/Page'
 import { PageHeader } from './ui/PageHeader'
 import { Button } from './ui/Button'
@@ -27,8 +33,14 @@ import { Callout } from './ui/Callout'
 import { Segmented } from './ui/Segmented'
 import { usePostsStore } from '../store/use-posts-store'
 import { useSettingsStore } from '../store/use-settings-store'
+import { useRemixForm } from '../store/use-remix-form-store'
 import type { LibraryClipPostingStatus } from '../../shared/library-posting'
 import type { Page as AppPage } from './Sidebar'
+
+/** Framework grade when graded, otherwise the planner's virality score, both on 0-10. */
+function clipRank(clip: ClipArtifact): number {
+  return clip.framework ? clip.framework.score : clip.virality_score * 10
+}
 
 type Sort = 'score' | 'timeline' | 'editorial'
 
@@ -38,6 +50,10 @@ interface ClipListProps {
   outputDir?: string
   /** Exact clip linked from an automation bank; independent of editable titles. */
   initialClipIndex?: number
+  /** Editor clip (candidate index) to open straight in the editor, from the Library's clip view. */
+  initialEditorCandidate?: number
+  /** A finished Library clip (its clip index) to open in the editor, from the Library's clip view ("Open in the editor"). */
+  initialEditClip?: number
   /** Shown above the title, e.g. a back link from the Library. */
   leading?: ReactNode
   onNewClip?: () => void
@@ -49,21 +65,40 @@ interface ClipListProps {
 const MAX_POST_BATCH = 10
 const MAX_BANK_BATCH = 30
 
-function toPostable(clip: ClipArtifact): PostableClip {
-  return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms }
+export function toPostable(clip: Pick<ClipArtifact, 's3_url' | 'summary' | 'clip_index' | 'tags' | 'duration_ms' | 'ai_generated' | 'post_caption'>): PostableClip {
+  return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms, aiGenerated: clip.ai_generated === true, postCaption: clip.post_caption ?? undefined }
 }
 
 export function ClipList(props: ClipListProps): React.JSX.Element {
   return <ClipRun key={`${props.outputDir ?? ''}:${props.output.job_id}`} {...props} />
 }
 
+/** A run made on Create (Automatic or Review & edit), not Remix, Avatar Studio or Edit my recording. */
+export function isCreateOutput(output: JobOutput): boolean {
+  const metrics = output.metrics ?? {}
+  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true && metrics.listicle !== true && metrics.broll_video !== true
+}
+
+/** A finished Remix run: it opens in the editor over its finished videos (graphics go on top). */
+export function isRemixOutput(output: JobOutput): boolean {
+  const metrics = output.metrics ?? {}
+  return metrics.remix === true && typeof metrics.avatar_studio !== 'string' && metrics.listicle !== true
+}
+
+/** Which clip and tab the editor opens on (from a clip's "Edit headline"). */
+interface EditorTarget { clip?: number; tab?: 'hook'; candidate?: number }
+
 function ClipRun(props: ClipListProps): React.JSX.Element {
-  const hasEditor = props.output.editor_project === true && !!props.outputDir
-  const [editing, setEditing] = useState(false)
+  const [output, setOutput] = useState(props.output)
+  const hasEditor = output.editor_project === true && !!props.outputDir
+  // Automatic Create runs and Remix videos open in the editor too: the first time, their clips become an editor project.
+  const canEdit = !!props.outputDir && (isCreateOutput(output) || isRemixOutput(output)) && (hasEditor || output.clips.length > 0) && typeof getApi().editor?.automaticInfo === 'function'
+  const [editing, setEditing] = useState<EditorTarget | null>(null)
   const [opening, setOpening] = useState(hasEditor)
   const [remaining, setRemaining] = useState<number | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
-  const [output, setOutput] = useState(props.output)
+  const [gate, setGate] = useState<{ info: AutomaticEditInfo; target: EditorTarget } | null>(null)
+  const editRequested = useRef(false)
   useEffect(() => {
     if (!hasEditor) return
     let active = true
@@ -71,30 +106,59 @@ function ClipRun(props: ClipListProps): React.JSX.Element {
       if (!active) return
       const { remaining } = editorProgress(session.project.candidates)
       setRemaining(remaining)
-      setEditing(props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0)
+      if (props.initialEditorCandidate !== undefined) setEditing({ candidate: props.initialEditorCandidate })
+      else if (props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0) setEditing({})
     }).catch((cause) => {
       if (active) setEditorError(errorMessage(cause, 'Could not read editor progress. Open the editor to retry.'))
     }).finally(() => { if (active) setOpening(false) })
     return () => { active = false }
   // Choose the landing view once per run, without interrupting active edits.
-  }, [hasEditor, props.outputDir])
-  if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
-  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} onExports={async () => {
-    const [raw, session] = await Promise.all([getApi().history.getJob(props.outputDir!), getApi().editor.open(props.outputDir!)])
-    const fresh = parseJobOutput(raw)
-    if (!fresh) throw new Error('Could not load the exported clips. Reopen this Library item to retry.')
-    setOutput(fresh); setRemaining(editorProgress(session.project.candidates).remaining)
-    setEditorError(null); setEditing(false)
-  }} />
-  return <GeneratedClipList {...props} output={output} onOutputChanged={(fresh) => {
+  }, [props.outputDir])
+  const refresh = async (): Promise<void> => {
+    const fresh = parseJobOutput(await getApi().history.getJob(props.outputDir!))
+    if (!fresh) throw new Error('Could not load the clips. Reopen this Library item to retry.')
     setOutput(fresh)
-    if (hasEditor) void getApi().editor.open(props.outputDir!).then((session) => setRemaining(editorProgress(session.project.candidates).remaining))
-      .catch((cause) => setEditorError(errorMessage(cause)))
-  }} editor={hasEditor ? { remaining, error: editorError, onOpen: () => setEditing(true) } : undefined} />
+    if (fresh.editor_project) setRemaining(editorProgress((await getApi().editor.open(props.outputDir!)).project.candidates).remaining)
+  }
+  /** Open the editor, first making the run's editor project (or getting its video back) when needed. */
+  const openEditor = async (target: EditorTarget = {}): Promise<void> => {
+    setEditorError(null)
+    if (!canEdit) { if (hasEditor) setEditing(target); return }
+    try {
+      const info = await getApi().editor.automaticInfo(props.outputDir!)
+      if (info.state === 'ready') setEditing(target)
+      else setGate({ info, target })
+    } catch (cause) { setEditorError(errorMessage(cause, 'Could not open the editor.')) }
+  }
+  // "Open in the editor" on a finished clip in the Library's clip view: straight to that clip in the editor.
+  useEffect(() => {
+    if (props.initialEditClip === undefined || opening || editRequested.current) return
+    editRequested.current = true
+    if (canEdit || hasEditor) void openEditor({ clip: props.initialEditClip })
+  }, [opening])
+  if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
+  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} initialClip={editing.clip} initialCandidate={editing.candidate} initialTab={editing.tab}
+    onNeedSource={() => { setEditing(null); void openEditor() }}
+    onExports={async () => {
+      await refresh()
+      setEditorError(null); setEditing(null)
+    }} />
+  return <>
+    <GeneratedClipList {...props} output={output} onOutputChanged={(fresh) => {
+      setOutput(fresh)
+      if (fresh.editor_project) void getApi().editor.open(props.outputDir!).then((session) => setRemaining(editorProgress(session.project.candidates).remaining))
+        .catch((cause) => setEditorError(errorMessage(cause)))
+    }} editor={canEdit || hasEditor ? { remaining: hasEditor ? remaining : null, started: hasEditor, error: editorError, onOpen: (target) => { void openEditor(target) } } : undefined} />
+    {gate && props.outputDir && <EditAutomaticDialog outputDir={props.outputDir} info={gate.info} onClose={() => setGate(null)} onReady={() => {
+      const target = gate.target
+      setGate(null)
+      void refresh().catch(() => {}).finally(() => setEditing(target))
+    }} />}
+  </>
 }
 
 function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip, onNavigate, initialClipIndex, editor, onOutputChanged }: ClipListProps & {
-  editor?: { remaining: number | null; error: string | null; onOpen: () => void }
+  editor?: { remaining: number | null; started: boolean; error: string | null; onOpen: (target?: EditorTarget) => void }
   onOutputChanged: (output: JobOutput) => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
@@ -121,13 +185,16 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const closeConfirm = useCallback(() => setConfirm(null), [])
   const [posting, setPosting] = useState<PostableClip[] | null>(null)
+  const [covering, setCovering] = useState<string | null>(null)
   const [bankClips, setBankClips] = useState<number[] | null>(null)
+  const [ctaClip, setCtaClip] = useState<ClipArtifact | null>(null)
+  const [editClip, setEditClip] = useState<ClipArtifact | null>(null)
   const [addedToBank, setAddedToBank] = useState(false)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const exportingRef = useRef(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Older BridgeClip engine runs do not record output format; use the first thumbnail for those.
+  // Older CreatorClips engine runs do not record output format; use the first thumbnail for those.
   const [aspect, setAspect] = useState<number | null>(null)
   const settings = output.metrics?.requested_settings
   const requestedAspect = settings && typeof settings === 'object' && !Array.isArray(settings)
@@ -157,6 +224,15 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const outputDir = runDirectory ?? (firstClip ? clipFilePath(firstClip.s3_url).replace(/[\\/][^\\/]+$/, '') : '')
 
   const asPostable = (clip: ClipArtifact): PostableClip => ({ ...toPostable(clip), library: { outputDir, clipIndex: clip.clip_index } })
+  // Remix with this clip as the source file (main checks and authorizes it), then open Remix.
+  const remixClip = async (clip: ClipArtifact): Promise<void> => {
+    setExportError(null)
+    try {
+      const source = await getApi().remix.libraryClip(outputDir, clip.clip_index)
+      useRemixForm.getState().setSourceFile(source.path, source.creator, clip.duration_ms > 0 ? clip.duration_ms / 1000 : undefined, !source.clean)
+      onNavigate?.('remix')
+    } catch (cause) { setExportError(errorMessage(cause, 'This clip could not be opened in Remix.')) }
+  }
 
   useEffect(() => {
     if (!configured) return
@@ -178,7 +254,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
 
   const topIndex = useMemo(() => {
     let best: ClipArtifact | null = null
-    for (const clip of output.clips) if (!best || clip.virality_score > best.virality_score) best = clip
+    for (const clip of output.clips) if (!best || clipRank(clip) > clipRank(best)) best = clip
     return best?.clip_index ?? null
   }, [output.clips])
 
@@ -189,7 +265,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     })
     if (sort === 'editorial') return list.sort((a, b) => (editorialScore(b.editorial, weights) ?? -1) - (editorialScore(a.editorial, weights) ?? -1))
     return sort === 'score'
-      ? list.sort((a, b) => b.virality_score - a.virality_score)
+      ? list.sort((a, b) => clipRank(b) - clipRank(a))
       : list.sort((a, b) => a.start_time_ms - b.start_time_ms)
   }, [output.clips, sort, weights, focusedClip, search])
 
@@ -218,7 +294,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     if (deletingRef.current || exportingRef.current) return
     deletingRef.current = true; setDeleting(true); setDeleteError(null)
     try {
-      if (typeof getApi().history.deleteClips !== 'function') throw new Error('Restart BridgeClip to enable deleting selected clips.')
+      if (typeof getApi().history.deleteClips !== 'function') throw new Error('Restart CreatorClips to enable deleting selected clips.')
       const fresh = await getApi().history.deleteClips(outputDir, indices)
       onOutputChanged(fresh)
       setSelected(new Set()); setStatusRetry((value) => value + 1)
@@ -244,16 +320,17 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     })
   }
 
-  const exportSelected = async (): Promise<void> => {
+  const exportSelected = async (asZip = false): Promise<void> => {
     const picked = clips.filter((c) => selected.has(c.clip_index))
     if (picked.length === 0 || exportingRef.current || deletingRef.current) return
     exportingRef.current = true
     setExporting(true)
     setExportError(null)
     try {
-      const result = await getApi().clips.bulkExport(
-        picked.map((c) => ({ path: clipFilePath(c.s3_url), name: c.summary || `Clip ${c.clip_index + 1}` }))
-      )
+      // A YouTube video (Edit my recording) says so in its file name.
+      const format = output.metrics?.format === 'youtube' ? ' (YouTube)' : ''
+      const list = picked.map((c) => ({ path: clipFilePath(c.s3_url), name: `${c.summary || `Clip ${c.clip_index + 1}`}${format}` }))
+      const result = asZip ? await getApi().clips.exportZip(list, `${output.source_video_title || 'CreatorClips clips'}${format}`) : await getApi().clips.bulkExport(list)
       if (result.success) {
         setAddedToBank(false)
         setNotice(`Exported ${result.count} clip${result.count === 1 ? '' : 's'}${result.destDir ? ` to ${basename(result.destDir)}` : ''}${result.failedCount ? `; ${result.failedCount} could not be copied` : ''}`)
@@ -273,6 +350,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const costs = readCosts(output.metrics?.api_costs)
   const framingNotice = framingProblem(output, vertical)
   const analysisNotice = sourceAnalysisNotice(output)
+  const screenFocusByClip = screenFocusByIndex(output)
 
   const renderGrid = (items: ClipArtifact[]): React.JSX.Element => (
         <div
@@ -287,6 +365,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
             <ClipCard
               key={clip.clip_index}
               clip={clip}
+              screenFocus={screenFocusByClip.get(clip.clip_index)}
               postingStatus={statusByClip.get(clip.clip_index)}
               vertical={vertical}
               topPick={clip.clip_index === topIndex && clips.length > 1}
@@ -295,11 +374,19 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onToggleSelect={() => toggle(clip.clip_index)}
               onAspect={aspect == null ? setAspect : undefined}
               onPost={() => setPosting([asPostable(clip)])}
+              onMakeCover={outputDir ? () => setCovering(clipFilePath(clip.s3_url)) : undefined}
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
+              onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
+              // A Remix video baked in the clip editor loses `editable` (the bake would be undone by a re-make); until then a
+              // re-make is fine: the editor's copy of that video is refreshed when the editor opens next.
+              onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
+              onEditHeadline={editor && !isRemixOutput(output) ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
+              onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
-                if (!getApi().history.setPosted) throw new Error('Restart BridgeClip to enable manual posted marks.')
+                if (!getApi().history.setPosted) throw new Error('Restart CreatorClips to enable manual posted marks.')
                 await getApi().history.setPosted(outputDir, clip.clip_index, posted)
                 setStatusRetry((value) => value + 1)
                 if (posted) setPostedExpanded(true)
@@ -319,12 +406,15 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
         description={editor?.remaining ? `${editor.remaining} clip${editor.remaining === 1 ? '' : 's'} left to finish` : undefined}
         actions={
           <>
-            {editor && <Button disabled={deleting} variant={editor.remaining ? 'primary' : 'ghost'} icon={<Scissors className="h-4 w-4" />} onClick={editor.onOpen}>
-              {editor.remaining ? 'Continue editing' : 'Open editor'}
+            {editor && <Button disabled={deleting} variant={editor.remaining ? 'primary' : 'ghost'} icon={<Scissors className="h-4 w-4" />} onClick={() => editor.onOpen()}
+              title={editor.started ? undefined : isRemixOutput(output) ? 'Add graphics and effects over your videos. Their layout, captions and hook text stay as they are. Baking a video replaces it here.'
+                : 'Rewrite or remove headlines, and change cuts, framing and captions. Baking a clip replaces it here.'}>
+              {editor.remaining ? 'Continue editing' : editor.started ? 'Open editor' : 'Edit clips'}
             </Button>}
             {outputDir && <Button onClick={() => setInspectEdits(true)}>Inspect transcript & edits</Button>}
             {sourceUrl && <Button iconOnly icon={<Youtube className="h-4 w-4" />} aria-label="Open original video on YouTube" title="Open original video on YouTube"
               onClick={() => { setExportError(null); void getApi().shell.openPath(sourceUrl).catch(() => setExportError('Could not open the original video in your browser.')) }} />}
+            {outputDir && onNavigate && <MoreClipsButton outputDir={outputDir} onStarted={(jobId) => { useJobStore.getState().focusJob(jobId); onNavigate('jobs') }} />}
             {outputDir && (
               <Button icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => getApi().shell.openPath(outputDir)}>
                 Open folder
@@ -433,9 +523,14 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
                 loading={exporting}
                 disabled={deleting}
                 icon={<Download className="h-3.5 w-3.5" />}
-                onClick={exportSelected}
+                onClick={() => void exportSelected()}
+                title="Copy the selected clips to a folder"
               >
                 Export {selected.size}
+              </Button>
+              <Button size="sm" disabled={deleting || exporting} icon={<FileArchive className="h-3.5 w-3.5" />} onClick={() => void exportSelected(true)}
+                title="Save the selected clips as one .zip file">
+                .zip
               </Button>
               {outputDir && <Button variant="danger" size="sm" iconOnly aria-label="Delete selected clips" title="Delete selected clips"
                 icon={<Trash2 className="h-3.5 w-3.5" />} loading={deleting} disabled={exporting} onClick={() => confirmDelete(clips.filter((clip) => selected.has(clip.clip_index)).map((clip) => clip.clip_index))} />}
@@ -487,7 +582,27 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
 
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
       {posting && <PostDialog clips={posting} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
+      {covering && <CoverMaker videoPath={covering} onClose={() => setCovering(null)} />}
       {inspectEdits && <EditInspector outputDir={outputDir} onClose={() => setInspectEdits(false)} />}
+      {ctaClip && outputDir && <ClipCtaDialog
+        title={ctaClip.summary || `Clip ${ctaClip.clip_index + 1}`}
+        current={ctaClip.cta?.id ?? null}
+        onClose={() => setCtaClip(null)}
+        onApply={async (ctaId) => {
+          const fresh = await getApi().clips.setCta(outputDir, ctaClip.clip_index, ctaId)
+          onOutputChanged(fresh)
+          setNotice(`${ctaId ? 'The call to action was added to the end of the clip.' : 'The call to action was removed.'} Copies already queued in an automation keep their earlier ending.`)
+          if (noticeTimer.current) clearTimeout(noticeTimer.current)
+          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        }}
+      />}
+      {editClip && outputDir && <RemixEditDialog outputDir={outputDir} clip={editClip} inEditor={output.editor_project === true} onClose={() => setEditClip(null)}
+        onDone={(fresh, note) => {
+          if (fresh) onOutputChanged(fresh)
+          setNotice(note ?? 'The video was made again with your changes. Copies already queued in an automation keep their earlier version.')
+          if (noticeTimer.current) clearTimeout(noticeTimer.current)
+          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        }} />}
       {bankClips && outputDir && <AddToAutomationDialog
         outputDir={outputDir}
         clipIndices={bankClips}
@@ -559,7 +674,7 @@ function readCosts(value: unknown): ApiCosts | null {
   if (layoutVision && typeof layoutVision.model === 'string' && validMoney(layoutVision.estimated_cost_usd)) {
     result.layout_vision = layoutVision as unknown as NonNullable<ApiCosts['layout_vision']>
   }
-  for (const key of ['source_context', 'editorial', 'editorial_vision', 'editorial_repair'] as const) {
+  for (const key of ['source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'caption_translation'] as const) {
     const part = section(key)
     if (part && typeof part.provider === 'string' && typeof part.model === 'string' && validMoney(part.estimated_cost_usd)) {
       result[key] = { provider: part.provider, model: part.model, estimated_cost_usd: part.estimated_cost_usd }
@@ -603,8 +718,25 @@ export function framingProblem(output: JobOutput, vertical: boolean): string | n
   return notices.join(' ') || null
 }
 
+/** Screen share clips' framing decisions, by clip index (from the run's clip_layouts). */
+export function screenFocusByIndex(output: JobOutput): Map<number, ClipScreenFocus> {
+  const result = new Map<number, ClipScreenFocus>()
+  const layouts = output.metrics?.clip_layouts
+  if (!Array.isArray(layouts)) return result
+  for (const layout of layouts) {
+    if (layout && typeof layout === 'object' && Number.isSafeInteger(layout.clip_index) && layout.screen_focus && typeof layout.screen_focus === 'object') {
+      result.set(layout.clip_index, layout.screen_focus as ClipScreenFocus)
+    }
+  }
+  return result
+}
+
 export function sourceAnalysisNotice(output: JobOutput): string | null {
-  if (output.metrics?.planning_source !== 'visual') return null
+  // More clips that couldn't use the saved transcript.
+  const requested = output.metrics?.requested_settings as { more_clips?: unknown } | undefined
+  const retranscribed = requested?.more_clips === true && output.metrics?.transcript_reused === false
+    ? 'The saved transcript didn’t match this video or the part of it this run looked at, so the video was transcribed again.' : null
+  if (output.metrics?.planning_source !== 'visual') return retranscribed
   if (output.metrics.transcription_status === 'no_speech') {
     return 'No speech was detected. Clips were selected from sampled video frames, and spoken-word captions are unavailable for this run.'
   }

@@ -2,10 +2,10 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join } from 'path'
 import { isZernioId } from '../../shared/zernio'
-import type { PostRecord, PostRecordTarget, PostStatus, PostTargetStatus } from '../../shared/zernio-posts'
+import { POST_METRIC_KEYS, type PostMetrics, type PostRecord, type PostRecordTarget, type PostStats, type PostStatus, type PostTargetStatus, type StatsSyncStatus } from '../../shared/zernio-posts'
 import { quarantineUnbound, readableCache } from './workspace-cache'
 
-// Local history of posts made from BridgeClip, so the Accounts page can show
+// Local history of posts made from CreatorClips, so the Accounts page can show
 // scheduled and recent posts without listing the whole Zernio workspace.
 // Holds ids, paths, titles and statuses: nothing secret.
 
@@ -41,6 +41,40 @@ function parseTarget(value: unknown): PostRecordTarget | null {
   }
 }
 
+const SYNC_STATUSES: StatsSyncStatus[] = ['synced', 'pending', 'partial', 'unavailable']
+
+function parseMetrics(value: unknown): PostMetrics | null | undefined {
+  if (value === null) return null
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const metrics = {} as PostMetrics
+  for (const key of POST_METRIC_KEYS) {
+    const item = raw[key]
+    if (item !== null && !(typeof item === 'number' && Number.isFinite(item) && item >= 0)) return undefined
+    metrics[key] = item as number | null
+  }
+  return metrics
+}
+
+/** Stored stats, or null when missing or damaged: stats are refetched, never trusted half-parsed. */
+export function parseStoredStats(value: unknown): PostStats | null {
+  if (!value || typeof value !== 'object') return null
+  const s = value as Record<string, unknown>
+  const fetchedAt = iso(s.fetchedAt)
+  const total = parseMetrics(s.total)
+  if (!fetchedAt || total === undefined || !SYNC_STATUSES.includes(s.syncStatus as StatsSyncStatus) || !Array.isArray(s.targets) || s.targets.length > 20) return null
+  const targets: PostStats['targets'] = []
+  for (const item of s.targets) {
+    if (!item || typeof item !== 'object') return null
+    const t = item as Record<string, unknown>
+    const metrics = parseMetrics(t.metrics)
+    if (typeof t.platform !== 'string' || (t.accountId !== null && !isZernioId(t.accountId)) || metrics === undefined ||
+      !SYNC_STATUSES.includes(t.syncStatus as StatsSyncStatus)) return null
+    targets.push({ platform: t.platform.slice(0, 40), accountId: t.accountId as string | null, syncStatus: t.syncStatus as StatsSyncStatus, metrics, message: text(t.message, 300) })
+  }
+  return { fetchedAt, updatedAt: iso(s.updatedAt), syncStatus: s.syncStatus as StatsSyncStatus, total, targets, message: text(s.message, 300) }
+}
+
 export function parsePostRecord(value: unknown): PostRecord | null {
   if (!value || typeof value !== 'object') return null
   const r = value as Record<string, unknown>
@@ -62,7 +96,8 @@ export function parsePostRecord(value: unknown): PostRecord | null {
     error: text(r.error, 1000),
     createdAt,
     uploadedAt,
-    refreshedAt: iso(r.refreshedAt)
+    refreshedAt: iso(r.refreshedAt),
+    ...(r.stats ? { stats: parseStoredStats(r.stats) } : {})
   }
 }
 

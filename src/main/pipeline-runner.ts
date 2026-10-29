@@ -1,3 +1,4 @@
+import { logosForEngine } from './logo-library'
 import { parseRunDiagnostics } from '../shared/run-diagnostics'
 import { parseStages } from '../shared/job-progress'
 import { ChildProcess, spawn, execFile, execFileSync } from 'child_process'
@@ -9,15 +10,31 @@ const execFileAsync = promisify(execFile)
 import { createInterface } from 'readline'
 import { Transform } from 'stream'
 import { loadSettings, getSettingsForBridge, vocabularyTerms } from './settings-store'
+import { brollRunFields } from './broll-library'
 import { logger } from './logger'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { BRIDGE_CONTRACT_VERSION } from '../shared/job-contract'
 import type { ClipJobRequest } from '../shared/jobs'
+import { headlineLookForEngine } from '../shared/headline-look'
+import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
+import { resolveBackground } from './backgrounds'
+import { audioForEngine } from './music'
+import { applyRunCta, readCta } from './ctas'
+import { applyRunGraphics, graphicsNotice } from './auto-graphics'
+import { refreshReusePlan, type ReusePlan } from './more-clips'
+import { createSourceKey, rememberCreateRun, savedCreateHeadlines } from './hook-memory'
+import { brandForJob } from './brands'
+import { readFile } from 'fs/promises'
 
-export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel }
+export type ClipJobConfig = ClipJobRequest & {
+  plannerCapabilities?: OpenRouterModel
+  reuse?: ReusePlan
+  /** Set in main when the run starts: the reference picture in the run folder, only when the planning model accepts images. */
+  referenceImagePath?: string
+}
 
 /**
  * Where a run's events go. The job manager passes its own sink so it can track
@@ -250,7 +267,7 @@ export async function validatePython(
     return {
       ok: false, python: pythonPath, error,
       hint: app.isPackaged
-        ? 'Reinstall BridgeClip from the official download, reopen the app, then select Re-check. If this continues, report it using Report an issue in About.'
+        ? 'Reinstall CreatorClips from the official download, reopen the app, then select Re-check. If this continues, report it using Report an issue in About.'
         : hint,
       repairCommand: !app.isPackaged && installDependencies
         ? `${process.platform === 'win32' ? '& ' : ''}${quote(pythonPath)} -m pip install --require-hashes -r ${quote(join(enginePath, 'requirements.lock'))}`
@@ -287,10 +304,10 @@ print(json.dumps(result))
     const result = JSON.parse(stdout.trim()) as { status?: string; module?: string }
     if (result.status === 'ok') return { ok: true, python: pythonPath, error: null, hint: null, repairCommand: null }
     if (result.status === 'contract' || (result.status === 'dependency' && result.module?.startsWith('clip_engine'))) {
-      return failure('The clipping engine is missing or incompatible with this app.', 'Restore the engine folder from the same BridgeClip version as the app, restart npm run dev, then select Re-check.')
+      return failure('The clipping engine is missing or incompatible with this app.', 'Restore the engine folder from the same CreatorClips version as the app, restart npm run dev, then select Re-check.')
     }
     if (result.status === 'model') {
-      return failure('The smart framing face detection model is unavailable.', 'Restore engine/assets/models/face_detection_yunet_2023mar.onnx from the BridgeClip repository, then select Re-check.')
+      return failure('The smart framing face detection model is unavailable.', 'Restore engine/assets/models/face_detection_yunet_2023mar.onnx from the CreatorClips repository, then select Re-check.')
     }
     if (result.status === 'dependency') {
       const moduleName = typeof result.module === 'string' && /^[a-zA-Z_][a-zA-Z0-9_.]{0,79}$/.test(result.module) ? ` (${result.module})` : ''
@@ -330,29 +347,29 @@ export function preflightCheck(paths: {
 }): PreflightResult {
   if (app.isPackaged) {
     const missing = (['ffmpeg', 'ffprobe', 'yt-dlp'] as const).find((name) => !existsSync(resolveBinary(name)))
-    if (missing) return { ok: false, error: `Bundled ${missing} is missing.`, hint: 'Reinstall BridgeClip to repair the clipping tools.' }
+    if (missing) return { ok: false, error: `Bundled ${missing} is missing.`, hint: 'Reinstall CreatorClips to repair the clipping tools.' }
   }
   if (!existsSync(paths.bridgePath)) {
     return {
       ok: false,
-      error: `Bridge runner script not found at: ${paths.bridgePath}`,
+      error: `CreatorClips’ video engine script (bridge_runner.py) was not found at: ${paths.bridgePath}`,
       hint: app.isPackaged
-        ? 'This is a BridgeClip packaging bug — bridge_runner.py is missing from the app bundle. Please reinstall or report this issue.'
+        ? 'This is a CreatorClips packaging bug — bridge_runner.py is missing from the app bundle. Please reinstall or report this issue.'
         : 'Expected to find bridge/bridge_runner.py in the repo. Did you delete it?'
     }
   }
   if (!paths.enginePath || !existsSync(paths.enginePath)) {
     return {
       ok: false,
-      error: `BridgeClip clipping engine not found at: ${paths.enginePath}`,
-      hint: 'Reinstall BridgeClip or restore the engine/ directory in your source checkout.'
+      error: `CreatorClips clipping engine not found at: ${paths.enginePath}`,
+      hint: 'Reinstall CreatorClips or restore the engine/ directory in your source checkout.'
     }
   }
   if (!existsSync(join(paths.enginePath, 'clip_engine', 'bridge_contract.py'))) {
     return {
       ok: false,
-      error: `BridgeClip clipping engine is incomplete at: ${paths.enginePath}`,
-      hint: 'Reinstall BridgeClip or restore engine/clip_engine/bridge_contract.py in your source checkout.'
+      error: `CreatorClips clipping engine is incomplete at: ${paths.enginePath}`,
+      hint: 'Reinstall CreatorClips or restore engine/clip_engine/bridge_contract.py in your source checkout.'
     }
   }
   // For absolute python paths, verify existence up-front. For bare commands
@@ -370,6 +387,9 @@ export function preflightCheck(paths: {
   }
   return { ok: true }
 }
+
+/** Create runs adding their call to action (after the engine exits), so cancel can stop it. */
+const ctaSteps = new Map<string, AbortController>()
 
 /**
  * Runs one clipping job in its own bridge process. Events go to `sink`;
@@ -443,6 +463,75 @@ export function startClipJob(
     return
   }
 
+  // B-roll: where it comes from (the member's library, Pexels, AI), checked now so a run never starts without it.
+  let brollFields: Record<string, unknown> = {}
+  if (config.broll) {
+    let result: ReturnType<typeof brollRunFields>
+    try { result = brollRunFields(config.brollSource, { pexels: Boolean(settings.pexelsApiKey), openrouter: Boolean(settings.openrouterApiKey) }, join(workRoot(), jobId)) }
+    catch { result = { error: 'Your B-roll library could not be read. Try again.' } }
+    if ('error' in result) {
+      reportError({ jobId, message: result.error })
+      exitWithoutProcess()
+      return
+    }
+    brollFields = result.fields
+  }
+  let backgroundPath: string | null = null
+  if (config.backgroundVideo) {
+    try { backgroundPath = resolveBackground(config.backgroundVideo) }
+    catch (error) {
+      reportError({ jobId, message: error instanceof Error ? error.message : 'The background video is unavailable.' })
+      exitWithoutProcess()
+      return
+    }
+  }
+  // Voice cleanup and music: a member's own track must still be in their music folder.
+  let audio: Record<string, unknown> | undefined
+  try { audio = audioForEngine(config) }
+  catch (error) {
+    reportError({ jobId, message: String((error as Error | null)?.message || 'That music is unavailable.').slice(0, 300) })
+    exitWithoutProcess()
+    return
+  }
+  if (config.ctaId) {
+    try { readCta(config.ctaId) }
+    catch (error) {
+      reportError({ jobId, message: String((error as Error | null)?.message || 'That call to action is unavailable.').slice(0, 300) })
+      exitWithoutProcess()
+      return
+    }
+  }
+
+  // The brand (optional): advisory text for the planner, and the handle/logo to draw.
+  let brand: ReturnType<typeof brandForJob> | null = null
+  if (config.brandIdentityId) {
+    try { brand = brandForJob(config.brandIdentityId, config.showHandle && config.workflow !== 'review', join(settings.outputDirectory, jobId)) }
+    catch (error) {
+      // More clips: a brand deleted while the run waited is left out, not a failure.
+      if (config.reuse) logger.warn('job.brand.dropped', { jobId })
+      else {
+        reportError({ jobId, message: String((error as Error | null)?.message || 'That brand identity is unavailable.').slice(0, 300) })
+        exitWithoutProcess()
+        return
+      }
+    }
+  }
+
+  // More clips: the reused files are checked again now, since the run may have waited in the queue.
+  let reuse: ReusePlan | null = config.reuse ?? null
+  if (reuse) {
+    const refreshed = refreshReusePlan(reuse, config.videoUrl)
+    if ('error' in refreshed) {
+      reportError({ jobId, message: refreshed.error })
+      exitWithoutProcess()
+      return
+    }
+    reuse = refreshed.plan
+  }
+
+  // The video's fingerprint (a local file's bytes, a link's video) keys its Create headlines (hook-memory.ts).
+  const headlineKey = (config.workflow ?? 'automatic') === 'automatic' ? createSourceKey(config.videoUrl) ?? (reuse?.sourcePath ? createSourceKey(reuse.sourcePath) : null) : null
+  const keptHeadlines = savedCreateHeadlines(headlineKey)
   const jobConfig = JSON.stringify({
     contract_version: BRIDGE_CONTRACT_VERSION,
     job_id: jobId,
@@ -458,17 +547,46 @@ export function startClipJob(
       planner_output_price: config.plannerCapabilities?.outputPrice ?? null
     } : {}),
     ...(config.clipRequest ? { clip_request: config.clipRequest } : {}),
+    // "Say what it's for": the purpose line, and the reference picture when the planner can look at it.
+    ...(config.purpose ? { purpose: config.purpose } : {}),
+    ...(config.referenceImagePath ? { reference_image_path: config.referenceImagePath } : {}),
     max_clips: config.maxClips,
     auto_clip_count: config.autoClipCount,
     duration_ranges: config.durationRanges,
     aspect_ratio: config.aspectRatio,
     layout_style: config.layoutStyle || 'auto',
     layout_vision_enabled: config.clippingMode === 'economy' ? false : config.layoutVision,
+    screen_focus: config.screenFocus ?? 'smart',
     pacing: config.pacing || 'tight',
     video_speed: config.videoSpeed ?? 1,
     include_captions: config.includeCaptions,
     caption_preset: config.captionPreset,
     include_title: config.includeTitle ?? true,
+    title_style: config.titleStyle ?? 'card',
+    ...(headlineLookForEngine(config.headlineLook) ? { headline_look: headlineLookForEngine(config.headlineLook) } : {}),
+    ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
+    ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook', ...brollFields } : {}),
+    ...(config.hookPreview ? { hook_preview: true } : {}),
+    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}), ...(config.register ? { register: config.register } : {}),
+      // My logos: popped in where their names are said (their pictures are copied into the run before its graphics are drawn).
+      ...engineLogos() } : {}),
+    ...(audio ? { audio } : {}),
+    quality_bar: config.qualityBar ?? 'b',
+    headline_voice: config.headlineVoice ?? 'clipper',
+    ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
+    // Create (Automatic) again on the same video: its clips keep the headlines they had (when they still fit).
+    ...(keptHeadlines.length ? { kept_headlines: keptHeadlines } : {}),
+    ...(reuse ? {
+      reuse_transcript_path: reuse.transcriptPath,
+      ...(reuse.sourcePath ? { reuse_source_path: reuse.sourcePath, reuse_source_meta: reuse.sourceMeta } : {}),
+      ...(reuse.expectedDurationSeconds ? { reuse_expected_duration_seconds: reuse.expectedDurationSeconds } : {}),
+      ...(reuse.transcriptPartial ? { reuse_transcript_partial: true } : {}),
+      exclude_ranges_ms: reuse.excludeRangesMs
+    } : {}),
+    ...(brand ? { brand_identity: brand.text, brand_name: brand.name } : {}),
+    ...(brand?.mark ? { brand_mark: brand.mark } : {}),
+    ...(config.ctaKeyword && config.workflow !== 'review' ? { cta_keyword: config.ctaKeyword, cta_offer: config.ctaOffer ?? '' } : {}),
+    ...(config.workflow !== 'review' ? lookExtrasForEngine(config.lookExtras, brand?.color, config.headlineLook) : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,
@@ -480,7 +598,7 @@ export function startClipJob(
   let jobWorkRoot: string
   try { jobWorkRoot = workRoot() }
   catch {
-    reportError({ jobId, message: 'BridgeClip could not create a private temporary work folder.' })
+    reportError({ jobId, message: 'CreatorClips could not create a private temporary work folder.' })
     exitWithoutProcess()
     return
   }
@@ -534,6 +652,10 @@ export function startClipJob(
   let errored = false
   let completed = false
   let pendingOutput: JobOutput | null = null
+  /** Shown when the run's call to action couldn't be added to every clip. */
+  let ctaNotice: string | null = null
+  /** Shown when some motion graphics couldn't be drawn. */
+  let graphicsNote: string | null = null
   const startedAt = Date.now()
 
   const MAX_BRIDGE_LINE_BYTES = 1024 * 1024
@@ -647,16 +769,75 @@ export function startClipJob(
     reportError(payload)
   })
 
-  child.on('close', (code, signal) => {
+  const finishClose = (code: number | null, signal: NodeJS.Signals | null): void => {
     activeProcesses.delete(jobId)
     activeJobDirectories.delete(jobId)
-    engineLog.close()
     try {
       reportClose(code, signal)
     } finally {
       cleanJobWork(jobId)
       onExit?.()
     }
+  }
+
+  child.on('close', (code, signal) => {
+    engineLog.close()
+    const ctaId = config.ctaId
+    const graphics = config.motionGraphics === true && config.workflow !== 'review'
+    if ((!ctaId && !graphics) || code !== 0 || !pendingOutput || errored || cancelledJobs.has(jobId)) { finishClose(code, signal); return }
+    // Motion graphics, then the run's call to action, go on the clips before the run is shown as done
+    // (it stays live meanwhile, so nothing else can change these clips).
+    void (async () => {
+      const run = join(settings.outputDirectory, jobId)
+      // Cancel stops these steps too (see cancelJob): the clip in progress is left as made.
+      const abort = new AbortController()
+      ctaSteps.set(jobId, abort)
+      if (graphics) {
+        try {
+          const step = (text: string, done: number, total: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
+            step: text, stages: [], percent: 99, clips_done: done, clips_total: total })
+          const result = await applyRunGraphics(run, {
+            python: pythonPath, script: join(dirname(bridgePath), 'graphics_runner.py'), cwd: enginePath, library: settings.outputDirectory,
+            env: { ...runtimeEnvironment(), PYTHONPATH: enginePath, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PATH: spawnEnv.PATH }
+          }, { signal: abort.signal, ...(config.soundEffects === true ? { sound: { register: config.register, music: config.music === true } } : {}), onProgress: (phase, done, total) => {
+            if (total && done < total) step(phase === 'draw' ? `Drawing motion graphics (${done + 1} of ${total})` : `Adding motion graphics to clip ${done + 1} of ${total}`, done, total)
+          } })
+          graphicsNote = graphicsNotice(result)
+          if (result.clips) logger.info('job.graphics.done', { jobId, clips: result.clips, applied: result.applied, failed: result.failed.length, cancelled: result.cancelled })
+        } catch (error) {
+          logger.warn('job.graphics.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
+          graphicsNote = 'Done, without motion graphics: they could not be added. Add graphics to any clip in the editor.'
+        }
+      }
+      if (!ctaId || abort.signal.aborted) {
+        if (ctaId) ctaNotice = 'Done. You stopped before the call to action was added. Add it from the Library (⋯ → Add call to action).'
+        ctaSteps.delete(jobId)
+        finishClose(code, signal)
+        return
+      }
+      try {
+        const total = pendingOutput?.clips.length ?? 0
+        const progress = (done: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
+          step: `Adding your call to action (${Math.min(done + 1, total)} of ${total})`, stages: [], percent: 99, clips_done: done, clips_total: total })
+        progress(0)
+        const { failed, cancelled } = await applyRunCta(run, ctaId, undefined, { signal: abort.signal, onProgress: (done) => { if (done < total) progress(done) } })
+        if (cancelled) {
+          ctaNotice = 'Done. You stopped the call to action partway: the clips are made, and some end without it. Add it from the Library (⋯ → Add call to action).'
+        } else if (failed.length) {
+          logger.warn('job.cta.failed', { jobId, clips: failed.length })
+          ctaNotice = `Done. The call to action couldn’t be added to ${failed.length} clip${failed.length === 1 ? '' : 's'}: add it from the Library (⋯ → Add call to action).`
+        }
+        // The clip list with the new lengths (keeps the earlier one if it can't be read).
+        try {
+          const updated = parseJobOutput(JSON.parse(await readFile(join(run, 'job_output.json'), 'utf8')))
+          if (updated && updated.job_id === jobId) pendingOutput = updated
+        } catch { logger.warn('job.cta.outputUnreadable', { jobId }) }
+      } catch (error) {
+        logger.warn('job.cta.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
+        ctaNotice = 'Done, without the call to action: it could not be added. Add it from the Library (⋯ → Add call to action).'
+      } finally { ctaSteps.delete(jobId) }
+      finishClose(code, signal)
+    })()
   })
 
   function reportClose(code: number | null, signal: NodeJS.Signals | null): void {
@@ -679,7 +860,9 @@ export function startClipJob(
     if (code === 0 && pendingOutput) {
       completed = true
       finishHistory('completed')
-      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput })
+      rememberCreateRun(headlineKey, jobId, pendingOutput.clips)
+      const note = [graphicsNote, ctaNotice].filter(Boolean).join(' ').replace(/(?<=\.) Done[.,] /g, ' ')
+      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput, ...(note ? { step: note } : {}) })
       return
     }
 
@@ -719,7 +902,14 @@ export function startClipJob(
   }
 }
 
+/** The clips are made and their call to action is being added (cancel then only stops that step). */
+export function ctaStepRunning(jobId: string): boolean { return ctaSteps.has(jobId) }
+
 export function cancelJob(jobId: string): boolean {
+  // After the engine finished: only the call-to-action step stops (its FFmpeg right away).
+  // The clips are made, so the run still finishes as done, with a note.
+  const ctaStep = ctaSteps.get(jobId)
+  if (ctaStep) { ctaStep.abort(); return true }
   const proc = activeProcesses.get(jobId)
   if (proc) {
     if (cancelledJobs.has(jobId)) return true
@@ -794,4 +984,9 @@ function terminateProcessTree(child: ChildProcess, force: boolean): void {
   } else {
     try { process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM') } catch { /* Group already exited. */ }
   }
+}
+
+/** The member's logos for Create's request (none when the library can't be read). */
+function engineLogos(): { logos?: ReturnType<typeof logosForEngine> } {
+  try { const logos = logosForEngine(); return logos.length ? { logos } : {} } catch { return {} }
 }

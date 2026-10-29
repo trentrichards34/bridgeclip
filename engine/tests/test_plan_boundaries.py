@@ -81,7 +81,7 @@ def sentence_ends(transcript):
 
 class TestDurationBounds:
     def test_ranges_win_over_explicit_bounds(self):
-        # BridgeClip used to leave the 15/90 defaults next to its ranges.
+        # CreatorClips used to leave the 15/90 defaults next to its ranges.
         assert resolve_clip_duration_bounds(["long"], 15, 90) == (120, 300)
 
     def test_multiple_ranges_span_their_union(self):
@@ -486,7 +486,7 @@ class TestJevOffPipeline:
         monkeypatch.setattr(pipeline.intelligence_planner, "_call_openrouter", call)
         result = asyncio.run(pipeline.process_video(ClippingJobRequest(
             video_url="fixture.mp4", job_id="jev-off", max_clips=3, auto_clip_count=False,
-            start_time_seconds=range_start, end_time_seconds=range_end)))
+            start_time_seconds=range_start, end_time_seconds=range_end, quality_bar="off")))
 
         assert result.status == JobStatus.COMPLETED, result.error
         context.assert_not_awaited()                          # no source-context model call

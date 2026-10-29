@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
-import { basename, join } from 'path'
-import { dialog, shell, type BrowserWindow } from 'electron'
+import { basename } from 'path'
+import { dialog, shell } from 'electron'
 import { CAPTION_PRESETS, CAPTION_PRESET_IDS, DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import { DURATION_IDS, DURATION_OPTIONS, VIDEO_SPEED_OPTIONS, CLIP_REQUEST_MAX_CHARS } from '../../shared/job-contract'
 import type { ClipJobRequest, JobSnapshot } from '../../shared/jobs'
@@ -12,9 +12,11 @@ import type { CandidateEdit } from '../../shared/clip-editor'
 import { defaultCaption, defaultFacebookFormat, youtubeTitleFor, type PostClipRequest, type PostRecord } from '../../shared/zernio-posts'
 import { isPostableAccount, ZERNIO_PLATFORM_NAMES, type ZernioAccount, type ZernioPlatform } from '../../shared/zernio'
 import { loadSettings, publicSettings, savePublicSettings } from '../settings-store'
-import { getJobHistory, getJobOutput } from '../file-manager'
+import { getJobHistory } from '../file-manager'
 import { cancelTrackedJob, getJob, listJobs, liveJobIds, onJobUpdate } from '../job-manager'
 import { startClipJobRequest } from '../job-start'
+import { assertSpendAllowed } from '../spending'
+import { decodeSpendGate } from '../../shared/spending'
 import { authorizeMedia, isWebUrl } from '../security'
 import { getYouTubePreview } from '../youtube-preview'
 import { resolveBinary } from '../tools'
@@ -38,41 +40,11 @@ import { getZernioOverview, readCachedOverview } from '../zernio/service'
 import { cancelPost, listPosts, probeClipForPosting, publishClip, refreshPosts, reschedulePost, retryPost } from '../zernio/posts'
 import { logger } from '../logger'
 import { AssistantToolError, type AssistantToolSpec } from './tool-types'
+import { clipFile, clipIndexProperty, ID_PATTERN, libraryPath, object, runIdProperty, runOutput, seconds, sourceLabel, UUID, type AppPage, type ToolHost } from './tool-helpers'
+import { createStudioTools } from './studio-tools'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
-export type DataScope = 'library' | 'automations' | 'posts' | 'settings' | 'accounts'
-export type AppPage = 'clip' | 'library' | 'jobs' | 'accounts' | 'posts' | 'automations' | 'settings'
-
-export interface ToolHost {
-  getMainWindow: () => BrowserWindow | null
-  /** Tell the window that main-side data changed, so open pages reload it. */
-  dataChanged: (scope: DataScope) => void
-  /** Show a page (and optionally a Library run) in the window. */
-  navigate: (page: AppPage, runDir?: string) => void
-}
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const ID_PATTERN = '^[A-Za-z0-9_-]{1,64}$'
-
-const runIdProperty = { type: 'string', description: 'A Library run id: the runId from list_library_runs, or a jobId (they are the same).', pattern: UUID.source }
-const clipIndexProperty = { type: 'integer', minimum: 0, maximum: 999, description: 'clipIndex from get_library_run.' }
-
-function object(properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
-  return { type: 'object', properties, required, additionalProperties: false }
-}
-
-function seconds(ms: number | null | undefined): number | null {
-  return typeof ms === 'number' && Number.isFinite(ms) ? Math.round(ms / 100) / 10 : null
-}
-
-function libraryPath(runId: unknown): string {
-  if (typeof runId !== 'string' || !UUID.test(runId)) throw new AssistantToolError('runId must be a run id from list_library_runs.')
-  return join(loadSettings().outputDirectory, runId)
-}
-
-/** Source shown to the agent: links as-is, local files by name only. */
-function sourceLabel(source: string): string {
-  return isWebUrl(source) ? source : basename(source)
-}
+export type { AppPage, DataScope, ToolHost } from './tool-helpers'
 
 function jobView(job: JobSnapshot): Record<string, unknown> {
   return {
@@ -103,19 +75,11 @@ function clipView(clip: JobOutput['clips'][number]): Record<string, unknown> {
     sourceEndSeconds: seconds(clip.end_time_ms),
     viralityScore: clip.virality_score,
     tags: clip.tags,
-    layout: clip.layout_type
+    layout: clip.layout_type,
+    callToAction: clip.cta ? { ctaId: clip.cta.id, name: clip.cta.name } : null,
+    // Remix videos made with saved parts can be re-made (recompose_remix_video).
+    ...(clip.editable ? { remixReEditable: true, hookText: clip.remix_settings?.headline || clip.headline || null } : {})
   }
-}
-
-async function runOutput(runId: unknown): Promise<{ path: string; output: JobOutput }> {
-  const path = libraryPath(runId)
-  const output = await getJobOutput(path, loadSettings().outputDirectory)
-  if (!output) throw new AssistantToolError('That run has no finished clips in the Library (it may have failed, been deleted, or still be running).')
-  return { path, output }
-}
-
-function clipFile(clip: JobOutput['clips'][number]): string {
-  return clip.s3_url.startsWith('file://') ? clip.s3_url.slice('file://'.length) : clip.s3_url
 }
 
 function automationView(automation: Automation, includeContent = true): Record<string, unknown> {
@@ -226,6 +190,7 @@ export function clipJobRequestFromInput(input: Record<string, unknown>): ClipJob
     includeCaptions: input.captions !== false,
     captionPreset: (input.captionStyle as string | undefined) ?? DEFAULT_CAPTION_PRESET,
     includeTitle: input.titleCard !== false,
+    titleStyle: 'headline',
     startTimeSeconds: (input.startSeconds as number | undefined) ?? null,
     endTimeSeconds: (input.endSeconds as number | undefined) ?? null,
     bannerPlatform: null,
@@ -241,8 +206,8 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     // ── Overview and options ──────────────────────────────────────────────
     {
       name: 'get_overview',
-      title: 'Checked BridgeClip status',
-      description: 'Current state of BridgeClip: whether the OpenRouter key (needed to make clips) and Zernio key (needed to post) are set, running and queued jobs, Library size and automations. Call this first when you need context.',
+      title: 'Checked CreatorClips status',
+      description: 'Current state of CreatorClips: whether the OpenRouter key (needed to make clips) and Zernio key (needed to post) are set, running and queued jobs, Library size and automations. Call this first when you need context.',
       inputSchema: object({}),
       readOnly: true,
       run: async () => {
@@ -324,7 +289,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       inputSchema: object({}),
       run: async () => {
         const window = host.getMainWindow()
-        if (!window || window.isDestroyed()) throw new AssistantToolError('Open the BridgeClip window first.')
+        if (!window || window.isDestroyed()) throw new AssistantToolError('Open the CreatorClips window first.')
         window.focus()
         const result = await dialog.showOpenDialog(window, {
           properties: ['openFile'],
@@ -351,7 +316,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
         captionStyle: { type: 'string', enum: CAPTION_PRESET_IDS, description: 'Default pop.' },
         titleCard: { type: 'boolean', description: 'Title card at the top of Automatic clips. Default true.' },
         durations: { type: 'array', items: { type: 'string', enum: DURATION_IDS }, minItems: 1, maxItems: DURATION_IDS.length, description: 'Clip length ranges. Default ["short"] (30–60s).' },
-        maxClips: { type: 'integer', minimum: 1, maximum: 100, description: 'Exact number of clips. Omit to let BridgeClip decide.' },
+        maxClips: { type: 'integer', minimum: 1, maximum: 100, description: 'Exact number of clips. Omit to let CreatorClips decide.' },
         speed: { type: 'number', enum: [...VIDEO_SPEED_OPTIONS], description: 'Playback speed for every clip. Default 1.' },
         pacing: { type: 'string', enum: ['tight', 'natural'] },
         layout: { type: 'string', enum: ['auto', 'fill', 'fit'] },
@@ -377,7 +342,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
         return [
           `Video: ${label}`,
           `${input.workflow === 'review' ? 'Review & edit' : 'Automatic'} · ${input.mode === 'economy' ? 'Economy' : 'Quality'} · ${input.aspectRatio ?? '9:16'}${input.speed && input.speed !== 1 ? ` · ${input.speed}×` : ''}`,
-          `${typeof input.maxClips === 'number' ? `${input.maxClips} clips` : 'BridgeClip picks the number of clips'} · ${durations.join(', ')}`,
+          `${typeof input.maxClips === 'number' ? `${input.maxClips} clips` : 'CreatorClips picks the number of clips'} · ${durations.join(', ')}`,
           input.captions === false ? 'No captions' : `Captions: ${preset?.name ?? 'Pop'}`,
           ...(input.clipRequest ? [`Focus: “${String(input.clipRequest).slice(0, 200)}”`] : []),
           'Uses your OpenRouter credit for transcription and planning.'
@@ -385,6 +350,10 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async (input) => {
         const request = clipJobRequestFromInput(input)
+        // The member approved this run in the chat; only their monthly spending limit can still stop it.
+        try { await assertSpendAllowed('job:start', 'openrouter', null, { balance: false }) } catch (error) {
+          throw new AssistantToolError(decodeSpendGate((error as Error)?.message)?.message ?? 'The spending check failed. Try again.')
+        }
         const result = await startClipJobRequest(request)
         if ('error' in result) throw new AssistantToolError(result.error)
         return { ...jobView(result.job), queued: result.queued, summary: result.queued ? 'Queued' : 'Started' }
@@ -438,7 +407,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async (input) => {
         if (!cancelTrackedJob(String(input.jobId))) throw new AssistantToolError('That job is not queued or running.')
-        return { cancelled: true, summary: 'Cancelled' }
+        return { cancelled: true, summary: 'Canceled' }
       }
     },
 
@@ -484,7 +453,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'get_library_run',
       title: 'Opened a Library run',
-      description: 'The clips in one Library run: titles, lengths, timecodes in the source, virality scores, tags and whether each has been posted.',
+      description: 'The clips in one Library run: titles, lengths, timecodes in the source, virality scores, tags, the call to action each ends with, whether a Remix video can be re-made, and whether each has been posted.',
       inputSchema: object({ runId: runIdProperty }, ['runId']),
       readOnly: true,
       run: async (input) => {
@@ -596,16 +565,16 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     },
     {
       name: 'show_in_bridgeclip',
-      title: 'Opened a page in BridgeClip',
-      description: 'Show a page in the BridgeClip window, e.g. a Library run after it finishes, or Automations after editing one.',
+      title: 'Opened a page in CreatorClips',
+      description: 'Show a page in the CreatorClips window, e.g. a Library run after it finishes, or Automations after editing one.',
       inputSchema: object({
-        page: { type: 'string', enum: ['clip', 'library', 'jobs', 'accounts', 'posts', 'automations', 'settings'], description: 'clip is the Create page.' },
+        page: { type: 'string', enum: ['clip', 'remix', ...(isAvatarStudioEnabled() ? ['avatar'] : []), 'library', 'jobs', 'accounts', 'posts', 'automations', 'settings'], description: isAvatarStudioEnabled() ? 'clip is the Clip page (making clips from long videos); avatar is Avatar Studio.' : 'clip is the Clip page (making clips from long videos).' },
         runId: { ...runIdProperty, description: 'With page "library": open this run.' }
       }, ['page']),
       run: async (input) => {
         const page = input.page as AppPage
         host.navigate(page, page === 'library' && input.runId ? libraryPath(input.runId) : undefined)
-        return { shown: page, summary: `Opened ${page === 'clip' ? 'Create' : page}` }
+        return { shown: page, summary: `Opened ${page === 'clip' ? 'Clip' : page === 'avatar' ? 'Avatar Studio' : page}` }
       }
     },
     {
@@ -1018,7 +987,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'list_posts',
       title: 'Checked posts',
-      description: 'Recent posts made from BridgeClip with their status on each platform. Set refresh to fetch the latest status from Zernio first.',
+      description: 'Recent posts made from CreatorClips with their status on each platform. Set refresh to fetch the latest status from Zernio first.',
       inputSchema: object({ refresh: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Default 25.' } }),
       readOnly: true,
       run: async (input) => {
@@ -1042,7 +1011,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       run: async (input) => {
         await cancelPost(input.postId)
         host.dataChanged('posts')
-        return { cancelled: true, summary: 'Post cancelled' }
+        return { cancelled: true, summary: 'Post canceled' }
       }
     },
     {
@@ -1081,7 +1050,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'get_settings',
       title: 'Read settings',
-      description: 'BridgeClip settings: whether API keys are saved (never the keys), the Library folder, custom vocabulary for transcription, Jev editorial review and web research switches.',
+      description: 'CreatorClips settings: whether API keys are saved (never the keys), the Library folder, custom vocabulary for transcription, Jev editorial review and web research switches.',
       inputSchema: object({}),
       readOnly: true,
       run: async () => {
@@ -1133,5 +1102,5 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       }
     }
   ]
-  return tools
+  return [...tools, ...createStudioTools(host)]
 }

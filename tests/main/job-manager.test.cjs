@@ -19,7 +19,7 @@ function loadModule(file, mocks = {}) {
 const progress = loadModule('shared/job-progress.ts')
 const diagnostics = loadModule('shared/run-diagnostics.ts', { './job-progress': progress })
 const jobs = loadModule('shared/jobs.ts')
-const jobOutput = loadModule('shared/job-output.ts', { './editorial': loadModule('shared/editorial.ts'), './job-progress': progress, './run-diagnostics': diagnostics })
+const jobOutput = loadModule('shared/job-output.ts', { './editorial': loadModule('shared/editorial.ts'), './framework-grade': loadModule('shared/framework-grade.ts'), './job-progress': progress, './run-diagnostics': diagnostics })
 
 /** A job manager wired to a fake runner that records each start and lets the test drive it. */
 function setup() {
@@ -28,7 +28,9 @@ function setup() {
   const records = []
   const runner = {
     startClipJob: (jobId, config, sink, onExit, outputDirectory) => starts.push({ jobId, config, sink, onExit, outputDirectory }),
-    cancelJob: (jobId) => { cancelled.push(jobId); return true }
+    cancelJob: (jobId) => { cancelled.push(jobId); return true },
+    ctaSteps: new Set(),
+    ctaStepRunning: (jobId) => runner.ctaSteps.has(jobId)
   }
   const manager = loadModule('main/job-manager.ts', {
     './pipeline-runner': runner,
@@ -44,7 +46,7 @@ function setup() {
   manager.initJobManager(() => window)
   const enqueue = (id, outputDirectory = '/clips') => manager.enqueueJob(id, { videoUrl: `/videos/${id}.mp4` }, outputDirectory)
   const status = (id) => manager.listJobs().find((job) => job.id === id)?.status
-  return { manager, starts, cancelled, records, sent, enqueue, status, setWindow: (next) => { window = next } }
+  return { manager, starts, cancelled, records, sent, enqueue, status, runner, setWindow: (next) => { window = next } }
 }
 
 test('runs at most MAX_PARALLEL_JOBS at once and starts queued jobs in order as slots free', () => {
@@ -188,4 +190,17 @@ test('saved stage timing boundary rejects invalid values and strips arbitrary fi
   assert.equal(progress.parseStages([valid, valid]), undefined)
   const output = jobOutput.parseJobOutput({ job_id: 'x', clips: [], metrics: { pipeline_stages: [valid] } })
   assert.equal(output.metrics.pipeline_stages[0].elapsed_ms, 5000)
+})
+
+test('cancelling while the call to action is added only stops that step; the job completes with the runner\'s note', () => {
+  const { manager, starts, runner } = setup()
+  manager.enqueueJob('job-cta', { videoUrl: '/x.mp4' }, '/out')
+  const { sink } = starts[0]
+  runner.ctaSteps.add('job-cta')
+  assert.equal(manager.cancelTrackedJob('job-cta'), true)
+  assert.equal(manager.getJob('job-cta').status !== 'cancelled', true, 'not marked cancelled')
+  assert.equal(manager.getJob('job-cta').step, 'Stopping the call to action…')
+  sink.webContents.send('job:complete', { jobId: 'job-cta', output: { job_id: 'job-cta', clips: [] }, step: 'Done. You stopped the call to action partway.' })
+  assert.equal(manager.getJob('job-cta').status, 'completed')
+  assert.match(manager.getJob('job-cta').step, /stopped the call to action/)
 })

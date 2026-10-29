@@ -6,10 +6,10 @@ import { Button } from './ui/Button'
 /**
  * Mirrors the caption presets in engine/clip_engine/config.py closely
  * enough to preview them: typeface, colours, stroke, shadow, glow, pill,
- * plate and karaoke sweep. BridgeClip engine renders with its bundled fonts; the preview
+ * plate and karaoke sweep. CreatorClips engine renders with its bundled fonts; the preview
  * uses the same bundled faces, with a system fallback while they load.
  */
-interface CaptionPreset {
+export interface CaptionPreset {
   id: string
   name: string
   description: string
@@ -117,7 +117,7 @@ const PRESETS: CaptionPreset[] = [
   {
     id: 'sweep',
     name: 'Sweep',
-    description: 'Colour follows the voice',
+    description: 'Color follows the voice',
     font: '"Poppins", "Poppins ExtraBold", system-ui, sans-serif',
     weight: 800,
     size: 14,
@@ -245,6 +245,108 @@ const PRESETS: CaptionPreset[] = [
     uppercase: false,
     future: 'dim',
     words: ['I think', 'that’s', 'fair']
+  },
+  {
+    id: 'beast',
+    name: 'Beast',
+    description: 'Comic type, challenge energy',
+    font: '"Bangers", "Impact", system-ui, sans-serif',
+    weight: 400,
+    size: 20,
+    primary: '#FFFFFF',
+    highlight: '#FFE600',
+    stroke: 9,
+    shadow: 'hard',
+    uppercase: true,
+    maxWords: 2,
+    words: ['last one', 'standing', 'wins']
+  },
+  {
+    id: 'bubble',
+    name: 'Bubble',
+    description: 'Rounded & friendly',
+    font: '"Lilita One", system-ui, sans-serif',
+    weight: 400,
+    size: 17,
+    primary: '#FFFFFF',
+    highlight: '#FF6FB5',
+    stroke: 7,
+    shadow: 'soft',
+    uppercase: true,
+    words: ['you have', 'to try', 'this']
+  },
+  {
+    id: 'retro',
+    name: 'Retro',
+    description: 'Cream type, hard orange shadow',
+    font: '"Bowlby One", system-ui, sans-serif',
+    weight: 400,
+    size: 14,
+    primary: '#FFF4DC',
+    highlight: '#FF7A1A',
+    stroke: 6,
+    shadow: 'hard',
+    uppercase: true,
+    future: 'hide',
+    words: ['back in', 'the day', 'we']
+  },
+  {
+    id: 'lime',
+    name: 'Lime',
+    description: 'Word on a lime pill',
+    font: '"Archivo Black", system-ui, sans-serif',
+    weight: 400,
+    size: 14,
+    primary: '#FFFFFF',
+    highlight: '#0B0B0B',
+    stroke: 5,
+    shadow: 'soft',
+    uppercase: true,
+    pill: '#C6FF3D',
+    words: ['one ad', 'made', 'a million']
+  },
+  {
+    id: 'vintage',
+    name: 'Vintage',
+    description: 'Retro ad-style serif',
+    font: '"Fraunces 72pt Black", "Georgia", serif',
+    weight: 900,
+    size: 15,
+    primary: '#FFF3DD',
+    highlight: '#FFB547',
+    stroke: 6,
+    shadow: 'hard',
+    uppercase: false,
+    words: ['your best', 'reel made', '$0']
+  },
+  {
+    id: 'highlight_box',
+    name: 'Highlight box',
+    description: 'White words on a purple box',
+    font: '"Montserrat", system-ui, sans-serif',
+    weight: 800,
+    size: 13,
+    primary: '#FFFFFF',
+    highlight: '#FFFFFF',
+    stroke: 0,
+    shadow: 'none',
+    uppercase: false,
+    plate: '#7C3AED',
+    words: ['built my', 'own ads', 'manager']
+  },
+  {
+    id: 'serif_clean',
+    name: 'Serif clean',
+    description: 'Plain white serif, lowercase',
+    font: '"Instrument Serif", Georgia, serif',
+    weight: 400,
+    size: 19,
+    primary: '#FFFFFF',
+    highlight: '#FFFFFF',
+    stroke: 0,
+    shadow: 'soft',
+    uppercase: false,
+    words: ['step one', 'your idea', 'comes first']
   }
 ]
 
@@ -274,7 +376,7 @@ export function textShadow(p: CaptionPreset, scale = SAMPLE_SCALE): string {
   return layers.join(', ') || 'none'
 }
 
-function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element {
+export function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element {
   const [before, active, after] = preset.words
   const base: CSSProperties = {
     color: preset.primary,
@@ -337,7 +439,7 @@ function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element
 }
 
 /** A stand-in "frame" behind each sample: a flat, dim video-like tone. */
-const SCENE = '#14161d'
+export const SCENE = '#14161d'
 
 // One shared sentence makes timing and word grouping easy to compare across styles.
 const PREVIEW_WORDS = ['This', 'is', 'how', 'your', 'captions', 'come', 'to', 'life.']

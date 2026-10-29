@@ -1,0 +1,65 @@
+<!--
+  CreatorClips unit "animated-bar-chart": a small data card, remade from HyperFrames' animated-bar-chart snippet
+  (https://github.com/heygen-com/hyperframes, registry/components/animated-bar-chart, Copyright 2026 HeyGen, Inc.,
+  Apache License 2.0; see ../vendor/LICENSE and ../vendor/NOTICE). The original bakes its title, its "+42%" and seven
+  bar heights into the markup; this one keeps its look (a card, a big number, bars that grow, a line over them) and
+  takes them as variables, sized to its box, timed by CreatorClips' shared motion (window.__ccMotion).
+
+  Variables: value (the big number, as said), data (bar numbers, "|"-separated, as said), title.
+-->
+<template>
+  <div id="root" data-composition-id="animated-bar-chart" data-duration="4">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .abc-card { box-sizing: border-box; width: 92cqw; height: 88cqh; padding: 6cqmin 6.5cqmin 5cqmin; border-radius: var(--radius, 28px); background: var(--surface, rgba(15, 18, 26, 0.9));
+        border: 0.25cqmin solid var(--border, rgba(255, 255, 255, 0.16)); display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 4cqmin; }
+      .abc-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 4cqmin; }
+      .abc-title { font: 700 6cqmin/1.15 var(--font-body, sans-serif); color: var(--muted, rgba(226, 232, 240, 0.74)); min-width: 0; }
+      .abc-value { font: 900 17cqmin/0.9 var(--font-display, sans-serif); letter-spacing: -0.05em; color: var(--brand, #22c55e); white-space: nowrap; }
+      .abc-plot { position: relative; display: flex; align-items: flex-end; gap: 3cqmin; min-height: 0; }
+      .abc-bar { flex: 1; border-radius: 2cqmin 2cqmin 0.6cqmin 0.6cqmin; background: color-mix(in srgb, var(--fg, #f8fafc) 30%, transparent); transform-origin: 50% 100%; }
+      .abc-bar:last-of-type { background: var(--brand, #22c55e); }
+      .abc-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+      .abc-line path { fill: none; stroke: color-mix(in srgb, var(--fg, #f8fafc) 70%, transparent); stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+    <div class="abc-card"><div class="abc-head"><div class="abc-title"></div><div class="abc-value"></div></div><div class="abc-plot"></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var data = String(vars.data == null ? '' : vars.data).split('|').map(words).filter(Boolean).slice(0, 8);
+        var value = function (t) { var m = /-?\d[\d,]*(?:\.\d+)?/.exec(t); return m ? Math.max(0, parseFloat(m[0].replace(/,/g, ''))) : 0; };
+        var max = Math.max.apply(null, data.map(value).concat([1e-9]));
+        root.querySelector('.abc-title').textContent = words(vars.title);
+        root.querySelector('.abc-value').textContent = words(vars.value);
+        var plot = root.querySelector('.abc-plot');
+        var bars = data.map(function (t) {
+          var bar = document.createElement('div'); bar.className = 'abc-bar';
+          bar.style.height = (Math.max(0.05, value(t) / max) * 100).toFixed(2) + '%';
+          plot.appendChild(bar); return bar;
+        });
+        // The line through the bars' tops, measured once the bars are laid out (box pixels).
+        var w = plot.clientWidth, h = plot.clientHeight;
+        var NS = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'abc-line'); svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        var path = document.createElementNS(NS, 'path');
+        var pts = bars.map(function (bar) { return [bar.offsetLeft + bar.offsetWidth / 2, Math.max(4, bar.offsetTop - h * 0.06)]; });
+        path.setAttribute('d', pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' '));
+        path.setAttribute('stroke-width', String(Math.max(3, Math.min(w, h) * 0.025)));
+        svg.appendChild(path); plot.appendChild(svg);
+        var len = pts.reduce(function (s, p, i) { return i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0; }, 0) + 1;
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo('.abc-card', { opacity: 0, scale: M.from_scale }, { opacity: 1, scale: 1, duration: M.move_s * 1.4, ease: M.enter }, 0);
+        tl.fromTo('.abc-title', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter }, 0.15);
+        tl.fromTo(bars, { scaleY: 0 }, { scaleY: 1, duration: 0.7, ease: M.enter, stagger: 0.08 }, 0.3);
+        tl.fromTo(path, { strokeDasharray: len, strokeDashoffset: len }, { strokeDashoffset: 0, duration: 0.9, ease: 'power2.inOut' }, 0.5);
+        // The big number lands on its beat (sync 1.2 s).
+        tl.fromTo('.abc-value', { opacity: 0, scale: M.from_scale, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: M.move_s * 1.2, ease: M.enter }, 1.05);
+        window.__timelines = window.__timelines || {};
+        window.__timelines['animated-bar-chart'] = tl;
+      })();
+    </script>
+  </div>
+</template>

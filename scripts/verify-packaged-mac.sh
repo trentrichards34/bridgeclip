@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_path="${1:?Pass the packaged BridgeClip.app path}"
+app_path="${1:?Pass the packaged CreatorClips.app path}"
 target_arch="${2:?Pass arm64 or x64}"
 case "$target_arch" in
   arm64) mach_arch="arm64" ;;
@@ -25,18 +25,24 @@ getCurrentFuseWire(process.argv[2]).then((wire) => {
 }).catch((error) => { console.error(error.message); process.exitCode = 1 })
 JS
 for required in \
-  bridge/bridge_runner.py bridge/editor_runner.py bridge/smoke_smart_render.py bridge/smoke_transcription_audio.py \
+  bridge/bridge_runner.py bridge/editor_runner.py bridge/avatar_runner.py bridge/smoke_smart_render.py bridge/smoke_transcription_audio.py \
   engine/clip_engine/bridge_contract.py engine/LICENSE engine/THIRD_PARTY_NOTICES.md \
   engine-venv/bin/python3 engine-venv/PYTHON-LICENSE \
   engine-bin/ffmpeg engine-bin/ffprobe engine-bin/yt-dlp \
   engine-bin/FFMPEG-LICENSE engine-bin/FFMPEG-SOURCE.tar.xz \
   engine-bin/BUNDLED_LIBRARIES.txt \
-  LICENSE THIRD_PARTY_NOTICES.md Geist-OFL.txt RENDERER-THIRD-PARTY-LICENSES.txt; do
+  "ai-video-skill/START HERE.md" ai-video-skill/skill/SKILL.md ai-video-skill/skill/LICENSE.txt \
+  LICENSE THIRD_PARTY_NOTICES.md Geist-OFL.txt SpaceGrotesk-OFL.txt JetBrainsMono-OFL.txt RENDERER-THIRD-PARTY-LICENSES.txt; do
   [[ -s "$resources/$required" ]] || {
     echo "Missing packaged resource: $required" >&2
     exit 1
   }
 done
+# The AI explainers skill must keep its dotfolder (Claude Code reads .claude/skills).
+[[ -s "$resources/ai-video-skill/.claude/settings.json" && -d "$resources/ai-video-skill/.claude/skills" ]] || {
+  echo "Missing the AI video skill's .claude folder" >&2
+  exit 1
+}
 [[ -d "$resources/engine-bin/THIRD_PARTY_LICENSES" ]] || {
   echo "Missing packaged FFmpeg library notices" >&2
   exit 1

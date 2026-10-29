@@ -1,5 +1,5 @@
 'use strict'
-// Builds BridgeClip into a scratch folder and launches it as an isolated
+// Builds CreatorClips into a scratch folder and launches it as an isolated
 // Electron instance for end-to-end tests. The instance gets its own userData
 // (and single-instance lock), talks to a mock Zernio, uses a scripted browser
 // instead of the real one, a mock keychain, and a hidden window. It never
@@ -42,10 +42,28 @@ function buildApp(appDir = process.env.BRIDGECLIP_E2E_APP_DIR || path.join(os.tm
 }
 
 /**
- * @param {{ appDir: string, userDataDir: string, mock?: { apiUrl: string, browserUrl: string }, apiUrl?: string, env?: object }} options
+ * Chromium picks its Linux key store from the desktop environment, so a headless
+ * session (Xvfb, no desktop) gets plain-text storage, which the app rightly
+ * refuses for API keys. When the session bus has an unlocked Secret Service
+ * (e.g. a gnome-keyring started for the test run), point Chromium at it so
+ * keys are really encrypted. Otherwise change nothing: the app keeps refusing.
+ */
+function linuxPasswordStore() {
+  if (process.platform !== 'linux' || process.env.XDG_CURRENT_DESKTOP || !process.env.DBUS_SESSION_BUS_ADDRESS) return []
+  try {
+    const locked = execFileSync('gdbus', ['call', '--session', '--dest', 'org.freedesktop.secrets', '--object-path', '/org/freedesktop/secrets/aliases/default',
+      '--method', 'org.freedesktop.DBus.Properties.Get', 'org.freedesktop.Secret.Collection', 'Locked'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+    return locked.includes('<false>') ? ['--password-store=gnome-libsecret'] : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * @param {{ appDir: string, userDataDir: string, mock?: { apiUrl: string, browserUrl: string }, apiUrl?: string, env?: object, args?: string[] }} options
  * @returns {Promise<{ app: import('playwright-core').ElectronApplication, page: import('playwright-core').Page, close: () => Promise<void> }>}
  */
-async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
+async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {}, args = [] }) {
   // Settings migrate (and delete) pre-rename files under the real appData and
   // home. Only a build whose isolation hook also moves those may be launched.
   const main = fs.readFileSync(path.join(appDir, 'out/main/index.js'), 'utf8')
@@ -53,9 +71,9 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
     throw new Error('This build predates full userData isolation; rebuild before launching it.')
   }
   // Settings for a fresh run, with no keys and an output folder inside the
-  // isolated dir (the app's default is the real ~/BridgeClip).
+  // isolated dir (the app's default is the real ~/CreatorClips).
   const settingsFile = path.join(userDataDir, 'settings.json')
-  const outputDirectory = path.join(userDataDir, 'BridgeClip')
+  const outputDirectory = path.join(userDataDir, 'CreatorClips')
   if (!fs.existsSync(settingsFile)) {
     fs.mkdirSync(userDataDir, { recursive: true })
     fs.writeFileSync(settingsFile, JSON.stringify({ version: 6, openrouterApiKey: '', zernioApiKey: '', outputDirectory, pythonPath: 'python3',  }), { mode: 0o600 })
@@ -67,7 +85,7 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
   const app = await _electron.launch({
     executablePath: electronPath,
     // A mock keychain keeps safeStorage off the developer's real keychain.
-    args: [appDir, '--use-mock-keychain'],
+    args: [appDir, '--use-mock-keychain', ...linuxPasswordStore(), ...args],
     env: {
       ...cleanEnv,
       ...env,
@@ -88,9 +106,11 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
     throw new Error(`The test app is not isolated from ${userDataDir}: ${outside.join(', ')}`)
   }
   const page = await app.firstWindow()
-  if (process.platform === 'linux' && process.env.GITHUB_ACTIONS === 'true') {
-    // Linux CI runs inside Xvfb. Map the window onto that virtual display so
-    // Chromium advances media, requestAnimationFrame and CSS animations.
+  if (process.platform === 'linux' && (process.env.GITHUB_ACTIONS === 'true' || /(^|\/)xvfb-run\./.test(process.env.XAUTHORITY ?? ''))) {
+    // Linux CI (and any run under xvfb-run) is inside Xvfb. Map the window onto
+    // that virtual display so Chromium advances media, requestAnimationFrame and
+    // CSS animations at full speed (a hidden window gets throttled frames, so
+    // pointer moves, playback checks and polls crawl on a busy machine).
     // Local test runs still stay hidden on the developer's desktop.
     await app.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0]

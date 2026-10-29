@@ -3,7 +3,7 @@ import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { constants, realpathSync, statSync } from 'fs'
 import { open, type FileHandle } from 'fs/promises'
 import { extname, isAbsolute, relative, resolve, sep } from 'path'
-import { BRIDGEMIND_URL, DISCORD_URL, ISSUES_URL, PROVIDER_LINKS, RELEASES_URL, REPO_URL, ZERNIO_LINKS } from '../shared/brand'
+import { BRIDGEMIND_URL, DISCORD_URL, ISSUES_URL, PROVIDER_LINKS, RELEASES_URL, REPO_URL, SPENDING_LINKS, SUPPORT_URL, ZERNIO_LINKS } from '../shared/brand'
 
 export function assertTrustedSender(event: IpcMainInvokeEvent, window: BrowserWindow | null): void {
   if (!window || window.isDestroyed() || event.sender !== window.webContents ||
@@ -20,7 +20,7 @@ export function isWebUrl(value: unknown): value is string {
   } catch { return false }
 }
 
-const externalLinks = new Set([JEV_DOCS_URL, JEV_CONFIDENCE_URL, BRIDGEMIND_URL, DISCORD_URL, ISSUES_URL, RELEASES_URL, REPO_URL, ...Object.values(PROVIDER_LINKS), ...Object.values(ZERNIO_LINKS)])
+const externalLinks = new Set([JEV_DOCS_URL, JEV_CONFIDENCE_URL, BRIDGEMIND_URL, DISCORD_URL, ISSUES_URL, RELEASES_URL, REPO_URL, ...(/^https:\/\//.test(SUPPORT_URL) ? [SUPPORT_URL] : []), ...Object.values(PROVIDER_LINKS), ...Object.values(SPENDING_LINKS), ...Object.values(ZERNIO_LINKS)])
 export function isTrustedExternalUrl(value: unknown): value is string {
   return isWebUrl(value) && (externalLinks.has(value) || /^https:\/\/www\.youtube\.com\/watch\?v=[\w-]{11}$/.test(value))
 }
@@ -30,6 +30,14 @@ export function isWithinDirectory(path: string, directory: string): boolean {
     const rel = relative(realpathSync(directory), realpathSync(path))
     return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))
   } catch { return false }
+}
+
+/** Earlier output folders still shown in the Library (set by the IPC layer). Their runs stay viewable. */
+let extraLibraryRoots: () => string[] = () => []
+export function setExtraLibraryRoots(roots: () => string[]): void { extraLibraryRoots = roots }
+/** Inside the output folder, or inside an earlier output folder the Library still shows. */
+export function isWithinLibrary(path: string, outputDirectory: string): boolean {
+  return isWithinDirectory(path, outputDirectory) || extraLibraryRoots().some((root) => isWithinDirectory(path, root))
 }
 
 const mediaExtensions = new Set(['.mp4', '.m4v', '.mkv', '.webm', '.avi', '.mov', '.flv', '.jpg', '.jpeg', '.png', '.webp'])
@@ -51,7 +59,7 @@ export function assertMediaPath(path: unknown, outputDirectory: string): asserts
   const file = statSync(canonical)
   const selected = selectedMedia.get(canonical)
   const isSelectedFile = selected?.dev === file.dev && selected.ino === file.ino
-  if (!mediaExtensions.has(extname(canonical).toLowerCase()) || !file.isFile() || (!isSelectedFile && !isWithinDirectory(canonical, outputDirectory))) {
+  if (!mediaExtensions.has(extname(canonical).toLowerCase()) || !file.isFile() || (!isSelectedFile && !isWithinLibrary(canonical, outputDirectory))) {
     throw new Error('Media file is outside the library')
   }
 }

@@ -1,15 +1,15 @@
-# Develop BridgeClip
+# Develop CreatorClips
 
 [Overview](../README.md) · [Contributing](../CONTRIBUTING.md) · [Architecture](ARCHITECTURE.md)
 
 ## Set up
 
-**Prerequisites:** Node.js 22, Python 3.12, and FFmpeg with the libass-backed `ass` filter for captions. The clipping engine, model, fonts, and locked Python dependencies are included in this repository. In development, BridgeClip uses FFmpeg from `engine-bin/` when it exists, then falls back to your `PATH`. Provider keys are needed for live jobs, not tests.
+**Prerequisites:** Node.js 22, Python 3.12, and FFmpeg with the libass-backed `ass` filter for captions. The clipping engine, model, fonts, and locked Python dependencies are included in this repository. In development, CreatorClips uses FFmpeg from `engine-bin/` when it exists, then falls back to your `PATH`. Provider keys are needed for live jobs, not tests.
 
 ### macOS and Linux
 
 ```bash
-git clone https://github.com/bridge-mind/bridgeclip
+git clone https://github.com/trentrichards34/bridgeclip
 cd bridgeclip
 python3.12 -m venv engine/.venv
 engine/.venv/bin/pip install --require-hashes -r engine/requirements.lock
@@ -17,18 +17,18 @@ npm ci
 npm run dev
 ```
 
-BridgeClip finds its in-repo engine and virtual environment automatically. **Settings → System check** shows the Python, yt-dlp, FFmpeg, and engine checks; set **Python path** in development if you use another interpreter.
+CreatorClips finds its in-repo engine and virtual environment automatically. **Settings → System check** shows the Python, yt-dlp, FFmpeg, and engine checks; set **Python path** in development if you use another interpreter.
 
-Local macOS runs apply the BridgeClip Dock icon when the window appears and when the app is activated. Restart Electron after changing startup code; refreshing the renderer only updates the UI.
+Local macOS runs apply the CreatorClips Dock icon when the window appears and when the app is activated. Restart Electron after changing startup code; refreshing the renderer only updates the UI.
 
-On Linux, use system FFmpeg with the libass-backed `ass` filter (`ffmpeg -hide_banner -filters | grep -E '[[:space:]]ass[[:space:]]'`) and Python 3.12. Arch: `sudo pacman -S ffmpeg`. Skip `scripts/prepare-resources.sh` during development; it prepares macOS release resources. Official Linux AppImage and DEB packages are available through [Releases](https://github.com/bridge-mind/bridgeclip/releases).
+On Linux, use system FFmpeg with the libass-backed `ass` filter (`ffmpeg -hide_banner -filters | grep -E '[[:space:]]ass[[:space:]]'`) and Python 3.12. Arch: `sudo pacman -S ffmpeg`. Skip `scripts/prepare-resources.sh` during development; it prepares macOS release resources. Official Linux AppImage and DEB packages are available through [Releases](https://github.com/trentrichards34/bridgeclip/releases).
 
 ### Windows
 
 Install Python 3.12 and FFmpeg with the `ass` filter on `PATH`, then use PowerShell:
 
 ```powershell
-git clone https://github.com/bridge-mind/bridgeclip
+git clone https://github.com/trentrichards34/bridgeclip
 cd bridgeclip
 python -m venv engine/.venv
 engine/.venv/Scripts/python.exe -m pip install --require-hashes -r engine/requirements.lock
@@ -59,7 +59,7 @@ Run `npm run typecheck`, `npm run lint`, `npm test` and `npm run build` before p
 | `npm run test:main` | Check desktop security and pipeline regressions |
 | `npm run test:zernio` | Check social account, upload and posting flows against local mocks |
 | `npm run dist:mac` | Package the current Mac architecture into `dist/` after preparing matching resources (signing needs a Developer ID) |
-| `npm run icons` | Export app icons from the imagegen master `resources/bridgeclip-icon.png` (macOS; see the [icon guide](../scripts/icon/README.md)) |
+| `npm run icons` | Regenerate the CreatorClips logo and app icons from `scripts/icon/build-creatorclips-brand.py` (needs `pip install cairosvg fonttools pillow`) |
 
 ## Project layout
 
@@ -69,10 +69,9 @@ src/preload/     The typed window.bridgeclip API exposed to the renderer
 src/renderer/    React UI (Create, Library, Jobs, Accounts, Posts, Automations, Settings)
 src/shared/      Product constants shared by main and renderer
 bridge/          Python worker protocol and network guard
-engine/          BridgeClip clipping engine, assets, locked Python dependencies, and tests
+engine/          CreatorClips clipping engine, assets, locked Python dependencies, and tests
 scripts/icon/    Icon and logo generators
 ```
 
 The visual system (tokens, components and rules) is documented in [DESIGN.md](../DESIGN.md).
 The desktop trust boundaries and bridge protocol are described in [Architecture](ARCHITECTURE.md).
-The [open-source readiness checklist](OPEN_SOURCE_READINESS.md) tracks the remaining release gates and maintenance priorities.

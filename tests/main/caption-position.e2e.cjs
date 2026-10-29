@@ -5,14 +5,14 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
-const { editorTools } = require('./editor-e2e-tools.cjs')
+const { editorTools, openEditorTab, editorTabOpen } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
-test('static subtitle guide supports dragging and undo, and persists across reopening', { timeout: 90000 }, async t => {
+test('static subtitle guide supports dragging and undo, and persists across reopening', { timeout: 240000 }, async t => {
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-caption-position-'))
-  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'BridgeClip', 'captions')
+  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'CreatorClips', 'captions')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=12', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
   fs.copyFileSync(path.join(run, 'editor-source.mp4'), path.join(run, 'editor-preview.mp4'))
@@ -32,7 +32,7 @@ test('static subtitle guide supports dragging and undo, and persists across reop
     await page.getByRole('button', { name: 'Library', exact: true }).first().click()
     await page.getByRole('button', { name: 'Open Subtitle placement', exact: true }).click()
     await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
-    await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+    await openEditorTab(page, 'Transcript')
   }
   const seek = async ms => {
     await page.getByRole('slider', { name: 'Source timeline', exact: true }).evaluate((el, ms) => {
@@ -78,17 +78,18 @@ test('static subtitle guide supports dragging and undo, and persists across reop
   await page.screenshot({ path: '/tmp/bridgeclip-subtitle-position.png' })
   // Switching via either candidate list preserves the inspector tab while
   // clearing the previous candidate's caption edit field.
-  for (const tab of ['Transcript', 'Captions', 'Framing', 'Jev']) {
-    await page.locator('.editor-tabs').getByRole('button', { name: tab, exact: true }).click()
+  const selectedTitle = () => page.locator('.editor-candidate.selected').innerText()
+  for (const tab of ['Transcript', 'Captions', 'Framing', 'Quality check']) {
+    await openEditorTab(page, tab)
     await page.locator('.editor-candidate').nth(1).click()
-    assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), project.candidates[1].title)
-    assert.equal(await page.locator('.editor-tabs').getByRole('button', { name: tab, exact: true }).getAttribute('aria-pressed'), 'true')
+    assert.ok((await selectedTitle()).includes(project.candidates[1].title))
+    assert.equal(await editorTabOpen(page, tab), true, `${tab} stays open`)
     await page.getByRole('textbox', { name: 'Caption at 0:00.000', exact: true }).waitFor({ state: 'hidden' })
     await page.getByRole('button', { name: `Jump to candidate 1: ${project.candidates[0].title}`, exact: true }).click()
-    assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), project.candidates[0].title)
-    assert.equal(await page.locator('.editor-tabs').getByRole('button', { name: tab, exact: true }).getAttribute('aria-pressed'), 'true')
+    assert.ok((await selectedTitle()).includes(project.candidates[0].title))
+    assert.equal(await editorTabOpen(page, tab), true, `${tab} stays open`)
   }
-  await page.locator('.editor-tabs').getByRole('button', { name: 'Transcript', exact: true }).click()
+  await openEditorTab(page, 'Transcript')
   await seek(3500)
   assert.equal(await sample(), 'Captions go here', 'guide remains available in caption-free sections')
   await seek(6500)

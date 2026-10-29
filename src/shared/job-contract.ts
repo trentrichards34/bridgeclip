@@ -8,7 +8,7 @@ export const DURATION_OPTIONS = [
   { id: 'feature', label: 'Feature', range: '15–30m' }
 ] as const
 
-/** Increment when the desktop bridge and bundled BridgeClip engine job contract change. */
+/** Increment when the desktop bridge and bundled CreatorClips engine job contract change. */
 /** Version 3 adds review projects that must never auto-render. */
 export const BRIDGE_CONTRACT_VERSION = 3
 

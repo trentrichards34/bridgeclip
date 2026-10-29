@@ -1,31 +1,60 @@
 # Changelog
 
-What's new in each version of BridgeClip, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/bridge-mind/bridgeclip/releases).
+What's new in each version of CreatorClips, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/trentrichards34/creatorclips-releases/releases).
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Maintainers: see [Changelog](CONTRIBUTING.md#changelog) in the contributing guide before editing.
 
 ## [Unreleased]
 
+The first CreatorClips release. CreatorClips is Mac only for now: Macs with Apple silicon need macOS 14 Sonoma or newer, and Intel Macs need macOS 15 Sequoia or newer.
+
 ### Added
 
-- **What to clip** in Create → Clips: describe the moments you want, such as "every time they talk about pricing". Leave it blank to get the strongest moments as before.
-- **Show title at the top** in Create → Captions turns off the title card on Automatic clips.
+- **Clip** turns long videos into short, captioned clips. Paste a YouTube or Twitch link, or choose files from your computer, up to 10 videos at once. **Automatic** makes finished clips; **Review & edit** shows you the candidates first so you can pick and trim them.
+- **What to clip** in Clip → Clips: describe the moments you want, such as "every time they talk about pricing". Leave it blank to get the strongest moments.
 - **Review & edit** workflow: look over clip candidates before exporting. Trim, split and extend cuts, change layouts and camera changes, fix and place captions, then bake one clip or every ready clip with **Bake all**. You can also swap in a higher-quality copy of the source video.
-- Jobs show progress for each stage on a timeline, a **Job Breakdown** of where the time went, and **Details** with reviews, the transcript and source research.
+- YouTube links show a preview in Clip.
+- **Edit my recording** turns a raw recording of you talking to camera, or a few takes of it, into one finished vertical reel: retakes and filler words cut and the strongest hook first. Review every word before you make the reel. Add a screen recording to go with your camera recording, film right in the app, get ideas from **What should I film?**, or **Combine** several clips into one reel.
+- **Custom graphics** (Beta, in Edit my recording's Skills): for the few key moments of a video, your AI designs a graphic for that exact idea, looks at it over your video and fixes it before it's used. The beat sheet shows the cost first, designs them, and lets you change one with a note or go back to its template; the clip editor does the same. Uses your OpenRouter credit.
+- **Custom graphics feel like one piece**: before designing, your AI picks one visual world for the whole video from your own words (shown in one line on the beat sheet; edit it or have it proposed again). Each graphic builds up as you talk, one new part on each key word, keeps gently moving and holds 3 to 8 seconds before your face comes back. A motion check sends back any graphic that freezes for more than 1.5 seconds, and the beat sheet lists the reel's flat stretches with **Add a visual here** and **Design one**.
+- **Scenes** choice for custom graphics: **Light**, **Standard** or **Full** sets how many scenes your AI designs, with the estimated cost of each shown before anything is spent.
+- **My motion library**: every custom graphic that passes its check is kept, so later videos can use it again, filled with the words you say (cheaper, and your graphics stay consistent). Browse it as moving tiles under **My graphics** in the graphic gallery ("used in N videos"), add one at the playhead or on a beat, and retire or restore graphics. Ones that never passed are kept as Retired with the reason.
+- **Design a custom graphic here** in the clip editor (Add graphic, for clips from Clip, B-roll videos and Edit my recording reels): your AI designs a new graphic at the playhead from the words you say there and an optional note like "make it a rocket", in your video's look, and shows what it costs first.
+- **Remix videos open in the clip editor** (**Open in editor** in a video's ⋯ menu, or in the Library's clips view): add graphics, effects, My motion library graphics or a custom graphic on top of your finished remix, which keeps its layout, captions and hook text, then bake it to replace the video in your Library. **Design a custom graphic here** now offers **Best** or **Lower cost** (one design, no improvement rounds), with the estimate of each shown before anything is spent.
+- **Stage layouts** (Beta): big cards go on a stage at the top, with you in a card below, then back to full frame. **Fix layout** in the clip editor works the scenes out again from a clip's graphics, for free; Undo brings the old ones back.
+- **Explainer style** (Beta): you, cut out of your video, at the bottom of a paper page, with one continuous illustration above you that changes on every line you say.
+- **Sound effects**: soft whooshes, swipes, pops, ticks, clicks, impacts, risers and paper sounds as your graphics and scenes come in, under your voice. Each sound has several takes, and each video starts on a different one, so videos with many moves sound less repetitive. All are free to use: CC0 or our own.
+- Choose how long hook text stays on screen, from a few seconds to the whole video, in the clip editor, Brand look and B-roll video.
+- **Trial reels**: **Hook ideas** in the clip editor writes 5 hook options from what is said in a clip. Tick **Trial reel** on several to make a copy of the clip for each hook, with the same graphics and scenes, for Instagram trial reels.
+- **Remix**: react to someone else's video on camera, recorded in the app or uploaded from your phone. **Pause & react** plays their video above your camera, and Space pauses it while you talk. Also **Moment + my take** (pick moments from a long video and give your take on each), **Their clip, then me**, **React, then my thoughts**, **Green screen over their video**, **Scripted take** and **Article or post**. The AI writes the hook text and caption from what you said.
+- **B-roll video** (Beta): your voiceover, or a script read by an AI voice, covered start to end with your own b-roll, with captions, hook text and motion graphics. The cost shows before you start, and you can swap any shot or open the video in the clip editor.
+- **B-roll library** (Beta): add your own clips and pictures. The AI looks at each one once, then Clip, Remix and B-roll video use the shots that match what you say. Your files stay where they are.
+- **AI explainers** (under Make): animated explainer reels with a cartoon presenter, paper-and-ink animation and a voiceover timed word by word, made by a skill that runs in your own Claude (Claude Code), so each video is covered by your Claude plan. The page explains what you need, saves the skill to your computer as an **AI Video** folder, and walks you through setup and your first reel with prompts to copy.
+- **Brand look**: set your style once. Every tool starts from your default look, and you can change it for one video or one clip.
+- **Open in editor** in the ⋯ menu of a Clip run in the Library.
 - The Library shows how many clips in each run are posted, lets you bookmark runs, and deletes whole runs or single clips.
-- Settings → About shows how much disk space your output folder uses.
-- YouTube links show a preview in Create.
+- Jobs show progress for each stage on a timeline, a **Job Breakdown** of where the time went, and **Details** with reviews, the transcript and source research.
+- **Posts and Automations**: post or schedule any video in your Library to your connected accounts through Zernio. **Posts** shows everything scheduled and posted, as a list or a calendar, and Automations post new videos on a schedule.
 - Automations have **Submitted** and **Needs attention** sections, drag to reorder, **View in Library**, reviewable title and caption drafts, **Refresh post status** and **Return to queue**.
+- **Settings → Spending** lists what each tool cost, from what each provider reported, and lets you set a monthly AI spending limit.
+- **Guides**: short how-tos for each kind of video. **How it works** on each Make page opens its guide.
+- **Help → Report an Issue** shows a support report (never your keys) that you can check, then **Save report to a file** or copy to send to support privately.
 - **TypeSafe Jev review** and **Research the source before clipping**, both in beta and off by default. Turn them on in Settings. Both use extra OpenRouter credit.
 - **Free editor media** removes an editor project's source copy and preview once you're done with it.
-- BridgeClip asks whether to save or discard unsaved edits before quitting, and offers **Reload project** when a project was changed elsewhere.
+- CreatorClips asks whether to save or discard unsaved edits before quitting, and offers **Reload project** when a project was changed elsewhere.
+- Settings → About shows how much disk space your output folder uses.
 - This changelog, in Settings → About and the Help menu.
-- **Chat**: run BridgeClip in plain words. It uses your Claude (Pro or Max, through Claude Code) or ChatGPT (through Codex) subscription, or any OpenRouter model with your OpenRouter key; connect them in **Settings → Assistant**. The assistant can start clipping jobs, manage the Library and automations, and post or schedule clips. Anything that publishes, deletes or spends OpenRouter credit on clipping asks you first.
+- **What's new**: after an update, CreatorClips shows what changed in the new version, once.
+- **Your data** in Settings → About: where your videos, settings, keys and logs are, what leaves your computer, and how to uninstall.
+- If something goes wrong on a page, CreatorClips shows **Something went wrong** with **Reload**, **Copy details** and **Report an issue**, instead of a blank window.
+- **Chat**: run CreatorClips in plain words. It uses your Claude (Pro or Max, through Claude Code) or ChatGPT (through Codex) subscription, or any OpenRouter model with your OpenRouter key; connect them in **Settings → Assistant**. The assistant can start clipping jobs, manage the Library and automations, and post or schedule clips. Anything that publishes, deletes or spends OpenRouter credit on clipping asks you first.
 - Chat's model menu has a tab each for Claude, OpenAI and OpenRouter (search every OpenRouter model that can use tools, with prices), and each reply shows the logo and model that wrote it. Recent chats are listed beside the conversation, with search.
-- Chat can find YouTube videos by channel or search, so "clip the latest BridgeMind video" works without a link, and can search the web and read web pages.
+- Chat can find YouTube videos by channel name or search, so you can ask it to clip a channel's latest video without a link, and it can search the web and read web pages.
 
 ### Changed
 
+- **Automatic updates**: CreatorClips is signed with our Apple Developer certificate and notarized by Apple. Downloads and automatic updates come from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases), and **Settings → About** and the Help menu link there. CreatorClips downloads new versions in the background and installs them when you choose **Restart to update** or the next time you quit.
+- Hook text choices in Clip → Look include a title card or no hook text.
 - Smart framing ignores weak background faces, stays on a speaker who briefly looks away, follows talking heads inside 4:3 video, and analyzes footage faster.
 - Screen + webcam clips fill the top panel again.
 - Editor previews use much less disk space, and downloaded sources are moved into the project instead of copied.
@@ -43,73 +72,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Mai
 
 ## [0.1.19] - 2026-09-27
 
-One release for macOS, Windows and Linux.
+CreatorClips is built on BridgeClip by BridgeMind (MIT).
 
-### Added
-
-- Linux installers for x64: an AppImage and a DEB package.
-
-### Changed
-
-- YouTube downloads that fail for a temporary reason retry automatically with a fresh link.
-- Playlists and live or upcoming streams are turned away before downloading. Paste a link to a single, finished video.
-
-### Fixed
-
-- An automation keeps posting the rest of its queue when one clip's details can't be verified.
-- Generated post captions that quote the video are accepted when the speaker stutters, and captions can no longer contain web links.
-- Hardened how BridgeClip handles captions, file paths, titles, downloads and its bundled Python, so unusual input can't change video processing commands or load unexpected code.
-
-## [0.1.18] - 2026-09-25
-
-### Added
-
-- A signed installer for Windows x64. This version shipped for Windows only and has no other changes from 0.1.17.
-
-## [0.1.17] - 2026-09-25
-
-The first version with downloadable installers, starting with macOS.
-
-### Added
-
-- macOS apps for Apple silicon and Intel, signed with BridgeMind's Developer ID and notarized by Apple.
-- Automatic updates. BridgeClip checks shortly after launch and every four hours, downloads in the background, and installs when you choose **Restart to update** or the next time you quit. Settings → About shows the status and has **Check for updates**.
-- Clip public, finished Twitch VODs by pasting their link.
-- **Video speed** in Create → Format speeds up every clip in a job, from 1.1× to 2×. Voices keep their pitch and captions stay in sync.
-- TikTok accounts in automations. Each clip gets a review of its caption, audience, interactions and disclosures before it can post.
-- **Economy** clipping mode, which uses lower-cost models and skips AI vision checks.
-- **Advanced** clipping mode, for choosing your own transcription and planning models from OpenRouter.
-- A **Posts** page with your posting history.
-- Run stats that compare time and cost with OpusClip when there's enough information for a fair comparison.
-- New app icons.
-
-### Changed
-
-- Captions are placed more carefully around faces.
-- Jobs with a start and end time only transcribe that part of the video, which is faster and cheaper.
-- Accounts, Automations and Jobs are more compact, and menus and confirmation dialogs work with the keyboard.
-- Clip cost details name both transcription models when a job switches models partway through.
-- Setting up a Zernio profile, and recovering from access problems, is clearer in Accounts.
-
-### Fixed
-
-- Automations could post the same clip twice after a slow or failed response.
-- A clip you return to the automation queue after checking it by hand can post again.
-- A scheduled slot stays free when a changed clip's TikTok approval is withdrawn, so you can review it and still post on time.
-- Automation retries no longer stop at transcription with an HTTP 400 error.
-- Page shortcuts no longer close a post dialog while it's uploading.
-- Starting a job no longer fails on some IPv6 networks.
-- Windows: Python is found reliably, edits with many cuts work, and saved results are opened safely.
-- Exports whose audio drifts out of sync are caught before they're saved.
-
-## [0.1.16] - 2026-09-24
-
-### Added
-
-- BridgeClip's source code is public under the MIT license. Installers start with 0.1.17.
-
-[Unreleased]: https://github.com/bridge-mind/bridgeclip/compare/v0.1.19...HEAD
+[Unreleased]: https://github.com/trentrichards34/bridgeclip/compare/v0.1.19...HEAD
 [0.1.19]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.19
-[0.1.18]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.18
-[0.1.17]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.17
-[0.1.16]: https://github.com/bridge-mind/bridgeclip/tree/7107574215cc7f1d4059d10d62bd82014a3ba46f

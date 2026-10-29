@@ -1,19 +1,24 @@
 import { createHash, randomUUID } from 'crypto'
-import { resolve } from 'path'
+import { dirname, resolve } from 'path'
 import { AUTOMATION_PLATFORMS, type AutomationSourceContext, type MetadataEnhancement } from '../shared/automations'
 import type { ClipArtifact, JobOutput } from '../shared/job-output'
 import type { PostRecord } from '../shared/zernio-posts'
 import { clipPostingStatus, MAX_POSTING_SUMMARY_RUNS, type LibraryClipPostingStatus, type LibraryEnhancementOptions, type LibraryRunPostingCounts } from '../shared/library-posting'
 import { loadSettings } from './settings-store'
+import { currentRunPath } from './library-folders'
 import { getJobOutput, isManuallyPosted } from './file-manager'
 import { assertAbsolutePath, assertMediaPath, authorizeMedia, isWithinDirectory, openAuthorizedMedia } from './security'
 import { automationMediaMatcher, listAutomations } from './automations'
 import { listPosts } from './zernio/posts'
 import { completeSourceContext, parseSourceContext, sourceFromOutput } from './automation-source'
+import { MIN_INSIGHT_AGE_MS, summarizeInsights, type InsightPost, type PostInsights } from '../shared/post-insights'
+import { CAPTION_PRESETS } from '../shared/caption-presets'
+import { HEADLINE_LOOKS } from '../shared/headline-look'
 import { generateAutomationMetadata, researchAutomationTopic, transcribeAutomationClip } from './automation-metadata'
 
 const mediaPath = (value: string): string => resolve(value.replace(/^file:\/\//, ''))
-const pathKey = (value: string): string => process.platform === 'win32' ? mediaPath(value).toLowerCase() : mediaPath(value)
+// A run moved to a new output folder: posts still name the clip's old path.
+const pathKey = (value: string): string => { const path = mediaPath(currentRunPath(mediaPath(value))); return process.platform === 'win32' ? path.toLowerCase() : path }
 
 async function libraryRun(raw: unknown, library = loadSettings().outputDirectory): Promise<JobOutput> {
   assertAbsolutePath(raw)
@@ -77,8 +82,9 @@ async function postingContext(library: string): Promise<PostingContext> {
   return { library, posts, origins, bankPosts, bankFiles }
 }
 
-async function runPostingStatus(outputDir: unknown, library: string, context: PostingContext | null): Promise<LibraryClipPostingStatus[]> {
-  const output = await libraryRun(outputDir, library)
+type RunClips = Pick<ClipArtifact, 'clip_index' | 's3_url'>[]
+async function runPostingStatus(outputDir: unknown, library: string, context: PostingContext | null, known?: RunClips): Promise<LibraryClipPostingStatus[]> {
+  const output = known ? { clips: known } : await libraryRun(outputDir, library)
   const run = outputDir as string
   const withManualStatus = (status: LibraryClipPostingStatus): LibraryClipPostingStatus =>
     isManuallyPosted(run, status.clipIndex) ? { ...status, state: 'posted', manuallyPosted: true } : status
@@ -131,6 +137,22 @@ export async function libraryPostingSummary(outputDirs: unknown): Promise<Librar
   return results
 }
 
+/**
+ * Posting status for many runs whose clips the caller already read from the
+ * Library (the Ready to post index). Like the summary, settings, post history
+ * and automation banks are read once. A run that cannot be checked maps to null.
+ */
+export async function postingStatusForRuns(runs: { outputDir: string; clips: RunClips }[]): Promise<{ statuses: Map<string, LibraryClipPostingStatus[] | null>; postingHistory: boolean }> {
+  const { outputDirectory: library, zernioApiKey: workspaceKey } = loadSettings()
+  const context = workspaceKey ? await postingContext(library) : null
+  const statuses = new Map<string, LibraryClipPostingStatus[] | null>()
+  for (const run of runs) {
+    try { statuses.set(run.outputDir, await runPostingStatus(run.outputDir, library, context, run.clips)) } catch { statuses.set(run.outputDir, null) }
+  }
+  if (loadSettings().zernioApiKey !== workspaceKey) throw new Error('The posting workspace changed. Refresh the Library.')
+  return { statuses, postingHistory: Boolean(workspaceKey) }
+}
+
 export async function libraryMetadataSource(outputDir: unknown, clipIndex: unknown): Promise<AutomationSourceContext | null> {
   const { output } = await libraryClip(outputDir, clipIndex)
   return completeSourceContext(sourceFromOutput(output))
@@ -164,4 +186,53 @@ export async function enhanceLibraryMetadata(outputDir: unknown, clipIndex: unkn
     ensureCurrent()
     return { id: randomUUID(), createdAt: new Date().toISOString(), platforms: options.platforms, source, research, posts }
   } finally { enhancing.delete(path) }
+}
+
+/** The Library clip a post was made from: its run is the clip's folder or one of the two above it. */
+async function clipForPost(path: string, library: string, runs: Map<string, JobOutput | null>): Promise<ClipArtifact | null> {
+  let dir = dirname(mediaPath(path))
+  for (let depth = 0; depth < 3 && isWithinDirectory(dir, library); depth++) {
+    if (!runs.has(dir)) runs.set(dir, await getJobOutput(dir, library))
+    const output = runs.get(dir)
+    if (output) return output.clips.find((item) => pathKey(item.s3_url) === pathKey(path)) ?? null
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * Average views by framework grade, hook look and caption style, from the
+ * stats Zernio reported for posts made from CreatorClips. Only clips found in
+ * the Library count (their grade and settings come from the run), and only
+ * posts at least a day old, since newer ones are still gaining views.
+ */
+export async function postPerformanceInsights(): Promise<PostInsights> {
+  const { outputDirectory: library, zernioApiKey } = loadSettings()
+  if (!zernioApiKey) return summarizeInsights([], { hookLook: String, captionStyle: String })
+  const origins = new Map(listAutomations().flatMap((automation) => automation.content.filter((item) => item.postId && item.sourceClipPath).map((item) => [item.postId!, item.sourceClipPath!] as const)))
+  const now = Date.now()
+  const runs = new Map<string, JobOutput | null>()
+  const items: InsightPost[] = []
+  for (const post of listPosts()) {
+    const views = post.stats?.total?.views
+    if (views == null || now - Date.parse(post.createdAt) < MIN_INSIGHT_AGE_MS) continue
+    let clip: ClipArtifact | null = null
+    try { clip = await clipForPost(origins.get(post.id) ?? post.clipPath, library, runs) } catch { clip = null }
+    // Only clips still in the Library: their grade and settings come from the run.
+    if (!clip) continue
+    const settings = clip.remix_settings ?? null
+    items.push({
+      views,
+      grade: clip.framework?.grade ?? null,
+      hookLook: settings?.headline_look?.look ?? null,
+      captionStyle: settings ? (settings.include_captions ? settings.caption_preset || null : 'none') : null
+    })
+  }
+  if (loadSettings().zernioApiKey !== zernioApiKey) throw new Error('The posting workspace changed. Refresh Posts.')
+  return summarizeInsights(items, {
+    hookLook: (id) => HEADLINE_LOOKS.find((look) => look.id === id)?.label ?? id,
+    captionStyle: (id) => id === 'none' ? 'No captions' : CAPTION_PRESETS.find((preset) => preset.id === id)?.name ?? id
+  })
 }

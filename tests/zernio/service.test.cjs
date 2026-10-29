@@ -98,7 +98,7 @@ test('connect: error redirects become friendly, sanitised messages', async (t) =
   const { service, mock, getWindow, results, browse } = await setup(t)
   const profileId = mock.state.profiles[0]._id
   const scenarios = [
-    ['instagram', { error: 'oauth_denied' }, /Instagram sign-in was cancelled/, false],
+    ['instagram', { error: 'oauth_denied' }, /Instagram sign-in was canceled/, false],
     ['tiktok', { error: 'missing_tiktok_permissions' }, /every permission/, false],
     ['twitter', { error: 'payment_required', params: { reason: 'twitter_passthrough', dashboard_url: 'https://zernio.com/x' } }, /payment method on file before it can connect X/, true],
     ['facebook', { error: 'no_facebook_pages' }, /doesn't manage any Pages/, false],
@@ -178,12 +178,12 @@ test('connect: API failures come back as structured errors the UI can act on', a
   assert.equal(service.isCallbackPending(), false)
 })
 
-test('connect: with no profile it uses the default one, or creates one for BridgeClip', async (t) => {
+test('connect: with no profile it uses the default one, or creates one for CreatorClips', async (t) => {
   const { service, mock, getWindow } = await setup(t, { mockOptions: { withDefaultProfile: false } })
   const first = await service.connectZernioAccount('threads', null, undefined, getWindow)
   assert.equal(first.status, 'pending')
   assert.equal(mock.state.profiles.length, 1)
-  assert.equal(mock.state.profiles[0].name, 'BridgeClip')
+  assert.equal(mock.state.profiles[0].name, 'CreatorClips')
   assert.equal(first.profileId, mock.state.profiles[0]._id)
   const second = await service.connectZernioAccount('threads', null, undefined, getWindow)
   assert.equal(second.profileId, first.profileId, 'no duplicate profile')

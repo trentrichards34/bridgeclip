@@ -37,7 +37,7 @@ interface Connecting {
 export interface AccountsNotice {
   tone: 'success' | 'danger' | 'neutral'
   text: string
-  /** A next step the notice offers: Zernio's billing page, or BridgeClip's Settings. */
+  /** A next step the notice offers: Zernio's billing page, or CreatorClips's Settings. */
   action?: 'billing' | 'settings'
 }
 

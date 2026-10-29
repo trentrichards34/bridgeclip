@@ -25,11 +25,13 @@ from typing import Optional
 from clip_engine.services.layout_analyzer import Box, ClipLayoutPlan, LayoutType, ShotLayout
 from clip_engine.services.video_speed import speed_audio_filter, validate_video_speed
 
-# Two people get equal space. Screen shares start with more room for the
-# screen; a smaller webcam can move the seam farther down.
+# Two people get equal space, and so do screen and webcam (the person matters
+# as much as the screen); a small webcam can move the seam down a little.
 TWO_SHOT_TOP_RATIO = 0.5
-SCREEN_CAM_TOP_RATIO = 0.6
-MAX_SCREEN_CAM_TOP_RATIO = 0.7
+SCREEN_CAM_TOP_RATIO = 0.5
+MAX_SCREEN_CAM_TOP_RATIO = 0.6
+# Manual editor splits: the top panel's share of the height, and its limits.
+MANUAL_SPLIT_RANGE = (0.3, 0.7)
 # Never upscale a crop more than this (beyond it faces/text turn to mush).
 # The webcam panel is the exception: it always fills its panel, and the split
 # shrinks that panel for small webcams instead (stacked_panel_heights).
@@ -212,11 +214,16 @@ def stacked_panel_heights(shot: ShotLayout, src_h: int, out_h: int) -> tuple[int
     """Return even top/bottom heights for one stacked shot.
 
     A webcam's source height limits how tall its destination can be before it
-    must be enlarged beyond MAX_UPSCALE. Keep at least 30% for the webcam;
+    must be enlarged beyond MAX_UPSCALE. Keep at least 40% for the webcam;
     overlays smaller still fill that panel anyway, enlarged further.
-    The same seam is used by the graph and caption placement.
+    A manual split uses the editor's share. The same seam is used by the
+    graph and caption placement.
     """
-    if shot.layout != LayoutType.SCREEN_CAM or shot.cam_box is None:
+    if shot.manual_crops and len(shot.manual_crops) == 2:
+        lo, hi = MANUAL_SPLIT_RANGE
+        share = 0.5 if shot.manual_split is None else _clamp(shot.manual_split, lo, hi)
+        top_h = even(out_h * share)
+    elif shot.layout != LayoutType.SCREEN_CAM or shot.cam_box is None:
         top_h = even(out_h * TWO_SHOT_TOP_RATIO)
     else:
         preferred_bottom = out_h - even(out_h * SCREEN_CAM_TOP_RATIO)
@@ -347,6 +354,26 @@ def content_view(
     return (x, y, w, h), ((out_w - fw) // 2, (out_h - fh) // 2, fw, fh)
 
 
+BUBBLE_SIZE = 0.34
+BUBBLE_MARGIN = 0.05
+BUBBLE_RING = 8
+
+
+def bubble_view(shot: ShotLayout, src_w: int, src_h: int, out_w: int, out_h: int):
+    """Camera + screen bubble: the face's square crop in the source (x, y, w, h px) and where the round bubble goes
+    ((x, y) of its top-left, its diameter and the ring's width): over the inset's lower right corner. Mirrors
+    bubbleRect in src/shared/screen-pair.ts."""
+    _, (dx, dy, fw, fh) = content_view(shot, src_w, src_h, out_w, out_h)
+    d = even(out_w * BUBBLE_SIZE)
+    cx = out_w - out_w * BUBBLE_MARGIN - d / 2
+    cy = min(max(dy + fh, out_h * 0.3), out_h * 0.8)
+    ox, oy = int(cx - d / 2), int(cy - d / 2)
+    x, y, w, h = cover_crop(list(shot.manual_bubble), src_w, src_h, 1, 1, True)
+    px, py = max(0, int(x * src_w) // 2 * 2), max(0, int(y * src_h) // 2 * 2)
+    pw, ph = min(even(w * src_w), src_w - px), min(even(h * src_h), src_h - py)
+    return (px, py, pw, ph), (ox, oy, d, BUBBLE_RING)
+
+
 def foreground_geometry(shot: ShotLayout, src_w: int, src_h: int, out_w: int, out_h: int) -> tuple[int, int]:
     if shot.content_box is not None:
         _, (_, y, _, h) = content_view(shot, src_w, src_h, out_w, out_h)
@@ -374,7 +401,8 @@ def shot_chain(
                 # monotonically. Per frame, scale that region so the moving crop
                 # becomes qw x qh (odd sizes are fine mid-graph; rounding to even
                 # would distort small panels), then cut a fixed qw x qh window.
-                origin, dest = shot.manual_from_crops[j], shot.manual_crops[j]
+                origin = cover_crop(shot.manual_from_crops[j], src_w, src_h, pw, ph, shot.manual_cover)
+                dest = cover_crop(shot.manual_crops[j], src_w, src_h, pw, ph, shot.manual_cover)
                 bx = max(0, int(min(origin[0], dest[0]) * src_w) // 2 * 2)
                 by = max(0, int(min(origin[1], dest[1]) * src_h) // 2 * 2)
                 bw = max(2, min(src_w - bx, (ceil(max(origin[0] + origin[2], dest[0] + dest[2]) * src_w) - bx + 1) // 2 * 2))
@@ -418,12 +446,30 @@ def shot_chain(
     if shot.content_box is not None:
         (x, y, w, h), (dx, dy, fw, fh) = content_view(shot, src_w, src_h, out_w, out_h)
         bg_w, bg_h = even(out_w // 4), even(out_h // 4)
-        return (
-            f"[t{i}]crop={w}:{h}:{x}:{y},split=2[ib{i}][if{i}];"
+        inset = (
+            f"crop={w}:{h}:{x}:{y},split=2[ib{i}][if{i}];"
             f"[ib{i}]scale={bg_w}:{bg_h}:force_original_aspect_ratio=increase,crop={bg_w}:{bg_h},"
             f"gblur=sigma=10,lutyuv=y=val-20,scale={out_w}:{out_h}[ibg{i}];"
             f"[if{i}]scale={fw}:{fh}:{scale}[ifg{i}];"
-            f"[ibg{i}][ifg{i}]overlay={dx}:{dy},setsar=1[v{i}]"
+            f"[ibg{i}][ifg{i}]overlay={dx}:{dy},setsar=1"
+        )
+        if shot.manual_bubble is None:
+            return f"[t{i}]{inset}[v{i}]"
+        # The face in a round bubble with a thin white ring, over the inset's lower right corner. The round masks are
+        # drawn once and repeated (geq per frame would be slow).
+        (bx, by, bw, bh), (ox, oy, d, ring) = bubble_view(shot, src_w, src_h, out_w, out_h)
+        outer = d + 2 * ring
+        def disc(size: int, radius: float) -> str:
+            return (f"color=c=black:s={size}x{size}:r=30:d=0.1,format=gray,"
+                    f"geq=lum='255*clip({radius:.2f}-hypot(X-{size / 2:.2f}+0.5,Y-{size / 2:.2f}+0.5)+0.5,0,1)',loop=loop=-1:size=1:start=0")
+        return (
+            f"[t{i}]split=2[bt{i}][bb{i}];[bt{i}]{inset}[bin{i}];"
+            f"{disc(d, d / 2)}[bm{i}];{disc(outer, outer / 2)}[rm{i}];"
+            f"color=c=white:s={outer}x{outer}:r=30:d=0.1,format=yuv420p,loop=loop=-1:size=1:start=0[rw{i}];"
+            f"[rw{i}][rm{i}]alphamerge[ring{i}];"
+            f"[bb{i}]crop={bw}:{bh}:{bx}:{by},scale={d}:{d}:{scale},format=yuv420p[bf{i}];[bf{i}][bm{i}]alphamerge[bface{i}];"
+            f"[bin{i}][ring{i}]overlay={ox - ring}:{oy - ring}:shortest=1[bo{i}];"
+            f"[bo{i}][bface{i}]overlay={ox}:{oy}:shortest=1,setsar=1[v{i}]"
         )
     if shot.layout == LayoutType.TALKING_HEAD:
         w, h, x_expr, y_expr = fill_crop(shot, src_w, src_h, out_w, out_h)
@@ -733,19 +779,54 @@ class FaceZone:
     rects: tuple[Rect, ...]
 
 
+# Manual crops within this aspect mismatch of their panel are cover-cropped.
+COVER_TOLERANCE = 0.08
+
+
+def cover_crop(crop, src_w, src_h, panel_w, panel_h, always=False):
+    """A normalized crop trimmed (about its center) to the panel's aspect.
+
+    The editor keeps crops at their panel's aspect (and re-fits them when a
+    split changes); a slightly different one (rounding, an older project) is
+    cropped to cover the panel rather than stretched. Within 0.5% it is used
+    as is; a crop far off (beyond COVER_TOLERANCE) keeps the exact mapping the
+    editor's own preview uses.
+    """
+    x, y, w, h = crop
+    if w <= 0 or h <= 0:
+        return list(crop)
+    ratio = (w * src_w / (h * src_h)) / (panel_w / panel_h)
+    if abs(ratio - 1) <= 0.005 or (abs(ratio - 1) > COVER_TOLERANCE and not always):
+        return list(crop)
+    if ratio > 1:
+        nw = w / ratio
+        return [x + (w - nw) / 2, y, nw, h]
+    nh = h * ratio
+    return [x, y + (h - nh) / 2, w, nh]
+
+
+def manual_panels(shot, out_w, out_h):
+    """Output (x, y, w, h) of each manual panel, top to bottom."""
+    if len(shot.manual_crops) == 2:
+        top_h, bottom_h = stacked_panel_heights(shot, 0, out_h)
+        return [(0, 0, out_w, top_h), (0, top_h, out_w, bottom_h)]
+    return [(0, 0, out_w, out_h)]
+
+
 def manual_views(shot, src_w, src_h, out_w, out_h, t_ms=None):
     """Exact normalized crops shared with the editor. Round inward for yuv420p."""
     result = []
-    panel_h = even(out_h / len(shot.manual_crops))
-    crops = shot.manual_crops
+    panels = manual_panels(shot, out_w, out_h)
+    crops = [cover_crop(c, src_w, src_h, p[2], p[3], shot.manual_cover) for c, p in zip(shot.manual_crops, panels)]
     if shot.manual_transition_ms and t_ms is not None:
         p = max(0, min(1, (t_ms - shot.manual_transition_start_ms) / shot.manual_transition_ms))
         ease = p * p * (3 - 2 * p)
-        crops = [[a + (b - a) * ease for a, b in zip(start, end)] for start, end in zip(shot.manual_from_crops, crops)]
-    for i, (x, y, w, h) in enumerate(crops):
+        origin = [cover_crop(c, src_w, src_h, q[2], q[3], shot.manual_cover) for c, q in zip(shot.manual_from_crops, panels)]
+        crops = [[a + (b - a) * ease for a, b in zip(start, end)] for start, end in zip(origin, crops)]
+    for (x, y, w, h), panel in zip(crops, panels):
         px, py = max(0, int(x * src_w) // 2 * 2), max(0, int(y * src_h) // 2 * 2)
         pw, ph = min(even(w * src_w), src_w - px), min(even(h * src_h), src_h - py)
-        result.append(((px, py, pw, ph), (0, i * panel_h, out_w, out_h - panel_h if i == 1 else panel_h)))
+        result.append(((px, py, pw, ph), panel))
     return result
 
 

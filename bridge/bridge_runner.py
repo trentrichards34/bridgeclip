@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-BridgeClip Bridge Runner
+CreatorClips Bridge Runner
 
-Thin bridge between Electron and BridgeClip clipping engine.
+Thin bridge between Electron and CreatorClips clipping engine.
 Accepts a JSON config on stdin, runs the pipeline in LOCAL_MODE,
 and streams structured JSON-line progress to stdout for Electron to consume.
 
@@ -30,12 +30,33 @@ logger = logging.getLogger("bridge_runner")
 _protocol = None
 
 # Mirrors DURATION_OPTIONS in src/shared/job-contract.ts.
+BACKGROUND_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
 DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", "feature")
+# Mirrors CAPTION_LANGUAGES in src/shared/caption-language.ts.
+CAPTION_LANGUAGE_CODES = ("en", "es", "pt", "fr", "de", "it", "hi", "ar", "ja", "ko", "zh")
 
 # Known failure classes -> (message, hint). Raw engine errors can contain
 # request URLs, proxy credentials and local paths, so only these fixed strings
 # reach the UI. First match wins.
 FAILURES = (
+    (("social login required",),
+     "This site only shares the video with a logged-in viewer.",
+     "In Settings → API keys, under “Instagram, TikTok, X and Facebook links”, choose the browser you’re logged in with, then try again. Or download the video and choose it as a file."),
+    (("social login unreadable",),
+     "CreatorClips couldn’t read your browser’s login.",
+     "Allow the Keychain prompt when it appears (Chrome, Edge, Brave), or give CreatorClips Full Disk Access in System Settings → Privacy & Security (Safari). Or pick another browser in Settings → API keys."),
+    (("stories aren't supported",),
+     "Instagram stories aren’t supported.",
+     "Use the link of a Reel or a post, or save the story and choose it as a file."),
+    (("social link not supported",),
+     "This kind of link isn’t supported.",
+     "Open the post and copy its link from the browser's address bar."),
+    (("social post has no video",),
+     "That post has no video.",
+     "It’s a photo or a carousel. Paste the link of a Reel or a video post."),
+    (("pexels rejected the api key",),
+     "Pexels rejected your API key, so B-roll could not be added.",
+     "Check the Pexels key in Settings → API keys, or turn B-roll off in Format, then retry."),
     (("selected planner requires a video with speech",),
      "The selected planning model cannot analyze a video without speech.",
      "Choose a planning model that supports silent-video planning in Advanced mode, or use Quality or Economy."),
@@ -79,10 +100,10 @@ FAILURES = (
      "OpenRouter returned an unusable transcription response.",
      "Retry the run. If it persists, report this run so the provider response can be investigated."),
     (("audio extraction failed", "audio duration could not be determined", "transcription audio preparation failed"),
-     "BridgeClip could not prepare this video's audio for transcription.",
+     "CreatorClips could not prepare this video's audio for transcription.",
      "Run Settings → System check. If the tools are ready, report this run with its failure code."),
     (("transcription audio chunk exceeded the size limit",),
-     "The transcription audio exceeded BridgeClip's size limit.",
+     "The transcription audio exceeded CreatorClips' size limit.",
      "Set a shorter start and end time, or report this run so the chunk size can be adjusted."),
     (("transcription failed",),
      "Audio transcription failed.",
@@ -92,12 +113,12 @@ FAILURES = (
      "Run Settings → System check. If all tools are ready, report this run so the render can be diagnosed."),
     (("http error 403", "sign in to confirm", "blocking this request"),
      "The video service refused the download.",
-     "Update BridgeClip and retry. If it keeps happening, download the video yourself and clip it as a local file."),
+     "Update CreatorClips and retry. If it keeps happening, download the video yourself and clip it as a local file."),
     (("video unavailable", "private video", "members-only", "has been removed", "not available in your country"),
      "This video is private, removed or unavailable in your region.",
      "Check the link opens in a signed-out browser window, or clip a local file instead."),
     (("exceeds maximum allowed duration",),
-     "This video is longer than BridgeClip can process.",
+     "This video is longer than CreatorClips can process.",
      "Choose a shorter source video, or trim a downloaded file before adding it."),
     (("insufficient credits for jev review",),
      "OpenRouter ran out of credits during Jev review; no clips were exported.",
@@ -111,6 +132,9 @@ FAILURES = (
     (("no clips passed the coherence review", "clip omitted:"),
      "No clips passed the coherence review.",
      "Inspect transcript & edits in Jobs to see which context, ending, title or cut checks failed. No clip was forced."),
+    (("no new moments were left to clip",),
+     "Every strong moment in this video has already been clipped.",
+     "Try another clip length or describe different moments in What to clip. You can also lower the quality bar."),
     (("no moments matched the clip request",),
      "No moments matched what you asked to clip.",
      "Try describing it more broadly, or leave What to clip blank to get the best moments. Inspect transcript & edits in Jobs shows the planner's explanation."),
@@ -124,7 +148,7 @@ FAILURES = (
      "This video is live or not yet available.",
      "Wait until the stream has ended and the saved video is ready, then retry."),
     (("no clip-worthy moments",),
-     "BridgeClip couldn't find any clips in this video.",
+     "CreatorClips couldn't find any clips in this video.",
      "No clear spoken or visual moment met the selected clip length. If you set a start and end time, widen it or pick a shorter clip length."),
     (("out of credits", "quota exceeded"),
      "Your OpenRouter key is out of credits.",
@@ -186,11 +210,11 @@ def progress_callback(progress) -> None:
 async def run(config: dict) -> bool:
     """Run the clipping pipeline with the given config."""
     config = validate_config(config)
-    # Configure before BridgeClip imports: settings are cached by the engine.
+    # Configure before CreatorClips imports: settings are cached by the engine.
     os.environ["LOCAL_MODE"] = "true"
     if config.get("output_dir"):
         os.environ["LOCAL_OUTPUT_DIR"] = config["output_dir"]
-    # Downloads use the user's own connection. A developer's BridgeClip .env can
+    # Downloads use the user's own connection. A developer's CreatorClips .env can
     # hold the server's proxy pool, and environment variables beat .env values.
     os.environ["YTDLP_PROXIES"] = ""
     os.environ["YTDLP_PROXY"] = ""
@@ -224,7 +248,7 @@ async def run(config: dict) -> bool:
 
     from clip_engine.bridge_contract import BRIDGE_CONTRACT_VERSION
     if config["contract_version"] != BRIDGE_CONTRACT_VERSION:
-        emit({"type": "error", "message": "The bundled clipping engine is incompatible with this BridgeClip version."})
+        emit({"type": "error", "message": "The bundled clipping engine is incompatible with this CreatorClips version."})
         return False
 
     from clip_engine.config import get_settings, get_caption_preset
@@ -270,18 +294,54 @@ async def run(config: dict) -> bool:
         duration_ranges=duration_ranges,
         aspect_ratio=config.get("aspect_ratio", "9:16"),
         layout_style=config.get("layout_style") or "auto",
+        screen_focus=config.get("screen_focus") or "smart",
+        background_video_path=config.get("background_video_path"),
+        broll_enabled=config.get("broll_enabled", False),
+        broll_keep_hook=config.get("broll_keep_hook", True),
+        broll_source=config.get("broll_source"),
+        broll_catalog_path=config.get("broll_catalog_path"),
+        broll_ai=config.get("broll_ai"),
+        broll_ai_dir=config.get("broll_ai_dir"),
+        hook_preview=config.get("hook_preview", False),
+        motion_graphics=config.get("motion_graphics", False) and config.get("workflow", "automatic") != "review",
+        stage_layouts=config.get("stage_layouts", False) and config.get("workflow", "automatic") != "review",
+        purpose=config.get("purpose") or None,
+        reference_image_path=config.get("reference_image_path") or None,
+        audio=config.get("audio"),
+        quality_bar=config.get("quality_bar", "b"),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
         video_speed=config.get("video_speed", 1.0),
         include_captions=config.get("include_captions", True),
         caption_style=caption_style,
         include_title=config.get("include_title", True),
+        title_style=config.get("title_style", "card"),
+        headline_look=config.get("headline_look"),
         start_time_seconds=config.get("start_time_seconds"),
         end_time_seconds=config.get("end_time_seconds"),
         banner_platform=config.get("banner_platform"),
         banner_channel_url=config.get("banner_channel_url"),
         keyterms=config.get("keyterms") or None,
         clip_request=config.get("clip_request"),
+        caption_language=config.get("caption_language"),
+        reuse_transcript_path=config.get("reuse_transcript_path"),
+        reuse_source_path=config.get("reuse_source_path"),
+        reuse_source_meta=config.get("reuse_source_meta"),
+        reuse_expected_duration_seconds=config.get("reuse_expected_duration_seconds"),
+        reuse_transcript_partial=config.get("reuse_transcript_partial", False),
+        exclude_ranges_ms=config.get("exclude_ranges_ms"),
+        kept_headlines=config.get("kept_headlines"),
+        brand_identity=config.get("brand_identity") or "",
+        brand_name=config.get("brand_name") or "",
+        headline_voice=config.get("headline_voice") or "clipper",
+        cta_keyword=config.get("cta_keyword") or "",
+        cta_offer=config.get("cta_offer") or "",
+        brand_mark=config.get("brand_mark"),
+        look_extras=config.get("look_extras"),
+        look_extras_color=config.get("look_extras_color"),
+        graphics_register=config.get("register") if config.get("register") in ("teaching", "story", "minimal") else None,
+        # My logos (already copied into the run's graphics images by the app): popped in where they are named.
+        graphics_logos=config.get("logos") if isinstance(config.get("logos"), list) else None,
     )
 
     emit({
@@ -323,6 +383,10 @@ async def run(config: dict) -> bool:
     return False
 
 
+# A config carries keyterms and, optionally, the member's brand identity text (up to 40,000 characters).
+MAX_CONFIG_CHARS = 256 * 1024
+
+
 def validate_config(config: object) -> dict:
     """Reject malformed bridge requests before loading the engine or writing files."""
     if not isinstance(config, dict):
@@ -337,7 +401,10 @@ def validate_config(config: object) -> dict:
     source = config.get("video_url")
     if not isinstance(source, str) or not source.strip() or len(source) > 8192:
         raise ValueError("A video source is required")
-    if not os.path.isfile(source):
+    kept = config.get("reuse_source_path")
+    # More clips: the earlier run's local file may be gone; its kept copy is used instead.
+    kept_copy = isinstance(kept, str) and os.path.isabs(kept) and os.path.isfile(kept) and os.path.isabs(source)
+    if not os.path.isfile(source) and not kept_copy:
         try:
             url = urlsplit(source)
             if url.scheme not in ("https", "http") or not url.hostname or url.username or url.password:
@@ -347,9 +414,24 @@ def validate_config(config: object) -> dict:
     output = config.get("output_dir")
     if output is not None and (not isinstance(output, str) or not os.path.isabs(output) or "\0" in output):
         raise ValueError("Output directory must be an absolute path")
-    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture"):
+    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook", "hook_preview", "motion_graphics", "stage_layouts"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
+    purpose = config.get("purpose")
+    if purpose is not None and (not isinstance(purpose, str) or len(purpose) > 200 or "\0" in purpose):
+        raise ValueError("Invalid purpose")
+    from clip_engine.services.purpose_context import validate_reference_path
+    validate_reference_path(config.get("reference_image_path"))
+    if config.get('title_style', 'card') not in ('card', 'headline'):
+        raise ValueError('Invalid title style')
+    if config.get("audio") is not None:
+        # Voice cleanup and music: main sends a bundled track's id or a file it copied into the app's music folder.
+        from clip_engine.services.audio_finish import parse_audio
+        parse_audio(config["audio"])
+    from clip_engine.services.rendering_service import validate_headline_look
+    validate_headline_look(config.get('headline_look'))
+    if config.get('quality_bar', 'b') not in ('a', 'b', 'c', 'all', 'off'):
+        raise ValueError('Invalid quality bar')
     if config.get('workflow', 'automatic') not in ('automatic', 'review'):
         raise ValueError('Invalid workflow')
     count = config.get("max_clips")
@@ -359,6 +441,19 @@ def validate_config(config: object) -> dict:
         raise ValueError("Invalid aspect ratio")
     if config.get("layout_style", "auto") not in ("auto", "fill", "fit"):
         raise ValueError("Invalid layout style")
+    if config.get("screen_focus", "smart") not in ("smart", "split", "presenter"):
+        raise ValueError("Invalid screen share framing")
+    background = config.get("background_video_path")
+    if background is not None and (
+        not isinstance(background, str) or "\0" in background or not os.path.isabs(background)
+        or os.path.splitext(background)[1].lower() not in BACKGROUND_VIDEO_EXTENSIONS or not os.path.isfile(background)
+    ):
+        raise ValueError("Background video must be an existing .mp4, .mov, .m4v or .webm file")
+    if background is not None and config.get("broll_enabled"):
+        raise ValueError("Choose either a background video or B-roll, not both")
+    # B-roll from the member's library or AI: the catalog and AI settings main wrote for this run.
+    from clip_engine.services.broll_library import validate_broll_config
+    validate_broll_config(config)
     if config.get("pacing", "tight") not in ("tight", "natural"):
         raise ValueError("Invalid pacing")
     speed = config.get("video_speed", 1.0)
@@ -392,6 +487,63 @@ def validate_config(config: object) -> dict:
         not isinstance(clip_request, str) or not clip_request.strip() or len(clip_request) > 1000 or "\0" in clip_request
     ):
         raise ValueError("Invalid clip request")
+    if config.get("caption_language") is not None and config["caption_language"] not in CAPTION_LANGUAGE_CODES:
+        raise ValueError("Invalid caption language")
+    transcript = config.get("reuse_transcript_path")
+    if transcript is not None and (
+        not isinstance(transcript, str) or "\0" in transcript or not os.path.isabs(transcript)
+        or os.path.basename(transcript) != "transcript.json"
+    ):
+        raise ValueError("Invalid saved transcript")
+    kept = config.get("reuse_source_path")
+    if kept is not None and (
+        not isinstance(kept, str) or "\0" in kept or not os.path.isabs(kept)
+        or os.path.splitext(kept)[1].lower() not in (".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv")
+    ):
+        raise ValueError("Invalid kept source")
+    meta = config.get("reuse_source_meta")
+    if meta is not None and (
+        not isinstance(meta, dict) or any(key not in ("title", "channel", "description") for key in meta)
+        or any(value is not None and (not isinstance(value, str) or len(value) > 20000) for value in meta.values())
+    ):
+        raise ValueError("Invalid kept source details")
+    if "reuse_transcript_partial" in config and type(config["reuse_transcript_partial"]) is not bool:
+        raise ValueError("Invalid saved transcript range")
+    expected = config.get("reuse_expected_duration_seconds")
+    if expected is not None and (type(expected) not in (int, float) or not 0 < expected <= 86400):
+        raise ValueError("Invalid source duration")
+    excluded = config.get("exclude_ranges_ms")
+    if excluded is not None and (
+        not isinstance(excluded, list) or len(excluded) > 200 or any(
+            not isinstance(item, list) or len(item) != 2 or any(type(v) is not int for v in item) or not 0 <= item[0] < item[1]
+            for item in excluded)
+    ):
+        raise ValueError("Invalid excluded moments")
+    kept = config.get("kept_headlines")
+    if kept is not None and (
+        not isinstance(kept, list) or len(kept) > 60 or any(
+            not isinstance(item, dict) or set(item) - {"start_ms", "end_ms", "headline"} or type(item.get("start_ms")) is not int
+            or type(item.get("end_ms")) is not int or not 0 <= item["start_ms"] < item["end_ms"]
+            or not isinstance(item.get("headline"), str) or not 0 < len(item["headline"]) <= 120 or "\0" in item["headline"]
+            for item in kept)
+    ):
+        raise ValueError("Invalid kept headlines")
+    # The member's brand (advisory text for the planner), comment keyword and on-video handle/logo.
+    for field, limit in (("brand_identity", 60000), ("brand_name", 120), ("cta_offer", 200)):
+        value = config.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
+            raise ValueError(f"Invalid {field}")
+    if config.get("headline_voice") is not None and config["headline_voice"] not in ("creator", "clipper"):
+        raise ValueError("Invalid headline voice")
+    keyword = config.get("cta_keyword")
+    if keyword is not None and (not isinstance(keyword, str) or (keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", keyword))):
+        raise ValueError("Invalid call-to-action keyword")
+    from clip_engine.services.brand_mark import validate_brand_mark
+    config["brand_mark"] = validate_brand_mark(config.get("brand_mark"))
+    # Look extras: known effects only, and their color.
+    from clip_engine.services.look_extras import parse_color, parse_look_extras
+    config["look_extras"] = list(parse_look_extras(config.get("look_extras")))
+    config["look_extras_color"] = parse_color(config.get("look_extras_color")) if config["look_extras"] else None
     ranges = config.get("duration_ranges")
     if ranges is not None and (
         not isinstance(ranges, list) or len(ranges) > len(DURATION_RANGE_IDS) or
@@ -408,8 +560,8 @@ def main() -> int:
     try:
         # Legacy CLI argument remains accepted; Electron uses stdin to keep
         # private source URLs out of process listings. Bound either transport.
-        raw = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read(65537)
-        if len(raw) > 65536:
+        raw = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read(MAX_CONFIG_CHARS + 1)
+        if len(raw) > MAX_CONFIG_CHARS:
             raise ValueError("Config too large")
         config = validate_config(json.loads(raw))
     except (ValueError, TypeError):

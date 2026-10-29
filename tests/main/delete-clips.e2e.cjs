@@ -8,7 +8,7 @@ const { buildApp, launchApp, ROOT } = require('../zernio/support/electron-app.cj
 
 test('Library deletes only selected clips through its icon action and refreshes counts and empty state', { timeout: 90000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-delete-clips-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip'), run = path.join(library, 'test-run')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips'), run = path.join(library, 'test-run')
   fs.mkdirSync(run, { recursive: true })
   const ffmpeg = fs.existsSync(path.join(ROOT, 'engine-bin/ffmpeg')) ? path.join(ROOT, 'engine-bin/ffmpeg') : 'ffmpeg'
   execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10', '-t', '1', '-c:v', 'mpeg4', path.join(run, 'clip_00.mp4')])
@@ -33,7 +33,7 @@ test('Library deletes only selected clips through its icon action and refreshes 
   // Manual posting works without a connected account and survives reopening the run.
   const clipActions = page.getByRole('button', { name: 'Actions for “First clip”', exact: true })
   await clipActions.click()
-  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Post or schedule', 'Add to automation', 'Mark as posted', process.platform === 'darwin' ? 'Show in Finder' : 'Show in folder', 'Delete clip'])
+  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Open in editor', 'Post or schedule', 'Make my cover', 'Add to automation', 'Edit headline', 'Add call to action', 'Remix this clip', 'Mark as posted', process.platform === 'darwin' ? 'Show in Finder' : 'Show in folder', 'Delete clip'])
   await page.getByRole('menuitem', { name: 'Mark as posted', exact: true }).click()
   await page.getByRole('region', { name: 'Posted 1', exact: true }).getByText('First clip', { exact: true }).waitFor()
   assert.ok(fs.existsSync(path.join(run, '.bridgeclip-posted-0')))

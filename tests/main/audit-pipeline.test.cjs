@@ -10,11 +10,13 @@ const ts = require('typescript')
 const { PassThrough } = require('node:stream')
 const { EventEmitter } = require('node:events')
 
+// Create's headline memory (hook-memory.ts): nothing saved.
+const HOOK_MEMORY_STUB = { createSourceKey: () => null, savedCreateHeadlines: () => [], rememberCreateRun() {}, rememberCreateHeadline: () => false }
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? require(id), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './hook-memory' ? HOOK_MEMORY_STUB : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, AbortController, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -41,7 +43,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {} }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, music = { audioForEngine: () => undefined }, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null }, brollLibrary = null }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -53,10 +55,20 @@ function startRunner({ child, env = process.env, onSpawn = () => {} }) {
     './logger': { logger: { info() {}, error() {}, warn() {} } },
     '../shared/job-output': jobOutput,
     '../shared/run-diagnostics': loadShared('run-diagnostics.ts'),
+    '../shared/headline-look': loadShared('headline-look.ts'),
+    '../shared/look-extras-engine': loadShared('look-extras-engine.ts'),
     '../shared/job-progress': loadShared('job-progress.ts'),
     './run-history': runHistory,
     '../shared/job-contract': jobContract,
-    './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' }
+    './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
+    './backgrounds': { resolveBackground: (name) => '/library/' + name },
+    './ctas': ctas,
+    './logo-library': { logosForEngine: () => [] },
+    './brands': brands,
+    './more-clips': moreClips,
+    './auto-graphics': graphics,
+    './music': music,
+    './broll-library': brollLibrary ?? { brollRunFields: () => ({ fields: { broll_source: 'stock' } }) }
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -87,6 +99,7 @@ test('the worker gets a minimal environment: no proxies, interpreter hooks or in
   assert.ok(!JSON.stringify(spawned.args).includes(SECRET))
   assert.ok(!workerInput.includes(SECRET), 'stdin config carries no key')
   assert.equal(Object.hasOwn(JSON.parse(workerInput), 'clip_request'), false, 'no clip request, no clip_request field')
+  assert.equal(JSON.parse(workerInput).screen_focus, 'smart', 'older requests get the smart mix')
   assert.equal(spawned.options.shell, undefined)
   assert.equal(spawned.options.detached, true)
   assert.equal(spawned.options.cwd, runner.getEnginePath())
@@ -159,4 +172,231 @@ test('a result is accepted once, only for this job, and only with a clean exit',
   assert.equal(sent.filter((event) => event.channel === 'job:error').length, 1, 'a second result is an error')
   child.emit('close', 0, null)
   assert.equal(sent.some((event) => event.channel === 'job:complete'), false)
+})
+
+test('a run with a call to action adds it to every clip before the run is shown as done', async () => {
+  const child = fakeChild()
+  const applied = []
+  let exited = false
+  const run = path.join(WORK_HOME, 'cta-job')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  const { runner, window, sent } = startRunner({ child, ctas: {
+    readCta: (id) => ({ id }),
+    applyRunCta: async (dir, id) => {
+      applied.push({ dir, id, exitedYet: exited })
+      fs.writeFileSync(path.join(dir, 'job_output.json'), JSON.stringify({ job_id: 'cta-job', clips: [{ ...clip, duration_ms: 7000, cta: { id, name: 'Comment PLAYBOOK' } }] }))
+      return { failed: [] }
+    }
+  } })
+  runner.startClipJob('cta-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window, () => { exited = true })
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'cta-job', output: { job_id: 'cta-job', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  for (let i = 0; i < 20 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(applied, [{ dir: run, id: 'a1b2c3d4e5f60718', exitedYet: false }], 'the slot is held until the CTA is on')
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && /^Adding your call to action/.test(event.data.step)))
+  const done = sent.find((event) => event.channel === 'job:complete')
+  assert.equal(done.data.output.clips[0].duration_ms, 7000)
+  assert.equal(done.data.output.clips[0].cta.name, 'Comment PLAYBOOK')
+  assert.equal(exited, true)
+})
+
+test('a removed call to action stops the run before it starts', () => {
+  const child = fakeChild()
+  let spawned = false
+  const { runner, window, sent } = startRunner({ child, onSpawn: () => { spawned = true }, ctas: {
+    applyRunCta: async () => ({ failed: [] }),
+    readCta: () => { throw new Error('That call to action is no longer in your library. Choose another.') }
+  } })
+  runner.startClipJob('cta-gone', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window)
+  assert.equal(spawned, false)
+  assert.match(sent.find((event) => event.channel === 'job:error').data.message, /no longer in your library/)
+})
+
+test('cancelling while the call to action is added stops only that step: the made clips finish as done, with a note', async () => {
+  const child = fakeChild()
+  let aborted = false
+  const run = path.join(WORK_HOME, 'cta-cancel')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  let release
+  const { runner, window, sent } = startRunner({ child, ctas: {
+    readCta: (id) => ({ id }),
+    applyRunCta: (dir, id, indices, { signal }) => new Promise((resolve) => {
+      release = resolve
+      signal.addEventListener('abort', () => { aborted = true; resolve({ failed: [], cancelled: true }) })
+    })
+  } })
+  runner.startClipJob('cta-cancel', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window)
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'cta-cancel', output: { job_id: 'cta-cancel', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  await tick()
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && /Adding your call to action \(1 of 1\)/.test(event.data.step)))
+  assert.equal(runner.cancelJob('cta-cancel'), true)
+  for (let i = 0; i < 20 && !aborted; i++) await new Promise((r) => setTimeout(r, 10))
+  await tick()
+  assert.equal(aborted, true, 'the FFmpeg step was told to stop')
+  for (let i = 0; i < 50 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
+  const complete = sent.find((event) => event.channel === 'job:complete')
+  assert.ok(complete, 'the clips are made, so the run completes')
+  assert.match(complete.data.step, /You stopped the call to action partway/)
+  assert.equal(sent.some((event) => event.channel === 'job:error'), false)
+  void release
+})
+
+test('a deleted brand fails a Create run but is left out of a More clips run; its files are checked again at start', async () => {
+  const video = path.join(WORK_HOME, 'video.mp4')
+  const plan = { runId: 'r', transcriptPath: path.join(WORK_HOME, 'run', 'transcript.json'), source: 'original', sourcePath: null, sourceMeta: null, expectedDurationSeconds: 300, transcriptPartial: true, excludeRangesMs: [] }
+  let spawned = 0
+  const create = startRunner({ child: fakeChild(), onSpawn: () => spawned++ })
+  create.runner.startClipJob('brand-job', { videoUrl: video, brandIdentityId: 'a1b2c3d4e5f60718' }, create.window)
+  await tick()
+  assert.equal(spawned, 0)
+  assert.match(create.sent.find((event) => event.channel === 'job:error').data.message, /was deleted/)
+
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const more = startRunner({ child, onSpawn: () => spawned++ })
+  more.runner.startClipJob('more-job', { videoUrl: video, brandIdentityId: 'a1b2c3d4e5f60718', showHandle: true, reuseFrom: 'r', reuse: plan }, more.window)
+  await tick()
+  assert.equal(spawned, 1)
+  const config = JSON.parse(input)
+  assert.equal(config.brand_identity, undefined)
+  assert.equal(config.brand_mark, undefined)
+  assert.equal(config.reuse_transcript_path, plan.transcriptPath)
+  assert.equal(config.reuse_transcript_partial, true)
+  child.emit('close', 1, null)
+
+  const gone = startRunner({ child: fakeChild(), onSpawn: () => spawned++, moreClips: { refreshReusePlan: () => ({ error: 'The video for this run is no longer on this computer.' }) } })
+  gone.runner.startClipJob('gone-job', { videoUrl: video, reuseFrom: 'r', reuse: plan }, gone.window)
+  await tick()
+  assert.equal(spawned, 1)
+  assert.match(gone.sent.find((event) => event.channel === 'job:error').data.message, /no longer on this computer/)
+})
+
+test('the screen share choice reaches the engine in snake_case', async () => {
+  for (const screenFocus of ['split', 'presenter']) {
+    const child = fakeChild()
+    let input = ''
+    child.stdin.on('data', (chunk) => { input += chunk.toString() })
+    const { runner, window } = startRunner({ child })
+    runner.startClipJob(`screen-${screenFocus}`, { videoUrl: path.join(WORK_HOME, 'video.mp4'), screenFocus }, window)
+    await tick()
+    assert.equal(JSON.parse(input).screen_focus, screenFocus)
+    child.emit('close', 1, null)
+  }
+})
+
+test('B-roll from: the source, the library catalog and AI settings reach the engine; a source that can\'t run stops the run first', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const asked = []
+  const brollLibrary = { brollRunFields: (source, keys, folder) => {
+    asked.push({ source, keys, folder })
+    return source === 'library' ? { error: 'B-roll: Add clips to your B-roll library first.' } : { fields: { broll_source: source, broll_catalog_path: path.join(folder, 'broll-catalog.json'), broll_ai: { kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', max_shots: 2, seconds: 5, per_second_usd: 0.02, image_usd: 0.08 }, broll_ai_dir: '/user/broll-library/incoming' } }
+  } }
+  let spawned = 0
+  const { runner, window, sent } = startRunner({ child, brollLibrary, onSpawn: () => { spawned++ } })
+  runner.startClipJob('broll-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), broll: 'after-hook', brollSource: 'library_ai' }, window)
+  await tick()
+  const config = JSON.parse(input)
+  assert.deepEqual([config.broll_enabled, config.broll_keep_hook, config.broll_source], [true, true, 'library_ai'])
+  assert.equal(config.broll_catalog_path, path.join(asked[0].folder, 'broll-catalog.json'))
+  assert.equal(path.basename(asked[0].folder), 'broll-job', 'the catalog goes in the run’s private work folder')
+  assert.deepEqual(JSON.parse(JSON.stringify(asked[0].keys)), { pexels: false, openrouter: true })
+  assert.equal(config.broll_ai.max_shots, 2)
+  child.emit('close', 1, null)
+  // An empty library: the run stops with the plain reason, before the engine starts.
+  runner.startClipJob('broll-empty', { videoUrl: path.join(WORK_HOME, 'video.mp4'), broll: 'full', brollSource: 'library' }, window)
+  await tick()
+  assert.equal(spawned, 1)
+  assert.match(sent.find((event) => event.channel === 'job:error' && event.data.jobId === 'broll-empty').data.message, /library first/)
+})
+
+test('voice cleanup and music reach the engine as one "audio" option; a music file that is gone stops the run before it starts', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const seen = []
+  const music = { audioForEngine: (config) => { seen.push(config); return { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 } } }
+  const { runner, window } = startRunner({ child, music })
+  runner.startClipJob('audio-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), voiceCleanup: true, music: true, musicTrack: 'lofi-beat' }, window)
+  await tick()
+  assert.deepEqual(JSON.parse(input).audio, { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 })
+  assert.equal(seen[0].musicTrack, 'lofi-beat')
+  child.emit('close', 1, null)
+  // None chosen: no "audio" option at all.
+  const plain = fakeChild()
+  let plainInput = ''
+  plain.stdin.on('data', (chunk) => { plainInput += chunk.toString() })
+  const second = startRunner({ child: plain })
+  second.runner.startClipJob('plain-job', { videoUrl: path.join(WORK_HOME, 'video.mp4') }, second.window)
+  await tick()
+  assert.equal('audio' in JSON.parse(plainInput), false)
+  plain.emit('close', 1, null)
+  // Their own track was deleted: the run fails with the reason, and nothing is spawned.
+  let spawned = false
+  const gone = startRunner({ child: fakeChild(), onSpawn: () => { spawned = true }, music: { audioForEngine: () => { throw new Error('The music "song" is no longer in your music. Choose another track.') } } })
+  gone.runner.startClipJob('gone-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), music: true, musicTrack: 'my:song.mp3' }, gone.window)
+  await tick()
+  assert.equal(spawned, false)
+  assert.match(JSON.stringify(gone.sent), /no longer in your music/)
+})
+
+test('Motion graphics: Auto reaches the engine, and its graphics go on before the call to action; a failure is a note, not a failed run', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const order = []
+  const run = path.join(WORK_HOME, 'graphics-job')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  let worker = null
+  const { runner, window, sent } = startRunner({
+    child,
+    ctas: { readCta: (id) => ({ id }), applyRunCta: async () => { order.push('cta'); return { failed: [] } } },
+    graphics: {
+      applyRunGraphics: async (dir, setup, { onProgress }) => {
+        order.push('graphics'); worker = { dir, ...setup }
+        onProgress('draw', 0, 2)
+        return { clips: 1, applied: 0, failed: [0], cancelled: false }
+      },
+      graphicsNotice: (result) => result.failed.length ? 'Done. Some motion graphics couldn’t be drawn on 1 clip, so it was made without them. Add graphics to any clip in the editor.' : null
+    }
+  })
+  runner.startClipJob('graphics-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718', motionGraphics: true }, window)
+  await tick()
+  assert.equal(JSON.parse(input).motion_graphics, true)
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'graphics-job', output: { job_id: 'graphics-job', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  for (let i = 0; i < 20 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(order, ['graphics', 'cta'])
+  assert.equal(worker.dir, run)
+  assert.match(worker.script, /graphics_runner\.py$/)
+  assert.equal(worker.library, WORK_HOME)
+  assert.equal(worker.env.OPENROUTER_API_KEY, undefined, 'the overlay worker gets no keys')
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && event.data.step === 'Drawing motion graphics (1 of 2)'))
+  const done = sent.find((event) => event.channel === 'job:complete')
+  assert.equal(done.data.status, 'completed')
+  assert.match(done.data.step, /^Done\. Some motion graphics couldn’t be drawn on 1 clip/)
+
+  // Off (or a Review & edit run): nothing is asked for and no step runs.
+  const plain = fakeChild()
+  let plainInput = ''
+  plain.stdin.on('data', (chunk) => { plainInput += chunk.toString() })
+  let ran = false
+  const second = startRunner({ child: plain, graphics: { applyRunGraphics: async () => { ran = true; return { clips: 0, applied: 0, failed: [], cancelled: false } }, graphicsNotice: () => null } })
+  second.runner.startClipJob('graphics-off', { videoUrl: path.join(WORK_HOME, 'video.mp4'), workflow: 'review', motionGraphics: true }, second.window)
+  await tick()
+  assert.equal(JSON.parse(plainInput).motion_graphics, undefined)
+  plain.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'graphics-off', output: { job_id: 'graphics-off', clips: [] } }) + '\n')
+  await tick()
+  plain.emit('close', 0, null)
+  await tick()
+  assert.equal(ran, false)
 })

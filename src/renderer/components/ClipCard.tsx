@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderOpen, ImageOff, ListPlus, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2 } from 'lucide-react'
+import { Check, FolderOpen, Heading, ImageIcon, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard, SquarePen } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
 import type { ClipArtifact } from '../store/use-job-store'
+import type { ClipScreenFocus } from '../../shared/job-output'
 import { Checkbox } from './ui/Checkbox'
 import { Badge } from './ui/Badge'
 import { Skeleton } from './ui/Skeleton'
 import { ActionMenu } from './ui/ActionMenu'
 import { LIBRARY_POSTING_LABELS, type LibraryClipPostingStatus } from '../../shared/library-posting'
+import { statsLine } from '../../shared/zernio-posts'
+import { GradeChip, GradeDetailsButton } from './FrameworkGrade'
 
 // How the engine framed a vertical clip (its dominant layout).
 const LAYOUT_LABELS: Record<string, string> = {
@@ -20,9 +23,20 @@ const LAYOUT_LABELS: Record<string, string> = {
   center_crop: 'Center crop'
 }
 
+/** How a screen share clip was framed, for the card's details line (label, and why as a tooltip). */
+export function screenFocusLabel(focus: ClipScreenFocus | null | undefined): { label: string; title: string } | null {
+  if (!focus) return null
+  if (!focus.person_fits) return { label: 'Split screen', title: 'The webcam was too small to fill the frame, so the screen and webcam were shown together.' }
+  const label = focus.decision === 'presenter' ? 'Presenter only' : focus.decision === 'screen' ? 'Split screen' : 'Presenter + screen'
+  const why = focus.source === 'mode' ? 'You chose this style for screen share clips.' : focus.reason ? `Why: ${focus.reason}` : ''
+  return { label, title: `How this screen share clip was framed.${why ? ` ${why}` : ''}` }
+}
+
 interface ClipCardProps {
   postingStatus?: LibraryClipPostingStatus
   clip: ClipArtifact
+  /** Screen share clips: how the clip was framed and why (from the run's clip_layouts). */
+  screenFocus?: ClipScreenFocus | null
   vertical: boolean
   topPick?: boolean
   selected: boolean
@@ -35,11 +49,24 @@ interface ClipCardProps {
   onAddToAutomation?: () => void
   onSetPosted?: (posted: boolean) => Promise<void>
   onDelete?: () => void
+  /** Add, switch or remove the call to action at the end. */
+  onChangeCta?: () => void
+  /** Remix videos with saved parts: re-make with new hook text, captions or box size. */
+  onEditVideo?: () => void
+  /** Open this clip in the video editor. */
+  onOpenEditor?: () => void
+  /** Open this clip in the editor on its headline (Hook & CTA). */
+  onEditHeadline?: () => void
+  /** Open Remix with this clip's video as the source. */
+  onRemix?: () => void
+  /** Make my cover: covers from the speaker's best frames, saved next to the video. */
+  onMakeCover?: () => void
   actionsDisabled?: boolean
 }
 
 export function ClipCard({
   clip,
+  screenFocus,
   postingStatus,
   vertical,
   topPick,
@@ -51,6 +78,12 @@ export function ClipCard({
   onAddToAutomation,
   onSetPosted,
   onDelete,
+  onChangeCta,
+  onEditVideo,
+  onOpenEditor,
+  onEditHeadline,
+  onRemix,
+  onMakeCover,
   actionsDisabled
 }: ClipCardProps): React.JSX.Element {
   const filePath = clipFilePath(clip.s3_url)
@@ -67,6 +100,7 @@ export function ClipCard({
   const layout = clipVertical && Object.prototype.hasOwnProperty.call(LAYOUT_LABELS, clip.layout_type)
     ? LAYOUT_LABELS[clip.layout_type]
     : undefined
+  const focusLabel = clipVertical ? screenFocusLabel(screenFocus) : null
 
   useEffect(() => {
     let cancelled = false
@@ -74,14 +108,16 @@ export function ClipCard({
     setAspect(null)
     setPreviewFailed(false)
     setActionError(null)
-    const seek = clip.duration_ms > 0 ? (clip.duration_ms / 1000) * 0.5 : undefined
-    loadThumbnail(filePath, seek).then((path) => {
+    // The middle of the clip itself, not of the call to action added after it.
+    const own = clip.duration_ms / 1000 - (clip.cta?.seconds ?? 0)
+    const seek = clip.duration_ms > 0 ? (own > 0.5 ? own : clip.duration_ms / 1000) * 0.5 : undefined
+    loadThumbnail(filePath, seek, clip.edited_at ?? '').then((path) => {
       if (!cancelled) setThumb(path)
     })
     return () => {
       cancelled = true
     }
-  }, [filePath, clip.duration_ms])
+  }, [filePath, clip.duration_ms, clip.cta?.seconds, clip.edited_at])
 
   const openClip = async (): Promise<void> => {
     setActionError(null)
@@ -191,13 +227,16 @@ export function ClipCard({
               Top pick
             </span>
           )}
-          <span
-            className="glass-chip pointer-events-auto inline-flex h-5 items-center gap-1 rounded-full px-1.5 font-mono text-2xs font-medium tabular text-white"
-            title="Virality score"
-          >
-            <TrendingUp className="h-3 w-3 text-brand-gold" />
-            {score}
-          </span>
+          {/* Clips made by hand in the editor have no score: show no chip rather than "0.0". */}
+          {clip.framework ? <GradeChip grade={clip.framework} className="pointer-events-auto" /> : clip.virality_score > 0 && (
+            <span
+              className="glass-chip pointer-events-auto inline-flex h-5 items-center gap-1 rounded-full px-1.5 font-mono text-2xs font-medium tabular text-white"
+              title="Virality score"
+            >
+              <TrendingUp className="h-3 w-3 text-brand-gold" />
+              {score}
+            </span>
+          )}
         </div>
         <span className="glass-chip pointer-events-none absolute bottom-2 left-2 z-10 rounded-full px-1.5 py-px font-mono text-2xs tabular text-white/95">
           {formatTimecode(clip.duration_ms)}
@@ -209,8 +248,14 @@ export function ClipCard({
           {postingBadge}
           {!selecting && <div className="ml-auto">
             <ActionMenu label={`Actions for “${title}”`} disabled={markingPosted || actionsDisabled} actions={[
+              ...(onOpenEditor ? [{ label: 'Open in editor', icon: <SquarePen className="h-3.5 w-3.5" />, onSelect: onOpenEditor }] : []),
               ...(onPost ? [{ label: 'Post or schedule', icon: <Send className="h-3.5 w-3.5" />, onSelect: onPost }] : []),
+              ...(onMakeCover ? [{ label: 'Make my cover', icon: <ImageIcon className="h-3.5 w-3.5" />, onSelect: onMakeCover }] : []),
               ...(onAddToAutomation ? [{ label: 'Add to automation', icon: <ListPlus className="h-3.5 w-3.5" />, onSelect: onAddToAutomation }] : []),
+              ...(onEditVideo ? [{ label: 'Edit hook text & captions', icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEditVideo }] : []),
+              ...(onEditHeadline ? [{ label: 'Edit headline', icon: <Heading className="h-3.5 w-3.5" />, onSelect: onEditHeadline }] : []),
+              ...(onChangeCta ? [{ label: clip.cta ? 'Change call to action' : 'Add call to action', icon: <Megaphone className="h-3.5 w-3.5" />, onSelect: onChangeCta }] : []),
+              ...(onRemix ? [{ label: 'Remix this clip', icon: <Clapperboard className="h-3.5 w-3.5" />, onSelect: onRemix }] : []),
               ...(onSetPosted && postingStatus && (postingStatus.state !== 'posted' || postingStatus.manuallyPosted) ? [postingStatus.manuallyPosted
                 ? { label: 'Undo manual posted mark', icon: <Undo2 className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(false) } }
                 : { label: 'Mark as posted', icon: <Check className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(true) } }] : []),
@@ -222,6 +267,20 @@ export function ClipCard({
         <h3 className="line-clamp-2 text-sm font-medium leading-[18px] text-ink" title={title}>
           {title}
         </h3>
+        {postingStatus?.stats && statsLine(postingStatus.stats.metrics) && (
+          <p className="mt-1 truncate text-2xs text-ink-muted" title={`From Zernio, across ${postingStatus.stats.posts} post${postingStatus.stats.posts === 1 ? '' : 's'}. Updated ${new Date(postingStatus.stats.fetchedAt).toLocaleString()}.`}>
+            {statsLine(postingStatus.stats.metrics)}
+          </p>
+        )}
+        {clip.cta && (
+          <p className="mt-1 flex items-center gap-1 text-2xs text-ink-muted" title="This clip ends with a call to action from your library.">
+            <Megaphone className="h-3 w-3 shrink-0" /><span className="truncate">Ends with: {clip.cta.name}</span>
+          </p>
+        )}
+        {clip.headline && clip.headline !== title && (
+          <p className="mt-1 line-clamp-2 text-xs text-ink-muted" title="Story headline. It is drawn above the video when the Headline bar title style is on, and works as a post caption.">“{clip.headline}”</p>
+        )}
+        {clip.framework && <GradeDetailsButton grade={clip.framework} title={title} />}
         {clip.editorial && clip.editorial.flags.length > 0 && <p className="mt-2 text-2xs text-amber-200" title={clip.editorial.flags.map((f) => f.replaceAll('_', ' ')).join('; ')}>
           Editorial review: {clip.editorial.flags.includes('incomplete_reaction_context') ? 'incomplete reaction context' : `${clip.editorial.flags.length} flag${clip.editorial.flags.length === 1 ? '' : 's'}`}
         </p>}
@@ -229,7 +288,9 @@ export function ClipCard({
           <span className="font-mono tabular" title="Position in the source video">
             {formatTimecode(clip.start_time_ms)} – {formatTimecode(clip.end_time_ms)}
           </span>
-          {layout && <span title="How this clip was framed"> · {layout}</span>}
+          {focusLabel
+            ? <span title={focusLabel.title}> · {focusLabel.label}</span>
+            : layout && <span title="How this clip was framed"> · {layout}</span>}
         </p>
         {clip.render_fallback && (
           <Badge

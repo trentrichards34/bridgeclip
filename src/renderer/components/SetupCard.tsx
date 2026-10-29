@@ -7,15 +7,38 @@ import { ApiKeyInput } from './ApiKeyInput'
 import { Button } from './ui/Button'
 import { IconTile } from './ui/IconTile'
 
+/** The OpenRouter key field, saved as it's typed or pasted (the setup card and the setup checklist's first row). */
+export function OpenRouterKeyField({ className }: { className?: string }): React.JSX.Element {
+  const { drafts, setDraft, persist, error } = useApiKeyDrafts()
+  return (
+    <div className={className}>
+      <ApiKeyInput
+        label="OpenRouter key"
+        value={drafts.openrouterApiKey}
+        onChange={(v) => setDraft('openrouterApiKey', v)}
+        onBlur={() => void persist()}
+        placeholder="sk-or-…"
+        getKeyUrl={PROVIDER_LINKS.openrouter}
+      />
+      <p className="mt-1.5 flex items-center gap-1.5 text-2xs text-ink-subtle">
+        <ShieldCheck className="h-3.5 w-3.5 text-success/80" />
+        Your key is encrypted on this computer with your system keychain.
+      </p>
+      {error && <p role="alert" className="mt-1 text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
 /**
  * First-run setup, inline on the Create page: paste the OpenRouter key here instead of
  * being sent to Settings. Hidden once the OpenRouter key exists and the tools check out.
+ * With `askForKey` off (the setup checklist is showing and asks for the key in its first
+ * row), only the missing-tools notice shows, so the key is asked for in one place.
  */
-export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () => void; className?: string }): React.JSX.Element | null {
+export function SetupCard({ onOpenSettings, askForKey = true, className }: { onOpenSettings: () => void; askForKey?: boolean; className?: string }): React.JSX.Element | null {
   const { missingKeys, toolsOk } = useSetupState()
   const toolStatus = useSettingsStore((s) => s.toolStatus)
   const toolError = useSettingsStore((s) => s.toolError)
-  const { drafts, setDraft, persist, error } = useApiKeyDrafts()
   const missingTools = toolStatus
     ? [
         !toolStatus.python && 'Python',
@@ -23,12 +46,13 @@ export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () =>
         !toolStatus.ffmpeg && 'FFmpeg',
         !toolStatus.ffprobe && 'FFprobe',
         !toolStatus.ytdlp && 'yt-dlp',
-        !toolStatus.engine && 'BridgeClip clipping engine',
-        !toolStatus.bridgeRunner && 'Bridge runner'
+        !toolStatus.engine && 'CreatorClips clipping engine',
+        !toolStatus.bridgeRunner && 'CreatorClips video engine'
       ].filter(Boolean).join(', ')
     : ''
 
   if (missingKeys.length > 0) {
+    if (!askForKey) return null
     return (
       <section
         className={cn(
@@ -46,25 +70,11 @@ export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () =>
             <p className="eyebrow text-accent">One-time setup</p>
             <h2 className="mt-0.5 text-base font-semibold text-ink">Connect OpenRouter</h2>
             <p className="mt-0.5 max-w-2xl text-xs text-ink-muted">
-              BridgeClip has no account and no server. One OpenRouter key covers transcription with MAI Transcribe 2 and clip selection.
+              CreatorClips has no account and no server. One OpenRouter key covers transcription and picking the best moments.
             </p>
           </div>
         </div>
-        <div className="relative m-3 grid gap-3 rounded-xl bg-black/15 p-3 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.06)]">
-          <ApiKeyInput
-            label="OpenRouter"
-            value={drafts.openrouterApiKey}
-            onChange={(v) => setDraft('openrouterApiKey', v)}
-            onBlur={() => void persist()}
-            placeholder="sk-or-…"
-            getKeyUrl={PROVIDER_LINKS.openrouter}
-          />
-        </div>
-        <p className="relative -mt-1 flex items-center gap-1.5 px-3.5 pb-3 text-2xs text-ink-subtle">
-          <ShieldCheck className="h-3.5 w-3.5 text-success/80" />
-          Your key is encrypted on this computer with your system keychain.
-        </p>
-        {error && <p role="alert" className="relative -mt-2 px-4 pb-4 text-xs text-danger">{error}</p>}
+        <OpenRouterKeyField className="relative m-3 rounded-xl bg-black/15 p-3 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.06)]" />
       </section>
     )
   }

@@ -1,0 +1,25 @@
+{
+  "name": "flowchart",
+  "title": "Flowchart",
+  "source": "CreatorClips' own unit, remade from HyperFrames registry/blocks/flowchart (Apache-2.0)",
+  "variables": [
+    {
+      "id": "steps",
+      "type": "string",
+      "label": "Steps in order (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "title",
+      "type": "string",
+      "label": "Title",
+      "default": ""
+    },
+    {
+      "id": "cues",
+      "type": "string",
+      "label": "Comma seconds: when each step is said",
+      "default": ""
+    }
+  ]
+}

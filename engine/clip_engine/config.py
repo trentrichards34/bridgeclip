@@ -167,6 +167,8 @@ class CaptionStyle:
     bold: bool = False
     italic: bool = False
     uppercase: bool = True
+    # Words drawn all lowercase (when not uppercase), as a quiet editorial look.
+    lowercase: bool = False
     letter_spacing: int = 0
     position: Literal["top", "center", "bottom"] = "bottom"
     alignment: Literal["left", "center", "right"] = "center"
@@ -215,10 +217,24 @@ class CaptionStyle:
     line_box_color: Optional[str] = None
     line_box_opacity: float = 0.6
     line_box_padding: int = 22
+    # "round": the plate follows the words (a soft rounded blob); "rect": a crisp box per line.
+    line_box_shape: Literal["round", "rect"] = "round"
 
     # Keyword emphasis: planner-chosen punch words render in this color
     # (None disables). Chosen per preset to contrast with the highlight.
     emphasis_color: Optional[str] = None
+
+    # Look extras (see services/look_extras): the key word of each caption group
+    # sits in a rounded pill of this color, and/or is drawn lowercase in this
+    # italic serif face. None disables each.
+    keyword_pill_color: Optional[str] = None
+    accent_font: Optional[str] = None
+    # The accent-font key word in this color (None: the word's usual color). The Explainer's captions use it.
+    accent_key_color: Optional[str] = None
+    # Lines per caption group (each up to max_words_per_line words) and whether a comma ends a group: the Explainer's
+    # captions build a sentence over two lines as it is said and keep it until the next one.
+    max_lines: int = 1
+    group_at_commas: bool = True
 
 
 # ============================================================
@@ -241,6 +257,13 @@ class CaptionPreset:
     HEADLINE = "headline"
     PAPER = "paper"
     SUBTLE = "subtle"
+    BEAST = "beast"
+    BUBBLE = "bubble"
+    RETRO = "retro"
+    LIME = "lime"
+    VINTAGE = "vintage"
+    HIGHLIGHT_BOX = "highlight_box"
+    SERIF_CLEAN = "serif_clean"
 
 
 DEFAULT_CAPTION_PRESET = CaptionPreset.POP
@@ -262,6 +285,13 @@ def get_caption_preset(preset_id: str) -> CaptionStyle:
         CaptionPreset.HEADLINE: _create_headline_style,
         CaptionPreset.PAPER: _create_paper_style,
         CaptionPreset.SUBTLE: _create_subtle_style,
+        CaptionPreset.BEAST: _create_beast_style,
+        CaptionPreset.BUBBLE: _create_bubble_style,
+        CaptionPreset.RETRO: _create_retro_style,
+        CaptionPreset.LIME: _create_lime_style,
+        CaptionPreset.VINTAGE: _create_vintage_style,
+        CaptionPreset.HIGHLIGHT_BOX: _create_highlight_box_style,
+        CaptionPreset.SERIF_CLEAN: _create_serif_clean_style,
     }
 
     builder = builders.get(preset_id)
@@ -352,6 +382,42 @@ def get_available_presets() -> list[dict]:
             "name": "Subtle",
             "description": "Light sentence case, no stroke, upcoming words dimmed - interviews & vlogs",
             "preview_colors": {"primary": "#FFFFFF", "highlight": "#C4F1FF"},
+        },
+        {
+            "id": CaptionPreset.BEAST,
+            "name": "Beast",
+            "description": "Comic-book Bangers type, thick stroke, yellow active word, two words at a time - challenge & reaction",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#FFE600"},
+        },
+        {
+            "id": CaptionPreset.BUBBLE,
+            "name": "Bubble",
+            "description": "Rounded Lilita One type with a pink active word - friendly, lifestyle & food",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#FF6FB5"},
+        },
+        {
+            "id": CaptionPreset.RETRO,
+            "name": "Retro",
+            "description": "Chunky Bowlby One in cream with a hard orange drop shadow - storytime & nostalgia",
+            "preview_colors": {"primary": "#FFF4DC", "highlight": "#FF7A1A"},
+        },
+        {
+            "id": CaptionPreset.LIME,
+            "name": "Lime",
+            "description": "Archivo Black with the spoken word on a lime pill - business & finance",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#0B0B0B"},
+        },
+        {
+            "id": CaptionPreset.VINTAGE,
+            "name": "Vintage",
+            "description": "Fraunces Black, a retro ad-style serif in cream with a mustard active word - stories, money & business",
+            "preview_colors": {"primary": "#FFF3DD", "highlight": "#FFB547"},
+        },
+        {
+            "id": CaptionPreset.HIGHLIGHT_BOX,
+            "name": "Highlight box",
+            "description": "White bold words on a solid purple box, 1-3 words at a time - clean on any backdrop",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#7C3AED"},
         },
     ]
 
@@ -458,6 +524,25 @@ def _create_editorial_style() -> CaptionStyle:
     s.shadow_spread = 8
     s.future_words = "dim"
     s.dim_opacity = 0.6
+    s.entrance_pop = False
+    return s
+
+
+def _create_serif_clean_style() -> CaptionStyle:
+    """Serif clean: plain white upright serif, lowercase, 1-3 words, a soft shadow; no highlight, no pop."""
+    s = CaptionStyle()
+    s.font_name = "Instrument Serif"
+    s.font_size = 104
+    s.italic = False
+    s.uppercase = False
+    s.lowercase = True
+    s.max_words_per_line = 3
+    s.highlight_color = "#FFFFFF"
+    s.outline_width = 0
+    s.shadow_opacity = 0.85
+    s.shadow_blur = 18
+    s.shadow_offset = 3
+    s.shadow_spread = 6
     s.entrance_pop = False
     return s
 
@@ -577,7 +662,7 @@ class Settings(BaseSettings):
     # ============================================================
 
     # Application
-    app_name: str = "BridgeClip"
+    app_name: str = "CreatorClips"
     debug: bool = False
     log_level: str = "INFO"
 
@@ -589,6 +674,8 @@ class Settings(BaseSettings):
 
     # API Keys (required)
     openrouter_api_key: Optional[str] = None
+    # Pexels (free stock video) for B-roll mode; optional.
+    pexels_api_key: Optional[str] = None
     jev_threshold: float = Field(default=0.75, ge=0, le=1, allow_inf_nan=False)
     jev_self_contained_threshold: float = Field(default=0.70, ge=0, le=1, allow_inf_nan=False)
     jev_faithful_to_source_threshold: float = Field(default=0.65, ge=0, le=1, allow_inf_nan=False)
@@ -601,6 +688,8 @@ class Settings(BaseSettings):
     jev_enabled: bool = False
     jev_visual_context: bool = False
     source_context_web_research: bool = False
+    # Social links (Instagram, TikTok, X, Facebook): download with this browser's login ("" for none).
+    download_login_browser: str = ""
     source_context_model: str = "google/gemini-3.8-flash"
 
     # Security - API authentication
@@ -673,6 +762,9 @@ class Settings(BaseSettings):
     layout_vision_enabled: bool = True
     layout_vision_model: str = "google/gemini-3.8-flash"
     layout_vision_fallback_models: str = "anthropic/claude-opus-5.5"
+    # B-roll: a fast model picks a stock-footage search for each beat.
+    broll_model: str = "google/gemini-3.8-flash"
+    broll_fallback_models: str = "anthropic/claude-opus-5.5"
     layout_vision_reasoning_effort: str = "low"
 
     # Selected by the desktop bridge per process before settings are loaded.
@@ -702,6 +794,9 @@ class Settings(BaseSettings):
         if self.clipping_mode == "advanced":
             return []
         return self._split_models(self.planner_fallback_models, self.planner_model)
+
+    def get_broll_fallback_models(self) -> List[str]:
+        return self._split_models(self.broll_fallback_models, self.broll_model)
 
     def get_layout_vision_fallback_models(self) -> List[str]:
         """Fallback layout-vision models, excluding blanks and the primary."""
@@ -932,3 +1027,106 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def _create_beast_style() -> CaptionStyle:
+    """Beast: comic Bangers, two words, thick stroke, yellow active word, big pop."""
+    s = CaptionStyle()
+    s.font_name = "Bangers"
+    s.font_size = 118
+    s.letter_spacing = 2
+    s.max_words_per_line = 2
+    s.highlight_color = "#FFE600"
+    s.outline_width = 9
+    s.shadow_opacity = 0.9
+    s.shadow_blur = 2
+    s.shadow_offset = 8
+    s.emphasis_color = "#FF3B3B"
+    return s
+
+
+def _create_bubble_style() -> CaptionStyle:
+    """Bubble: rounded Lilita One, soft stroke, pink active word."""
+    s = CaptionStyle()
+    s.font_name = "Lilita One"
+    s.font_size = 96
+    s.highlight_color = "#FF6FB5"
+    s.outline_width = 7
+    s.shadow_opacity = 0.5
+    s.emphasis_color = "#FFE234"
+    return s
+
+
+def _create_retro_style() -> CaptionStyle:
+    """Retro: cream Bowlby One with a hard orange-brown drop shadow, revealed as spoken."""
+    s = CaptionStyle()
+    s.font_name = "Bowlby One"
+    s.font_size = 80
+    s.primary_color = "#FFF4DC"
+    s.highlight_color = "#FF7A1A"
+    s.outline_color = "#2B1300"
+    s.outline_width = 6
+    s.shadow_color = "#7A2E00"
+    s.shadow_opacity = 1.0
+    s.shadow_blur = 0
+    s.shadow_offset = 10
+    s.future_words = "hide"
+    s.emphasis_color = "#FFD23F"
+    return s
+
+
+def _create_lime_style() -> CaptionStyle:
+    """Lime: Archivo Black, spoken word in dark type on a lime pill."""
+    s = CaptionStyle()
+    s.font_name = "Archivo Black"
+    s.font_size = 78
+    s.highlight_color = "#0B0B0B"
+    s.outline_width = 5
+    s.highlight_box_color = "#C6FF3D"
+    s.highlight_box_padding = 16
+    s.emphasis_color = "#C6FF3D"
+    return s
+
+
+def _create_vintage_style() -> CaptionStyle:
+    """Vintage: Fraunces Black (a free retro serif in the spirit of old print ads), sentence case,
+    cream with a mustard active word, dark-brown stroke and a hard printed shadow."""
+    s = CaptionStyle()
+    s.font_name = "Fraunces 72pt Black"
+    s.font_size = 98
+    s.uppercase = False
+    s.primary_color = "#FFF3DD"
+    s.highlight_color = "#FFB547"
+    s.outline_color = "#1E120A"
+    s.outline_width = 6
+    s.shadow_color = "#1E120A"
+    s.shadow_opacity = 0.85
+    s.shadow_blur = 0
+    s.shadow_offset = 7
+    s.shadow_spread = 0
+    s.emphasis_color = "#FF6B4A"
+    return s
+
+
+# The box color of Highlight box captions (a stage scene's grid or gradient backdrop uses the brand color instead).
+HIGHLIGHT_BOX_COLOR = "#7C3AED"
+
+
+def _create_highlight_box_style() -> CaptionStyle:
+    """Highlight box: white bold sans (Montserrat ExtraBold), sentence case, 1-3 words on a crisp solid
+    color box per line; no stroke or shadow."""
+    s = CaptionStyle()
+    s.font_name = "Montserrat ExtraBold"
+    s.font_size = 74
+    s.uppercase = False
+    s.max_words_per_line = 3
+    s.primary_color = "#FFFFFF"
+    s.highlight_color = "#FFFFFF"
+    s.outline_width = 0
+    s.shadow_opacity = 0.0
+    s.line_box_color = HIGHLIGHT_BOX_COLOR
+    s.line_box_opacity = 1.0
+    s.line_box_padding = 16
+    s.line_box_shape = "rect"
+    s.emphasis_color = None
+    return s

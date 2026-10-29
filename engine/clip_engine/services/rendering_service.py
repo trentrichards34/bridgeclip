@@ -21,9 +21,9 @@ import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Optional, Union
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_landscape_dimensions, get_output_dimensions, get_settings
 from clip_engine.services.caption_generator import CaptionGeneratorService
@@ -37,11 +37,13 @@ from clip_engine.services.clip_editor import (
     subtract_intervals,
     window_words,
 )
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout
+from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout, focus_for_window
 from clip_engine.services.framing_trace import make_trace, save_trace
 from clip_engine.services.editorial_context import window_protection, record_prevented_cuts
 from clip_engine.services.editorial_review import review_retained_clip
 from clip_engine.services.jev_service import JevService
+from clip_engine.services import look_extras as extras_module
+from clip_engine.services.look_extras import LookExtras
 from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRejected
 from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, PROBE_TIMEOUT_SECONDS, media_process, run_media, validate_video_dimensions
 from clip_engine.services.layout_renderer import (
@@ -51,11 +53,14 @@ from clip_engine.services.layout_renderer import (
     banner_y,
     build_layout_graph,
     caption_anchor,
+    even,
     face_zones,
     measured_loudness_filter,
     per_shot_expr,
     title_y,
 )
+from clip_engine.services import stage_scenes
+from clip_engine.services import depth_fx, segmentation
 from clip_engine.services.transcription_service import TranscriptSegment
 from clip_engine.services.video_speed import scaled_duration_ms, speed_video_filter, validate_video_speed
 
@@ -72,14 +77,321 @@ LANDSCAPE_TITLE_SHOW_S = (0.4, 5.5)
 LANDSCAPE_TITLE_FADE_S = 0.4
 # Output frame rates a landscape render keeps from its source (higher is capped).
 MAX_OUTPUT_FPS = 60
+# Gameplay split: the speaker's share of the 9:16 frame (the rest is background).
+BACKGROUND_SPLIT = 0.5
+# B-roll beats shorter than this on the output clock (after cuts) are skipped.
+BROLL_MIN_VISIBLE_MS = 600
 # Bound raster allocation even when a model ignores the requested title length.
 MAX_TITLE_CHARS = 120
+
+
+class TitleStyle:
+    CARD = "card"
+    HEADLINE = "headline"
+    ALL = (CARD, HEADLINE)
+
+
+# How the headline (hook text) looks: a bar in white, black or a brand color,
+# or floating text over the top of the video; and its font.
+HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
+# Floating text's background: none (outlined text) or a snug rounded box behind each line; 'highlight' (Key words in
+# color): big bold words on a white box, the last words in the italic serif on a box in the color (_highlight_headline).
+HEADLINE_TEXT_BGS = ("none", "dark", "light", "brand", "highlight")
+# 'highlight' (mirror of HIGHLIGHT in src/shared/headline-look.ts): sizes on a 1920-tall frame, largest first; the key
+# words this much bigger; the lines' heights against their size; the gap between the groups; the side margins.
+HIGHLIGHT_SIZES = (104, 96, 90, 84, 78, 72, 66, 60)
+HIGHLIGHT_PHRASE_SCALE = 1.2
+HIGHLIGHT_LEAD_LINE = 1.2
+HIGHLIGHT_PHRASE_LINE = 1.06
+HIGHLIGHT_GAP = 0.1
+HIGHLIGHT_PAD_X = 0.06
+HIGHLIGHT_DEFAULT_COLOR = "#2563EB"
+# "Hide hook text": seconds into the video (output clock) the hook text fades out; missing keeps it the whole video.
+HEADLINE_HIDE_AFTER_S = (3, 5, 8, 10, 15)
+HEADLINE_HIDE_FADE_S = 0.3
+# The box, against the font size: padding left and right, corner radius; the dark box's opacity.
+TEXT_BOX_PAD_X = 0.32
+TEXT_BOX_RADIUS = 0.25
+TEXT_BOX_DARK_OPACITY = 0.9
+HEADLINE_FONTS = {
+    "clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf",
+    # Hand-drawn marker capitals (Caveat Brush, OFL).
+    "marker": "CaveatBrush-Regular.ttf",
+    # Bold sans with one accent word in an italic serif (HEADLINE_ACCENT_FONT).
+    "sans_serif_accent": "Montserrat-ExtraBold.ttf",
+}
+# Fonts drawn in capitals, and their size against the clean font.
+HEADLINE_UPPER_FONTS = ("condensed", "marker")
+HEADLINE_FONT_SCALE = {"condensed": 1.18, "marker": 1.12}
+HEADLINE_ACCENT_FONT = "InstrumentSerif-Italic.ttf"
+# Instrument Serif is small on the em: the accent word is drawn this much bigger.
+HEADLINE_ACCENT_SCALE = 1.25
+_ACCENT_LETTERS = re.compile(r"[^\W_]", re.UNICODE)
+
+
+def headline_accent_index(words: list[str]) -> int:
+    """The word drawn in the italic serif: the last one with 3+ letters (the renderer's accentWordIndex)."""
+    for index in range(len(words) - 1, -1, -1):
+        if len(_ACCENT_LETTERS.findall(words[index])) >= 3:
+            return index
+    return len(words) - 1
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@dataclass
+class HeadlineLook:
+    look: str = "white"
+    color: str = "#FFFFFF"
+    font: str = "clean"
+    # Floating text only: a snug rounded box behind each line (none, dark, light or brand: the brand color).
+    text_bg: str = "none"
+    # Seconds (output clock) after which the hook text fades out (a bar stays as a plain band); None: the whole video.
+    hide_after_s: Optional[int] = None
+
+    @property
+    def background(self) -> Optional[tuple[int, int, int]]:
+        """The bar's color, or None for floating text."""
+        if self.look == "floating":
+            return None
+        if self.look == "black":
+            return (14, 14, 14)
+        if self.look == "brand":
+            return _rgb(self.color)
+        return (255, 255, 255)
+
+    @property
+    def box(self) -> Optional[tuple[int, int, int, int]]:
+        """The RGBA box behind each line of floating text, or None (outlined text)."""
+        if self.look != "floating" or self.text_bg == "none":
+            return None
+        if self.text_bg == "dark":
+            return (0, 0, 0, round(255 * TEXT_BOX_DARK_OPACITY))
+        if self.text_bg in ("light", "highlight"):
+            return (255, 255, 255, 255)
+        return (*_rgb(self.color), 255)
+
+    @property
+    def text(self) -> tuple[int, int, int]:
+        bg = self.background or (self.box[:3] if self.box else None)
+        if bg is None:
+            return (255, 255, 255)
+        luminance = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2]
+        return (0, 0, 0) if luminance > 150 else (255, 255, 255)
+
+    @property
+    def pad_color(self) -> str:
+        bg = self.background or (0, 0, 0)
+        return "0x%02X%02X%02X" % bg
+
+    def as_dict(self) -> dict:
+        """The look as requests carry it (textBg only when there is a box)."""
+        out = {"look": self.look, "color": self.color, "font": self.font}
+        if self.text_bg != "none":
+            out["textBg"] = self.text_bg
+        if self.hide_after_s is not None:
+            out["hideAfterS"] = self.hide_after_s
+        return out
+
+
+def highlight_split(text: str) -> tuple[str, str]:
+    """The hook text's lead words and key words (the last third, one to four words): headline-look.ts highlightSplit."""
+    words = text.split()
+    if len(words) < 2:
+        return "", " ".join(words)
+    k = min(4, max(1, round(len(words) / 3 + 1e-9)))
+    return " ".join(words[:-k]), " ".join(words[-k:])
+
+
+def highlight_colors(color: str) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    """(lead box, lead ink, key words' box, key words' ink): headline-look.ts highlightColors."""
+    raw = color if isinstance(color, str) and _HEX.match(color) else HIGHLIGHT_DEFAULT_COLOR
+    r, g, b = _rgb(raw)
+    box = _rgb(HIGHLIGHT_DEFAULT_COLOR) if 0.2126 * r + 0.7152 * g + 0.0722 * b > 225 else (r, g, b)
+    ink = (0, 0, 0) if 0.2126 * box[0] + 0.7152 * box[1] + 0.0722 * box[2] > 150 else (255, 255, 255)
+    return (255, 255, 255), (15, 23, 42), box, ink
+
+
+def _hide_after(value: Any) -> Optional[int]:
+    """A known "hide after" choice, else None (strict callers check it themselves)."""
+    return value if type(value) is int and value in HEADLINE_HIDE_AFTER_S else None
+
+
+def headline_hide_fade(look: HeadlineLook, total_s: float, speed: float = 1.0) -> Optional[tuple[float, float]]:
+    """When the hook text fades out, on the clock the overlays run on (before a speed-up):
+    (start, length) in seconds, or None when it stays (no choice, or the video ends first)."""
+    if look.hide_after_s is None or look.look == "none" or total_s <= look.hide_after_s:
+        return None
+    return look.hide_after_s * speed, HEADLINE_HIDE_FADE_S * speed
+
+
+def chapter_hand_over_s(source_ms: Optional[int], keeps: list, window_start_ms: int) -> Optional[float]:
+    """When the hook hands over to the first chapter header, on the edited clock (seconds, before the speed-up): the
+    source time through the kept parts; one in cut-out footage moves to where the clip picks up again. None: no
+    chapter, or it comes after the clip."""
+    if type(source_ms) is not int or source_ms < 0:
+        return None
+    t = source_ms - window_start_ms
+    before = 0
+    for a, b in keeps:
+        if t < a:
+            return before / 1000
+        if t <= b:
+            return (before + t - a) / 1000
+        before += b - a
+    return None
+
+
+def headline_hide_overlay(fade: tuple[float, float]) -> tuple[str, str]:
+    """The overlay's (enable expression, image filter) for a fade from headline_hide_fade. The image must be a
+    looped input so the fade has a clock. Over a bar look the image fades into the padding's same color: the bar
+    stays as a plain band."""
+    start, length = fade
+    return (f"lt(t,{start + length:.3f})",
+            f"format=rgba,fade=t=out:st={start:.3f}:d={length:.3f}:alpha=1")
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
+
+def parse_headline_look(raw: Any) -> HeadlineLook:
+    """A look from a request (untrusted): unknown values fall back to the white bar in the clean font."""
+    if not isinstance(raw, dict):
+        return HeadlineLook()
+    hide = _hide_after(raw.get("hideAfterS"))
+    raw = {key: value for key, value in raw.items() if isinstance(value, str)}
+    look = raw.get("look") if raw.get("look") in HEADLINE_LOOKS else "white"
+    color = raw.get("color") if isinstance(raw.get("color"), str) and _HEX.match(raw["color"]) else "#FFFFFF"
+    font = raw.get("font") if raw.get("font") in HEADLINE_FONTS else "clean"
+    text_bg = raw.get("textBg") if raw.get("textBg") in HEADLINE_TEXT_BGS else "none"
+    return HeadlineLook(look, color.upper(), font, text_bg, hide)
+
+
+def validate_headline_look(raw: Any) -> Optional[dict]:
+    """Strict check for requests from the app: None, or {look, color, font, textBg?, hideAfterS?} with known values."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font", "textBg", "hideAfterS"} \
+            or ("hideAfterS" in raw and _hide_after(raw["hideAfterS"]) is None) \
+            or not all(isinstance(raw.get(key, ""), str) for key in ("look", "color", "font", "textBg")) \
+            or raw.get("look", "white") not in HEADLINE_LOOKS or raw.get("font", "clean") not in HEADLINE_FONTS \
+            or raw.get("textBg", "none") not in HEADLINE_TEXT_BGS or not _HEX.match(raw.get("color", "#FFFFFF")):
+        raise ValueError("Invalid headline look")
+    out = {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
+    if raw.get("textBg", "none") != "none":
+        out["textBg"] = raw["textBg"]
+    if "hideAfterS" in raw:
+        out["hideAfterS"] = raw["hideAfterS"]
+    return out
+
+
+def text_box_outline(boxes: list[tuple[float, float, float, float]], radius: float, snap: float = 0.0) -> list[tuple[float, float, float]]:
+    """The outline around per-line boxes stacked edge to edge (Instagram's text background):
+    (x, y, corner radius) per corner, clockwise from the top left. Outer corners are rounded and
+    where a line is narrower than its neighbor the inside corner is filleted too. Lines within
+    `snap` of their neighbor's width take the wider one (no tiny steps). Mirrors textBoxPath
+    in src/shared/headline-look.ts."""
+    rows = [list(box) for box in boxes]
+    for i in range(1, len(rows)):
+        a, b = rows[i - 1], rows[i]
+        if abs((a[2] - a[0]) - (b[2] - b[0])) < snap:
+            left, right = min(a[0], b[0]), max(a[2], b[2])
+            a[0] = b[0] = left
+            a[2] = b[2] = right
+    points: list[tuple[float, float]] = [(rows[0][0], rows[0][1]), (rows[0][2], rows[0][1])]
+    for i in range(len(rows) - 1):
+        if rows[i + 1][2] != rows[i][2]:
+            points += [(rows[i][2], rows[i][3]), (rows[i + 1][2], rows[i][3])]
+    points += [(rows[-1][2], rows[-1][3]), (rows[-1][0], rows[-1][3])]
+    for i in range(len(rows) - 1, 0, -1):
+        if rows[i - 1][0] != rows[i][0]:
+            points += [(rows[i][0], rows[i][1]), (rows[i - 1][0], rows[i][1])]
+    out = []
+    for i, (x, y) in enumerate(points):
+        px, py = points[i - 1]
+        nx, ny = points[(i + 1) % len(points)]
+        out.append((x, y, min(radius, math.hypot(x - px, y - py) / 2, math.hypot(nx - x, ny - y) / 2)))
+    return out
+
+
+def text_box_polygon(outline: list[tuple[float, float, float]], steps: int = 12) -> list[tuple[float, float]]:
+    """The outline's corners as quadratic curves (control point at the corner), sampled into a polygon."""
+    polygon: list[tuple[float, float]] = []
+    count = len(outline)
+    for i, (x, y, r) in enumerate(outline):
+        px, py, _ = outline[i - 1]
+        nx, ny, _ = outline[(i + 1) % count]
+        din = math.hypot(x - px, y - py) or 1
+        dout = math.hypot(nx - x, ny - y) or 1
+        sx, sy = x + (px - x) / din * r, y + (py - y) / din * r
+        ex, ey = x + (nx - x) / dout * r, y + (ny - y) / dout * r
+        for k in range(steps + 1):
+            t = k / steps
+            polygon.append(((1 - t) ** 2 * sx + 2 * (1 - t) * t * x + t * t * ex, (1 - t) ** 2 * sy + 2 * (1 - t) * t * y + t * t * ey))
+    return polygon
+
+
+# Headline bar, as a share of a 1080x1920 frame: the clear space above the
+# text (platform UI sits there), padding around it, and the bar's limits.
+HEADLINE_TOP_SAFE = 0.055
+HEADLINE_PAD_Y = 0.025
+HEADLINE_PAD_X = 0.06
+HEADLINE_MIN_H = 0.17
+HEADLINE_MAX_H = 0.30
+HEADLINE_FONT_SIZES = (60, 54, 48, 42)
+# Floating hook text (no bar) is the first thing read on a phone: whatever look the member saved (a small label on a
+# dark box, outlined text), it is set at least this big (a cap height of about 3% of the frame at its smallest), in
+# the member's own font, color and box (mirror of FLOATING_FONT_SIZES in src/shared/headline-look.ts).
+FLOATING_FONT_SIZES = (96, 88, 80, 74, 68, 64)
+HEADLINE_MAX_LINES = 3
+# Captions inside the video panel under a headline bar (share of the panel).
+HEADLINE_CAPTION_Y = 0.70
+# Emoji and other symbols the bundled fonts cannot draw.
+_UNDRAWABLE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 # Landscape H.264 bitrates (Mbps) by output height at 30 fps, after
 # YouTube's upload recommendations; 60 fps sources get 1.5x.
 LANDSCAPE_BITRATE_MBPS = {1080: 12, 1440: 20, 2160: 45}
 # Leave room for input/output paths and codec options below Windows' process
 # command-line limit. Long edits can contain hundreds of trims and concats.
 MAX_INLINE_FILTER_GRAPH_BYTES = 8192
+
+
+_SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})")
+
+
+def _srt_cues(text: str) -> list[tuple[int, int, str]]:
+    cues = []
+    for block in re.split(r"\n\s*\n", (text or "").strip()):
+        lines = block.strip().splitlines()
+        timing = next((i for i, line in enumerate(lines) if _SRT_TIME.search(line)), None)
+        if timing is None:
+            continue
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = (int(v) for v in _SRT_TIME.search(lines[timing]).groups())
+        body = "\n".join(lines[timing + 1:]).strip()
+        if body:
+            cues.append(((h1 * 3600 + m1 * 60 + s1) * 1000 + ms1, (h2 * 3600 + m2 * 60 + s2) * 1000 + ms2, body))
+    return cues
+
+
+def _srt_time(ms: int) -> str:
+    ms = max(0, int(ms))
+    return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def join_srt(first_path: Optional[str], first_duration_ms: int, second_path: str) -> None:
+    """Rewrite `second_path` as the first file's cues, then its own moved after them."""
+    try:
+        first = _srt_cues(open(first_path, encoding="utf-8").read()) if first_path and os.path.isfile(first_path) else []
+        second = _srt_cues(open(second_path, encoding="utf-8").read())
+        cues = [(s, min(e, first_duration_ms), t) for s, e, t in first if s < first_duration_ms]
+        cues += [(s + first_duration_ms, e + first_duration_ms, t) for s, e, t in second]
+        blocks = [f"{i + 1}\n{_srt_time(s)} --> {_srt_time(e)}\n{t}\n" for i, (s, e, t) in enumerate(cues) if e > s]
+        temporary = second_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            f.write("\n".join(blocks))
+        os.replace(temporary, second_path)
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Subtitle timing after the hook preview could not be updated: {exc}")
 
 
 @dataclass
@@ -106,8 +418,23 @@ class RenderRequest:
     title_text: Optional[str] = None
     # Off keeps title_text for editorial review but draws no title card.
     include_title: bool = True
+    # "card": title_text in a rounded card over the video. "headline" (9:16,
+    # no gameplay background): headline_text, or title_text when there is
+    # none, in a white bar above the video, which fills the rest of the frame.
+    title_style: str = TitleStyle.CARD
+    headline_text: Optional[str] = None
+    # The headline's look (bar color or floating, and font); see HeadlineLook.
+    headline_look: Optional[dict] = None
+    # The hook text hands over to the first chapter header: it fades out as the chapter starts (SOURCE ms; a time
+    # in cut-out footage hands over where the clip picks up again). None: the look's own "hide after", or never.
+    headline_hide_source_ms: Optional[int] = None
     # Planner-chosen punch words highlighted in the captions.
     emphasis_words: list[str] = field(default_factory=list)
+    # Caption language: translated text per original transcript line (keyed by
+    # caption_translation.segment_key). Captions and the SRT use it; pacing,
+    # reactions and review keep the original words.
+    caption_translations: dict[str, str] = field(default_factory=dict)
+    caption_language: Optional[str] = None
 
     banner_platform: Optional[str] = None
     banner_channel_url: Optional[str] = None
@@ -117,6 +444,18 @@ class RenderRequest:
     aspect_ratio: str = "9:16"
     # Framing for 9:16 output: auto (smart per-shot), fill or fit.
     layout_style: str = LayoutStyle.AUTO
+    # Screen share + webcam clips (Smart framing): the member's choice ("smart",
+    # "split" or "presenter") and, in Smart mode, the planner's clip decision
+    # ("presenter", "screen" or "mixed") with its reason (see screen_relevance).
+    screen_focus_mode: str = "smart"
+    screen_focus: Optional[str] = None
+    screen_focus_reason: Optional[str] = None
+    # Gameplay / "satisfying" split (9:16 only): the framed speaker fills the
+    # top half and this video loops, muted, under it. None renders normally.
+    background_video_path: Optional[str] = None
+    # B-roll mode: (source start ms, source end ms, footage path) shots laid
+    # full-frame over the speaker's picture; audio, captions and title stay.
+    broll_shots: list[tuple[int, int, str]] = field(default_factory=list)
     # tight: cut dead air and filler words; natural: original timing.
     pacing: str = Pacing.TIGHT
     video_speed: float = 1.0
@@ -126,12 +465,34 @@ class RenderRequest:
     skip_ranges_ms: list[tuple[int, int]] = field(default_factory=list)
     chapters: list[tuple[int, str]] = field(default_factory=list)
     debug_capture: bool = False
+    # SRT sidecar next to the clip (closed captions for uploads): True for
+    # every clip with speech, False never, None for longform clips only.
+    write_subtitles: Optional[bool] = None
     progress_callback: Optional[Callable[[str, Optional[float]], None]] = None
     manual_plan: Optional[ClipLayoutPlan] = None
     # Exact source-time selections from the manual editor; no automatic pacing,
     # sliver removal or protected-interval restoration may change these cuts.
     manual_ranges_ms: Optional[list[tuple[int, int]]] = None
     editorial_context: Optional[dict] = None
+    # The member's @handle and/or logo in a corner (see brand_mark), and the comment keyword
+    # shown as "Comment KEYWORD" for the last seconds of the clip.
+    brand_mark: Optional[dict] = None
+    cta_keyword: str = ""
+    # Look extras (see look_extras.LookExtras): motion effects on top of the look; None or empty for none.
+    look_extras: Optional[Any] = None
+    # Color grade on the footage only (color_grade.py: warm, cinematic, film, cool, mono; None: as filmed). Applied to
+    # the framed video before the headline bar, scenes, captions, extras and graphics go over it.
+    color_grade: Optional[str] = None
+    # Scenes (9:16; see stage_scenes): [{scene: face|stage|visual, start_ms, end_ms, backdrop?}] on the
+    # finished clip's clock (after the cut and the speed). Empty: the normal framing throughout.
+    scenes: list[dict] = field(default_factory=list)
+    # The brand backdrop's tint (#RRGGBB); None uses a default blue.
+    scene_brand_color: Optional[str] = None
+    # Scenes in SOURCE time (Motion graphics: Auto with Stage layouts), moved onto the finished clip's clock
+    # once the cut is known; used when `scenes` is empty. RenderResult.stage_scenes says which were drawn.
+    source_scenes: list[dict] = field(default_factory=list)
+    # Where frame-escape mattes are kept between renders of the same clip (None: a folder next to the output).
+    matte_cache_dir: Optional[str] = None
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -157,6 +518,31 @@ class RenderResult:
     output_width: int = 0
     output_height: int = 0
     framing_trace_path: Optional[str] = None
+    # Source intervals the clip kept (after pacing cuts and skips), and the
+    # render window's start (layout shot times are relative to it). The editor
+    # rebuilds an Automatic clip's cut from these.
+    kept_source_ms: list[list[int]] = field(default_factory=list)
+    window_start_ms: int = 0
+    # Screen share + webcam clips: how the clip was framed and why (ClipLayoutPlan.screen_focus).
+    screen_focus: Optional[dict] = None
+    # The request's source_scenes the clip was drawn with (source time; empty when none were).
+    stage_scenes: list[dict] = field(default_factory=list)
+    # Depth and camera moves on the finished clip's clock (ms): the Zoom extra's punch-ins on cues
+    # ({at_ms, end_ms, kind}: at_ms is when the push-in lands on its word), the camera moves at scene changes
+    # ({at_ms, kind}: the cut in the middle of the move) and how many stage runs had the head break out of the card.
+    punches: list[dict] = field(default_factory=list)
+    scene_moves: list[dict] = field(default_factory=list)
+    escaped_runs: int = 0
+
+
+def shot_record(shot) -> dict:
+    """A shot's summary for job_output, plus where a talking-head crop centers (the
+    median of its focus path), so the editor can rebuild a saved clip's framing."""
+    record = shot.summary()
+    if shot.focus_path:
+        from statistics import median
+        record["focus"] = [round(median(p[1] for p in shot.focus_path), 4), round(median(p[2] for p in shot.focus_path), 4)]
+    return record
 
 
 class RenderingService:
@@ -218,29 +604,33 @@ class RenderingService:
         logger.info("FFmpeg available")
 
     def _video_codec_args(self, out_w: int = 1080, out_h: int = 1920, fps: str = "30") -> list[str]:
-        """Use the bundled LGPL encoders in BridgeClip; retain server encoding.
+        """Use the bundled LGPL encoders in CreatorClips; retain server encoding.
 
         Keyframes every 2 s keep long clips seekable. Landscape bitrates scale
         with resolution and frame rate (VideoToolbox is bitrate-driven).
         """
         rate = float(Fraction(fps))
         gop = ["-g", str(max(1, round(rate * 2)))]
+        # A render made over an already finished video (a Remix opened in the editor) gets more bits, so a bake that
+        # changes nothing keeps the picture as it was (quality_scale 1.5: half again the bitrate, a lower CRF).
+        scale = max(1.0, float(getattr(self, "quality_scale", 1.0) or 1.0))
         if self.settings.local_mode and sys.platform == "darwin":
             # VideoToolbox otherwise requires a free hardware encoder. Allow
             # Apple's software fallback on Intel VMs and Macs with a busy GPU.
             if out_w > out_h:
-                mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) * (1.5 if rate > 31 else 1)
+                mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) * (1.5 if rate > 31 else 1) * scale
                 return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-profile:v", "high", "-b:v", f"{mbps:g}M", *gop]
-            return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", "8M", *gop]
+            return ["-c:v", "h264_videotoolbox", "-allow_sw", "1", "-b:v", f"{8 * scale:g}M", *gop]
         if self.settings.local_mode and getattr(self, "_local_cpu_encoder", "libopenh264") == "libopenh264":
             # The Windows/Linux LGPL distribution includes OpenH264, not x264.
             # A CPU encoder also works on machines without an NVIDIA/Intel GPU.
             mbps = LANDSCAPE_BITRATE_MBPS.get(out_h, 12) if out_w > out_h else 8
             if rate > 31:
                 mbps *= 1.5
-            return ["-c:v", "libopenh264", "-b:v", f"{mbps:g}M", *gop]
+            return ["-c:v", "libopenh264", "-b:v", f"{mbps * scale:g}M", *gop]
+        crf = self.settings.ffmpeg_crf - (round(8 * (scale - 1)) if scale > 1 else 0)
         return ["-c:v", "libx264", "-preset", self.settings.ffmpeg_preset,
-                "-crf", str(self.settings.ffmpeg_crf), *gop]
+                "-crf", str(max(10, crf)), *gop]
 
     async def capture_framing_source(self, video_path: str, output_path: str, *, progress=None, duration_ms=None) -> None:
         """One uncropped preview per captured run, on the original source clock."""
@@ -313,6 +703,10 @@ class RenderingService:
             and frame rate, over a blurred fill when the source isn't 16:9.
         """
         validate_video_speed(request.video_speed)
+        stage_scenes.parse_scenes(request.scenes)
+        stage_scenes.parse_scenes(request.source_scenes)
+        if request.scene_brand_color is not None and not _HEX.match(str(request.scene_brand_color)):
+            raise ValueError("Invalid brand color")
         os.makedirs(os.path.dirname(request.output_path), exist_ok=True)
 
         duration_ms = request.end_time_ms - request.start_time_ms
@@ -417,6 +811,7 @@ class RenderingService:
             ladder.append((letterbox, natural_map, "letterbox_natural"))
 
         render_fallback: Optional[str] = None
+        depth: dict = {}
         attempted_plan = plan
         attempts = []
         for step, (step_plan, step_map, fallback) in enumerate(ladder):
@@ -426,7 +821,7 @@ class RenderingService:
                     request.editorial_context['coherence']['status'] = 'rejected'
                     raise CoherenceRejected('Clip omitted: rendering fallback failed coherence review.')
             try:
-                await self._render_edit(
+                depth = await self._render_edit(
                     request, step_plan, step_map, window_start_ms, window_ms,
                     target_width, target_height, is_landscape, fps, loudness_filter,
                 )
@@ -479,7 +874,7 @@ class RenderingService:
             duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
             removed_ms=removed_ms,
             layout_type=plan.dominant_layout if smart else "fit",
-            layout_shots=[shot.summary() for shot in plan.shots] if analyzed else [],
+            layout_shots=[shot_record(shot) for shot in plan.shots] if analyzed else [],
             # Vision calls made for the plan are paid for even if a fallback rendered.
             layout_cost_usd=vision_cost,
             render_fallback=render_fallback,
@@ -488,6 +883,13 @@ class RenderingService:
             output_width=target_width,
             output_height=target_height,
             framing_trace_path=trace_path,
+            kept_source_ms=[[round(window_start_ms + a), round(window_start_ms + b)] for a, b in time_map.keeps],
+            window_start_ms=round(window_start_ms),
+            screen_focus=plan.screen_focus if analyzed else None,
+            stage_scenes=[dict(src) for src, _ in self._source_scene_pairs(request, time_map, window_start_ms)]
+            if not is_landscape and not self._background_video(request, is_landscape) else [],
+            punches=(depth or {}).get("punches", []), scene_moves=(depth or {}).get("scene_moves", []),
+            escaped_runs=(depth or {}).get("escaped_runs", 0),
         )
 
     @staticmethod
@@ -516,14 +918,25 @@ class RenderingService:
             chapters[0] = (0, chapters[0][1])
         return chapters
 
+    @staticmethod
+    def _caption_segments(request: RenderRequest, window_start_ms: int, time_map: TimeMap) -> list[TranscriptSegment]:
+        """Caption lines on the edited timeline, in the caption language when one was chosen."""
+        segments = request.transcript_segments or []
+        if not request.caption_translations:
+            return remap_segments(segments, window_start_ms, time_map)
+        from clip_engine.services.caption_translation import apply_translations
+        return apply_translations(segments, lambda lines: remap_segments(lines, window_start_ms, time_map),
+                                  request.caption_translations, request.caption_language)
+
     async def _write_subtitles(
         self, request: RenderRequest, window_start_ms: int, time_map: TimeMap,
     ) -> Optional[str]:
-        """SRT sidecar on the edited timeline, for longform uploads."""
-        if not (request.longform and request.transcript_segments):
+        """SRT sidecar on the edited timeline (closed captions for uploads), in the caption language."""
+        wanted = request.longform if request.write_subtitles is None else request.write_subtitles
+        if not (wanted and request.transcript_segments):
             return None
         try:
-            segments = remap_segments(request.transcript_segments, window_start_ms, time_map)
+            segments = self._caption_segments(request, window_start_ms, time_map)
             for segment in segments:
                 for item in [segment, *segment.words]:
                     item.start_time_ms = window_start_ms + scaled_duration_ms(item.start_time_ms - window_start_ms, request.video_speed)
@@ -548,24 +961,64 @@ class RenderingService:
         is_landscape: bool,
         fps: str = "30",
         loudness_filter: Optional[str] = None,
-    ) -> None:
-        """Build the graph, captions and overlays for one edit and run FFmpeg."""
+    ) -> dict:
+        """Build the graph, captions and overlays for one edit and run FFmpeg. Returns the depth and camera moves made
+        (RenderResult.punches, scene_moves, escaped_runs)."""
         has_audio = request.include_audio and await self._has_audio(request.video_path)
+        background = self._background_video(request, is_landscape)
+        headline = None if background else self._headline_bar_image(request, target_width, target_height, is_landscape)
+        bar_h = headline[1] if headline else 0
+        speaker_h = even(target_height * BACKGROUND_SPLIT) if background else target_height - bar_h
         graph = build_layout_graph(
-            plan, target_width, target_height, time_map.keeps, has_audio, landscape=is_landscape,
+            plan, target_width, speaker_h, time_map.keeps, has_audio, landscape=is_landscape,
             fps=fps, loudness_filter=loudness_filter,
             video_speed=request.video_speed,
         )
+        looped_inputs: list[str] = []
+        extras = request.look_extras or LookExtras()
+        broll = [] if background else self._broll_windows(request, time_map, window_start_ms)
+        cue_punches: list = []
+        if extras.has("punch_zoom") and not background:
+            graph = extras_module.create_punch(
+                graph, extras, plan, remap_plan(plan, time_map), time_map, self._extras_words(request, window_start_ms, time_map),
+                target_width, speaker_h, [(a, b) for _, a, b in broll], fps=fps, found=cue_punches)
+        if background:
+            graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
+            looped_inputs = [background]
+        else:
+            if broll:
+                graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
+                looped_inputs = [path for path, _, _ in broll]
+        if request.color_grade:
+            from clip_engine.services.color_grade import with_grade
+            graph = with_grade(graph, request.color_grade)
+        if headline:
+            graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
+        scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,
+                                       is_landscape, bool(background), fps, 1 + len(looped_inputs), window_start_ms, window_ms)
+        still_inputs: list[str] = []
+        if scenes:
+            graph, still_inputs = scenes.graph, scenes.inputs
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
+            bar_h=bar_h, scenes=scenes,
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
-        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape)
+        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline,
+                                  end_s=time_map.output_ms / 1000,
+                                  hand_over_s=self._hook_hand_over_s(request, time_map, window_start_ms, scenes))
+        overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
+                                         time_map.output_ms / 1000)
+        overlays += extras_module.create_layers(
+            extras, request, out_plan, os.path.dirname(request.output_path), target_width, target_height, bar_h,
+            time_map.output_ms / 1000, broll, is_landscape, under=parse_headline_look(request.headline_look).background,
+            plan=plan, time_map=time_map, background=bool(background))
         # Burn captions and animate framing/overlays on the edited source clock,
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
             graph, overlays, speed_video_filter(request.video_speed, fps),
+            first_index=1 + len(looped_inputs) + len(still_inputs),
         )
 
         try:
@@ -577,20 +1030,117 @@ class RenderingService:
                 filter_complex=filter_complex,
                 audio_label="[aout]" if has_audio else None,
                 extra_inputs=extra_inputs if extra_inputs else None,
+                looped_inputs=looped_inputs,
+                still_inputs=still_inputs,
                 fps=fps,
                 output_size=(target_width, target_height),
                 output_duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
                 **({'progress': lambda percent: request.progress_callback('Rendering video', percent)} if request.progress_callback else {}),
             )
         finally:
-            for path in extra_inputs:
+            for path in [*extra_inputs, *still_inputs]:
                 try:
                     os.remove(path)
                 except OSError:
                     pass
+        speed = request.video_speed or 1.0
+        return {
+            "punches": [{"at_ms": round(p.land * 1000 / speed), "end_ms": round(p.end * 1000 / speed), "kind": p.kind} for p in cue_punches],
+            "scene_moves": [{"at_ms": round(m.at * 1000 / speed), "kind": m.kind} for m in (scenes.transitions if scenes else [])],
+            "escaped_runs": sum(1 for e in (scenes.escaped if scenes else []) if e),
+        }
 
         if not os.path.isfile(request.output_path):
             raise RenderingError("Render failed: output file not created")
+
+    @staticmethod
+    def _hook_hand_over_s(request: RenderRequest, time_map: TimeMap, window_start_ms: int,
+                          scenes: Optional["stage_scenes.SceneComposite"]) -> Optional[float]:
+        """When the hook text fades out (edited clock, seconds): at the first chapter header or as the first stage
+        scene starts, whichever is first; None to keep its own time."""
+        times = [chapter_hand_over_s(request.headline_hide_source_ms, time_map.keeps, window_start_ms),
+                 stage_scenes.hook_hand_over_s(scenes.segments, request.video_speed) if scenes else None]
+        times = [t for t in times if t is not None]
+        return min(times) if times else None
+
+    def _scene_composite(
+        self, request: RenderRequest, graph: str, plan: ClipLayoutPlan, time_map: TimeMap, width: int, height: int,
+        speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int, window_start_ms: int = 0,
+        window_ms: Optional[int] = None,
+    ) -> Optional["stage_scenes.SceneComposite"]:
+        """The scenes laid over the framed video (9:16 without a gameplay background), or None."""
+        raw = request.scenes or [out for _, out in self._source_scene_pairs(request, time_map, window_start_ms)]
+        if not raw or is_landscape:
+            return None
+        if background:
+            logger.info("Scenes are skipped on a gameplay background clip")
+            return None
+        scenes = stage_scenes.parse_scenes(raw, scaled_duration_ms(time_map.output_ms, request.video_speed))
+        if not scenes:
+            return None
+        if any(s.scene == "stage" for s in scenes):
+            # The card frames the speaker's head and shoulders from their face through each stage scene: where the
+            # plan's own face samples are sparse (an editor export's plan has none), faces are found in the source.
+            try:
+                import dataclasses
+                segments = stage_scenes.edited_segments(scenes, time_map.output_ms, request.video_speed)
+                transition = stage_scenes.TRANSITION_MS * request.video_speed / 1000
+                spans = stage_scenes.card_sample_spans(plan, time_map.keeps, stage_scenes.card_runs(segments), transition)
+                found = stage_scenes.card_faces(request.video_path, plan, window_start_ms, spans)
+                if found:
+                    plan = dataclasses.replace(plan, face_samples=sorted([*plan.face_samples, *found], key=lambda s: s[0]))
+            except Exception as error:  # noqa: BLE001 - the card then frames from the plan's faces or the speaker's area
+                logger.info(f"Card faces not found: {type(error).__name__}")
+        try:
+            zones = face_zones(plan, time_map, width, speaker_h) if plan.face_samples or any(s.people for s in plan.shots) else []
+        except Exception:  # noqa: BLE001 - the card then uses the usual framing's face height
+            zones = []
+        work = os.path.dirname(request.output_path)
+        stem = f"{request.start_time_ms}-{request.end_time_ms}"
+        span_ms = window_ms if window_ms is not None else (plan.shots[-1].end_ms if plan.shots else 0)
+        cache = request.matte_cache_dir or os.path.join(work, ".scene-mattes")
+        # Frame escape: the speaker's matte for the stage scenes' stretches of the render window (kept between renders).
+        escape_matte = (lambda spans: depth_fx.escape_matte(request.video_path, cache, work, window_start_ms, span_ms, fps,
+                                                            plan.source_width, plan.source_height, spans, stem)) \
+            if span_ms > 0 and segmentation.available() else None
+        return stage_scenes.build_scene_graph(
+            graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
+            work, stem, bar_h=bar_h, zones=zones, brand=request.scene_brand_color,
+            card_graph=lambda w, h, runs, transition, escape=None, landing=None, screens=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape,
+                landing=landing, focus=self._screen_focus(request, plan, time_map, window_start_ms, runs, transition, screens))),
+            escape_matte=escape_matte, matte_size=depth_fx.matte_size(plan.source_width, plan.source_height))
+
+    @staticmethod
+    def _screen_focus(request: RenderRequest, plan, time_map: TimeMap, window_start_ms: int, runs, transition: float,
+                      screens) -> list:
+        """Per card run: where its filmed screen is busy (source pixels), for the screen cards (None elsewhere, or when
+        nothing stands out: the card then shows the screen's upper part)."""
+        if not screens or not any(screens):
+            return []
+        from clip_engine.services.screen_zoom import busy_box
+        out = []
+        for (a, b), screen in zip(runs, screens):
+            box = None
+            if screen:
+                spans = stage_scenes.edited_to_window([(a, b + transition)], time_map.keeps)
+                try:
+                    if spans:
+                        found = busy_box(request.video_path, window_start_ms + spans[0][0], window_start_ms + spans[-1][1])
+                        if found:
+                            box = (found[0] * plan.source_width, found[1] * plan.source_height, found[2] * plan.source_width, found[3] * plan.source_height)
+                except Exception as error:  # noqa: BLE001 - the card shows the screen's upper part instead
+                    logger.info(f"Screen card focus not found: {type(error).__name__}")
+            out.append(box)
+        return out
+
+    @staticmethod
+    def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:
+        """The request's source-time scenes on the finished clip's clock (none when `scenes` is given)."""
+        if request.scenes or not request.source_scenes:
+            return []
+        ranges = [(window_start_ms + a, window_start_ms + b) for a, b in time_map.keeps]
+        return stage_scenes.output_scenes(request.source_scenes, ranges, request.video_speed)
 
     async def _plan_layout(
         self,
@@ -604,8 +1154,13 @@ class RenderingService:
         if request.layout_style == LayoutStyle.FIT:
             return None
         try:
+            cues, focus = focus_for_window(request.transcript_segments, window_start_ms, window_ms,
+                                           request.screen_focus_mode, request.screen_focus, request.screen_focus_reason)
             return await self.layout_analyzer.analyze(
                 request.video_path, window_start_ms, window_ms, source_w, source_h, request.layout_style,
+                # Only when the speech points at the screen (keeps the call minimal otherwise).
+                **({"screen_cues_ms": cues} if cues else {}),
+                screen_focus=focus,
                 **({"capture": True} if request.debug_capture else {}),
                 **({'progress': lambda detail, percent: request.progress_callback(
                     detail if percent is None else f'{detail} {percent}%', None)} if request.progress_callback else {}),
@@ -663,13 +1218,30 @@ class RenderingService:
         target_width: int,
         target_height: int,
         is_landscape: bool,
+        headline: Optional[tuple[str, int]] = None,
+        end_s: Optional[float] = None,
+        hand_over_s: Optional[float] = None,
     ) -> list[Overlay]:
-        """Title card and channel banner, positioned per shot on the output timeline."""
+        """Title card or headline bar, and channel banner, positioned per shot on the output timeline.
+
+        `end_s` is the edited clip's length (before the speed-up): with "Hide hook text" the headline fades
+        out at its time on the output clock (scaled onto this clock by the video speed)."""
         src_w, src_h = out_plan.source_width, out_plan.source_height
         overlays: list[Overlay] = []
         # Landscape overlays were sized for 1080p; scale them with the output.
         scale = target_height / 1080 if is_landscape else 1.0
-        title = self._title_overlay_image(request, target_width, scale)
+        # Headline style with "No hook text" (where a headline is drawn: 9:16, no gameplay background):
+        # nothing at the top, not a title card in its place. 16:9 and background clips keep their title card.
+        no_hook = (request.title_style == TitleStyle.HEADLINE and parse_headline_look(request.headline_look).look == "none"
+                   and not is_landscape and not self._background_video(request, is_landscape))
+        title = None if headline or no_hook else self._title_overlay_image(request, target_width, scale)
+        if headline:
+            look = parse_headline_look(request.headline_look)
+            fade = headline_hide_fade(look, (end_s or 0) / request.video_speed, request.video_speed) if end_s else None
+            if hand_over_s is not None and end_s and hand_over_s < end_s and (fade is None or hand_over_s < fade[0]):
+                # The first chapter header takes the top: the hook fades out as it comes in (edited clock).
+                fade = (max(0.0, hand_over_s - HEADLINE_HIDE_FADE_S * request.video_speed), HEADLINE_HIDE_FADE_S * request.video_speed)
+            overlays.append((headline[0], "0", "0", *headline_hide_overlay(fade)) if fade else (headline[0], "0", "0"))
         if title:
             path, _, height = title
             if is_landscape:
@@ -693,6 +1265,47 @@ class RenderingService:
                 overlays.append((banner[0], "(W-w)/2", per_shot_expr(out_plan, [
                     banner_y(s, src_w, src_h, target_width, target_height) for s in out_plan.shots
                 ])))
+        return overlays
+
+    def _brand_overlays(
+        self, request: RenderRequest, target_width: int, target_height: int, is_landscape: bool,
+        bar_h: int, background: bool, end_s: float,
+    ) -> list[Overlay]:
+        """The member's handle/logo in its corner and the "Comment KEYWORD" tag for the last 4 seconds.
+
+        Times are on the edited clock before the speed-up (like every overlay here). The mark stays below
+        the hook text (or title card) and, in a bottom corner, under the captions."""
+        from clip_engine.services.brand_mark import keyword_tag, mark_image, mark_position
+        overlays: list[Overlay] = []
+        folder = os.path.dirname(request.output_path)
+        stem = f"{request.start_time_ms}-{request.end_time_ms}"
+        title_drawn = request.include_title and bool(request.title_text) and not bar_h
+        if request.brand_mark:
+            path = os.path.join(folder, f"brand-mark-{stem}.png")
+            size = mark_image(request.brand_mark, path, target_width, target_height)
+            if size:
+                if is_landscape:
+                    top_from, captions_to = 0, 0
+                else:
+                    # Under the headline bar, or below a title card near the top (TOP_TITLE_Y plus its height).
+                    top_from = bar_h if bar_h else round(target_height * 0.17) if title_drawn else 0
+                    captions_to = (even(target_height * BACKGROUND_SPLIT) + 120 if background
+                                   else bar_h + round((target_height - bar_h) * HEADLINE_CAPTION_Y) + 110 if bar_h
+                                   else round(target_height * 0.78))
+                x, y = mark_position(request.brand_mark["position"], target_width, target_height, size[0], size[1],
+                                     top_from=top_from, captions_to=captions_to if request.include_captions else 0)
+                overlays.append((path, str(x), str(y)))
+        # (The comment box extra types the keyword instead.)
+        comment_box = bool(request.look_extras and request.look_extras.has("comment_box"))
+        if request.cta_keyword and end_s > 1 and not comment_box:
+            path = os.path.join(folder, f"cta-tag-{stem}.png")
+            scale = target_height / 1920 if not is_landscape else target_height / 1080
+            w, h = keyword_tag(request.cta_keyword, path, target_width, max(24, round(44 * scale)))
+            # Centered, over the upper middle of the frame (clear of the captions and the bottom buttons).
+            y = (bar_h + round(target_height * 0.06)) if bar_h else round(target_height * (0.30 if not is_landscape else 0.12))
+            # The last 4 seconds (the second half of a very short clip).
+            start = max(end_s / 2, end_s - 4.0)
+            overlays.append((path, str((target_width - w) // 2), str(y), f"gte(t,{start:.3f})", "null"))
         return overlays
 
     def _caption_graph(
@@ -740,19 +1353,341 @@ class RenderingService:
         return "null"
 
     @staticmethod
-    def _compose_overlays(graph: str, overlays: list[Overlay], video_filter: str = "null") -> tuple[str, list[str]]:
+    def _background_video(request: RenderRequest, is_landscape: bool) -> Optional[str]:
+        """The gameplay background to stack under the speaker, if this render uses one."""
+        path = request.background_video_path
+        if not path or is_landscape:
+            return None
+        if not os.path.isfile(path):
+            raise RenderingError("The background video is missing. Choose it again in Format.")
+        return path
+
+    def _extras_words(self, request: RenderRequest, window_start_ms: int, time_map: TimeMap) -> list[tuple[float, float, str]]:
+        """Spoken words on the edited clock (seconds), for the zoom punch's phrase boundaries."""
+        try:
+            segments = remap_segments(request.transcript_segments or [], window_start_ms, time_map)
+        except Exception:  # noqa: BLE001 - without words the punch cuts on its own rhythm
+            return []
+        return [((w.start_time_ms - window_start_ms) / 1000, (w.end_time_ms - window_start_ms) / 1000, w.word)
+                for seg in segments for w in (seg.words or [])]
+
+    @staticmethod
+    def _broll_windows(
+        request: RenderRequest, time_map: TimeMap, window_start_ms: int,
+    ) -> list[tuple[str, float, float]]:
+        """B-roll shots on the output clock: (path, start s, end s), cut beats dropped."""
+        if request.broll_shots and request.background_video_path:
+            raise RenderingError("Choose either a background video or B-roll, not both.")
+        windows: list[tuple[str, float, float]] = []
+        for start_ms, end_ms, path in request.broll_shots:
+            if not os.path.isfile(path):
+                logger.warning("A B-roll file is missing; that beat shows the speaker")
+                continue
+            a = time_map.to_output_clamped(start_ms - window_start_ms)
+            b = time_map.to_output_clamped(end_ms - window_start_ms)
+            if b - a >= BROLL_MIN_VISIBLE_MS:
+                windows.append((path, a / 1000, b / 1000))
+        return windows
+
+    @staticmethod
+    def _overlay_broll(
+        graph: str, windows: list[tuple[str, float, float]], width: int, height: int, fps: str,
+    ) -> str:
+        """Lay each B-roll input (1..n) full-frame over [base] during its window; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        parts = [graph.replace("[base]", "[speaker]")]
+        current = "speaker"
+        for k, (_, a, b) in enumerate(windows):
+            label = "base" if k == len(windows) - 1 else f"bro{k}"
+            parts.append(
+                f"[{k + 1}:v]trim=duration={b - a:.3f},setpts=PTS-STARTPTS+{a:.3f}/TB,fps={fps},"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{height},setsar=1,format=yuv420p[br{k}]"
+            )
+            parts.append(
+                f"[{current}][br{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.3f},{b:.3f})'[{label}]"
+            )
+            current = label
+        return ";".join(parts)
+
+    @staticmethod
+    def _pad_for_headline(graph: str, width: int, height: int, bar_h: int, color: str = "white") -> str:
+        """Put the video panel under the headline bar (in the bar's color); output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        if not bar_h:
+            return graph
+        return f"{graph.replace('[base]', '[panel]')};[panel]pad={width}:{height}:0:{bar_h}:color={color},setsar=1[base]"
+
+    @staticmethod
+    def _headline_lines(draw: "ImageDraw.ImageDraw", text: str, font, max_w: int) -> list[str]:
+        """Greedy word wrap to max_w pixels."""
+        lines: list[str] = []
+        for word in text.split():
+            trial = f"{lines[-1]} {word}" if lines else word
+            if lines and draw.textlength(trial, font=font) <= max_w:
+                lines[-1] = trial
+            else:
+                lines.append(word)
+        return lines
+
+    def _headline_bar_image(
+        self, request: RenderRequest, target_width: int, target_height: int, is_landscape: bool,
+    ) -> Optional[tuple[str, int]]:
+        """Render the headline PNG (full width). Returns (path, bar height) or None.
+        A floating headline is text over the video: its bar height is 0."""
+        if is_landscape or request.title_style != TitleStyle.HEADLINE or not request.include_title:
+            return None
+        text = " ".join(_UNDRAWABLE.sub("", request.headline_text or request.title_text or "").split())[:MAX_TITLE_CHARS]
+        if len(text.split()) < 2:
+            return None
+        style = parse_headline_look(request.headline_look)
+        if style.look == "none":
+            # No hook text: nothing drawn, and the video keeps the whole frame.
+            return None
+        if style.look == "floating" and style.text_bg == "highlight":
+            return self._highlight_headline(request, text, style, target_width, target_height)
+        if style.font in HEADLINE_UPPER_FONTS:
+            text = text.upper()
+        unit = target_height / 1920
+        pad_x = round(target_width * HEADLINE_PAD_X)
+        max_w = target_width - 2 * pad_x
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        scale = HEADLINE_FONT_SCALE.get(style.font, 1)
+        for size in (FLOATING_FONT_SIZES if style.look == "floating" else HEADLINE_FONT_SIZES):
+            try:
+                font = ImageFont.truetype(self._headline_font_path(style.font), round(size * scale * unit))
+            except Exception:
+                font = ImageFont.load_default()
+            lines = self._headline_lines(draw, text, font, max_w)
+            if len(lines) <= HEADLINE_MAX_LINES:
+                # Balance the lines (no lone last word): the narrowest wrap
+                # that still fits in the same number of lines.
+                width = max_w
+                while len(lines) > 1 and width > max_w // 2:
+                    narrower = self._headline_lines(draw, text, font, width - 20)
+                    if len(narrower) != len(lines):
+                        break
+                    lines, width = narrower, width - 20
+                break
+        lines = lines[:HEADLINE_MAX_LINES]
+        line_h = round(font.size * 1.22) if hasattr(font, "size") else 24
+        top = round(target_height * HEADLINE_TOP_SAFE)
+        pad_y = round(target_height * HEADLINE_PAD_Y)
+        text_h = line_h * len(lines)
+        bar_h = even(min(max(top + 2 * pad_y + text_h, target_height * HEADLINE_MIN_H), target_height * HEADLINE_MAX_H))
+        bg = style.background
+        box = style.box
+        img = Image.new("RGBA", (target_width, bar_h), (*bg, 255) if bg else (0, 0, 0, 0))
+        # Center the text in the space below the platform UI.
+        y = top + max(0, (bar_h - top - text_h) // 2)
+        # Text over the video gets an outline and a shadow, unless each line sits on a box.
+        stroke = 0 if bg or box else max(3, round(getattr(font, "size", 40) * 0.09))
+        accent = self._headline_accent(style.font, font)
+        accent_at = headline_accent_index(text.split()) if accent else -1
+        measure = ImageDraw.Draw(img)
+        # Each line's words, their faces and widths, and the line's left edge.
+        placed = []
+        word_at = 0
+        space = measure.textlength(" ", font=font)
+        for line in lines:
+            words = line.split()
+            faces = [accent if accent and word_at + i == accent_at else font for i in range(len(words))]
+            widths = [measure.textlength(word, font=face) for word, face in zip(words, faces)]
+            width = sum(widths) + space * (len(words) - 1) if accent else measure.textlength(line, font=font)
+            placed.append((line, words, faces, widths, width, (target_width - width) / 2))
+            word_at += len(words)
+        if box:
+            img = Image.alpha_composite(img, self._text_boxes(img.size, [p[4] for p in placed], y, line_h, font, box))
+        elif not bg:
+            # Floating: a soft shadow under the outlined text keeps it readable on any footage.
+            shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            sd = ImageDraw.Draw(shadow)
+            sy = y
+            for line, *_rest, x in placed:
+                sd.text((x, sy + round(6 * unit)), line, font=font, fill=(0, 0, 0, 150), stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+                sy += line_h
+            img = Image.alpha_composite(img, shadow.filter(ImageFilter.GaussianBlur(round(8 * unit))))
+        # The text on its own layer, so it composites over a see-through box.
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        out = ImageDraw.Draw(layer)
+        for line, words, faces, widths, _width, x in placed:
+            if not accent:
+                out.text((x, y), line, font=font, fill=(*style.text, 255),
+                         stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+            else:
+                # One word in the italic serif, on the same baseline as the sans words.
+                baseline = y + font.getmetrics()[0]
+                for word, face, width in zip(words, faces, widths):
+                    out.text((x, baseline), word, font=face, anchor="ls", fill=(*style.text, 255),
+                             stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+                    x += width + space
+            y += line_h
+        img = Image.alpha_composite(img, layer)
+        path = os.path.join(
+            os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png",
+        )
+        img.save(path, "PNG")
+        return path, (bar_h if bg else 0)
+
+    def _highlight_headline(self, request: RenderRequest, text: str, style: HeadlineLook, width: int, height: int) -> Optional[tuple[str, int]]:
+        """'Key words in color' (headline-look.ts highlightPlacement): the lead words big and bold on a white box, the key
+        words in the italic serif on a box in the color, each group's boxes merged snug behind its lines, over the video."""
+        unit = height / 1920
+        lead, phrase = highlight_split(text)
+        if style.font in HEADLINE_UPPER_FONTS:
+            lead = lead.upper()
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        scale = HEADLINE_FONT_SCALE.get(style.font, 1)
+
+        def faces(size: float) -> tuple[Any, Any]:
+            try:
+                a = ImageFont.truetype(self._headline_font_path(style.font), max(8, round(size * scale * unit)))
+            except Exception:
+                a = ImageFont.load_default()
+            try:
+                b = ImageFont.truetype(self._headline_font_path(style.font, HEADLINE_ACCENT_FONT), max(8, round(size * HIGHLIGHT_PHRASE_SCALE * unit)))
+            except Exception:
+                b = a
+            return a, b
+
+        def balanced(words: str, face: Any, max_w: int) -> list[str]:
+            lines = self._headline_lines(draw, words, face, max_w)
+            w = max_w
+            while len(lines) > 1 and w > max_w // 2:
+                narrower = self._headline_lines(draw, words, face, w - round(20 * unit))
+                if len(narrower) != len(lines):
+                    break
+                lines, w = narrower, w - round(20 * unit)
+            return lines
+
+        max_w = width - 2 * round(width * HIGHLIGHT_PAD_X)
+        for size in HIGHLIGHT_SIZES:
+            lead_face, phrase_face = faces(size)
+            a = balanced(lead, lead_face, max_w) if lead else []
+            b = balanced(phrase, phrase_face, max_w) if phrase else []
+            if len(a) <= 2 and len(b) <= 2 and len(a) + len(b) <= 3:
+                break
+        lead_h = round(size * HIGHLIGHT_LEAD_LINE * unit)
+        phrase_h = round(size * HIGHLIGHT_PHRASE_SCALE * HIGHLIGHT_PHRASE_LINE * unit)
+        y = round(height * HEADLINE_TOP_SAFE)
+        rows = []
+        for line in a:
+            rows.append((line, False, y + lead_h / 2, draw.textlength(line, font=lead_face), lead_h))
+            y += lead_h
+        if a and b:
+            y += round(size * HIGHLIGHT_GAP * unit)
+        for line in b:
+            rows.append((line, True, y + phrase_h / 2, draw.textlength(line, font=phrase_face), phrase_h))
+            y += phrase_h
+        img_h = even(y + round(size * 0.3 * unit))
+        lead_bg, lead_ink, phrase_bg, phrase_ink = highlight_colors(style.color)
+        img = Image.new("RGBA", (width, img_h), (0, 0, 0, 0))
+        masks = []
+        for phrase_group, em in ((False, size * scale * unit), (True, size * HIGHLIGHT_PHRASE_SCALE * unit)):
+            group = [r for r in rows if r[1] == phrase_group]
+            if not group:
+                continue
+            pad = em * TEXT_BOX_PAD_X
+            boxes = [((width - w) / 2 - pad, c - h / 2, (width + w) / 2 + pad, c + h / 2) for _, _, c, w, h in group]
+            k = 4  # drawn big and scaled down: smooth edges
+            mask = Image.new("L", (width * k, img_h * k), 0)
+            polygon = text_box_polygon(text_box_outline(boxes, em * TEXT_BOX_RADIUS, snap=em * TEXT_BOX_RADIUS))
+            ImageDraw.Draw(mask).polygon([(px * k, py * k) for px, py in polygon], fill=255)
+            masks.append((mask.resize((width, img_h), Image.LANCZOS), phrase_bg if phrase_group else lead_bg))
+        # A soft shadow under both boxes, so they lift off any footage.
+        shadow = Image.new("L", (width, img_h), 0)
+        for mask, _ in masks:
+            shadow = ImageChops.lighter(shadow, mask)
+        shadow = shadow.filter(ImageFilter.GaussianBlur(round(14 * unit))).point(lambda v: round(v * 0.35))
+        shade = Image.new("RGBA", (width, img_h), (0, 0, 0, 0))
+        shade.putalpha(ImageChops.offset(shadow, 0, round(8 * unit)))
+        img = Image.alpha_composite(img, shade)
+        for mask, color in masks:
+            layer = Image.new("RGBA", (width, img_h), (*color, 0))
+            layer.putalpha(mask)
+            img = Image.alpha_composite(img, layer)
+        out = ImageDraw.Draw(img)
+        for line, phrase_line, center, _w, _h in rows:
+            out.text((width / 2, center), line, font=phrase_face if phrase_line else lead_face, anchor="mm",
+                     fill=(*(phrase_ink if phrase_line else lead_ink), 255))
+        path = os.path.join(os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png")
+        img.save(path, "PNG")
+        return path, 0
+
+    @staticmethod
+    def _text_boxes(size: tuple[int, int], widths: list[float], y: float, line_h: int, font: Any,
+                    color: tuple[int, int, int, int]) -> Image.Image:
+        """Instagram-style text background: a snug rounded box behind each line, touching the next one.
+        Each box is the line's width plus padding, one line tall, centered on the line's text."""
+        em = getattr(font, "size", 40)
+        ascent, descent = font.getmetrics() if hasattr(font, "getmetrics") else (em, 0)
+        # Centered on the glyphs the way a browser centers a line box (the preview matches).
+        center = y + (ascent + descent) / 2
+        pad = em * TEXT_BOX_PAD_X
+        boxes = []
+        for i, width in enumerate(widths):
+            mid = center + i * line_h
+            boxes.append(((size[0] - width) / 2 - pad, mid - line_h / 2, (size[0] + width) / 2 + pad, mid + line_h / 2))
+        radius = em * TEXT_BOX_RADIUS
+        scale = 4  # drawn big and scaled down: smooth edges
+        mask = Image.new("L", (size[0] * scale, size[1] * scale), 0)
+        polygon = text_box_polygon(text_box_outline(boxes, radius, snap=radius))
+        ImageDraw.Draw(mask).polygon([(px * scale, py * scale) for px, py in polygon], fill=255)
+        mask = mask.resize(size, Image.LANCZOS)
+        layer = Image.new("RGBA", size, color[:3] + (0,))
+        layer.putalpha(mask.point(lambda v: round(v * color[3] / 255)))
+        return layer
+
+    def _headline_accent(self, font_id: str, font: Any) -> Any:
+        """The italic serif for the accent word (sans + italic serif look only), at the base font's size."""
+        if font_id != "sans_serif_accent" or not hasattr(font, "size"):
+            return None
+        path = self._headline_font_path(font_id, HEADLINE_ACCENT_FONT)
+        try:
+            return ImageFont.truetype(path, round(font.size * HEADLINE_ACCENT_SCALE))
+        except Exception:
+            return None
+
+    def _headline_font_path(self, font: str = "clean", name: Optional[str] = None) -> str:
+        """The look's font (clean: Montserrat ExtraBold, a bold-not-black caption face); fall back to the title font."""
+        name = name or HEADLINE_FONTS.get(font, HEADLINE_FONTS["clean"])
+        for p in (
+            os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", name),
+            os.path.join("/app", "assets", "fonts", name),
+        ):
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+        return self._font_path
+
+    @staticmethod
+    def _stack_background(graph: str, width: int, panel_h: int, fps: str) -> str:
+        """Stack the looping background (input 1) under the speaker panel; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        graph = graph.replace("[base]", "[speaker]")
+        return (
+            f"{graph};"
+            f"[1:v]fps={fps},scale={width}:{panel_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{panel_h},setsar=1[background];"
+            f"[speaker][background]vstack=inputs=2:shortest=1,setsar=1[base]"
+        )
+
+    @staticmethod
+    def _compose_overlays(
+        graph: str, overlays: list[Overlay], video_filter: str = "null", first_index: int = 1,
+    ) -> tuple[str, list[str]]:
         """Append image overlays to a graph ending in [captioned]; output is [out].
 
         Returns the full filter_complex and the extra input paths, in input
-        order (the video is input 0, overlays follow).
+        order (the video is input 0; a background video, when present, is
+        input 1 and overlays start at `first_index`).
         """
         if not overlays:
             return f"{graph};[captioned]{video_filter}[out]", []
         parts = [graph]
         current = "captioned"
-        for index, overlay in enumerate(overlays, start=1):
+        for index, overlay in enumerate(overlays, start=first_index):
             _, x_expr, y_expr = overlay[:3]
-            label = "composited" if index == len(overlays) else f"ov{index}"
+            label = "composited" if index == first_index + len(overlays) - 1 else f"ov{index}"
             image, enable = f"[{index}:v]", ""
             if len(overlay) == 5:
                 enable_expr, image_filter = overlay[3], overlay[4]
@@ -790,6 +1725,8 @@ class RenderingService:
         out_plan: ClipLayoutPlan,
         is_landscape: bool,
         plan: Optional[ClipLayoutPlan] = None,
+        bar_h: int = 0,
+        scenes: Optional["stage_scenes.SceneComposite"] = None,
     ) -> Optional[str]:
         """ASS captions on the edited timeline, positioned per shot (9:16).
 
@@ -798,7 +1735,7 @@ class RenderingService:
         """
         if not (request.include_captions and request.transcript_segments):
             return None
-        segments = remap_segments(request.transcript_segments, window_start_ms, time_map)
+        segments = self._caption_segments(request, window_start_ms, time_map)
         if not segments:
             return None
 
@@ -807,7 +1744,12 @@ class RenderingService:
             src_w, src_h = out_plan.source_width, out_plan.source_height
             anchors = []
             for shot in out_plan.shots:
-                alignment, y = caption_anchor(shot, src_w, src_h, target_width, target_height)
+                if bar_h:
+                    # Under a headline bar the video is a shorter panel; keep
+                    # captions in its lower part, clear of the headline.
+                    alignment, y = 5, bar_h + round((target_height - bar_h) * HEADLINE_CAPTION_Y)
+                else:
+                    alignment, y = caption_anchor(shot, src_w, src_h, target_width, target_height)
                 anchors.append((shot.end_ms, alignment, y))
             anchors[-1] = (10**9, anchors[-1][1], anchors[-1][2])
 
@@ -816,10 +1758,19 @@ class RenderingService:
             if type(request.caption_y) not in (int, float) or not .1 <= request.caption_y <= .9:
                 raise ValueError('Invalid caption position')
             anchors = [(10**9, 5, round(target_height * request.caption_y))]
-        elif anchors and plan is not None:
+        elif self._background_video(request, is_landscape):
+            # Gameplay split: captions ride the seam between speaker and background.
+            anchors = [(10**9, 5, even(target_height * BACKGROUND_SPLIT))]
+        elif anchors and plan is not None and not bar_h:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
                 placer = CaptionPlacer(anchors, zones, target_width, target_height)
+        windows = stage_scenes.caption_windows(scenes.segments, scenes.geometry, scenes.escaped_spans) if scenes else []
+        if windows:
+            # Stage and visual scenes: captions in the band between the stage and the speaker card.
+            anchors = stage_scenes.scene_anchors(anchors or [(10**9, 5, round(target_height * 0.7))], windows)
+            if placer is not None:
+                placer = stage_scenes.scene_placer(placer, windows)
 
         caption_path = os.path.join(
             os.path.dirname(request.output_path),
@@ -828,18 +1779,38 @@ class RenderingService:
         style = request.caption_style
         if is_landscape:
             style = self._landscape_caption_style(style or self.settings.get_caption_style(), target_height)
-        return await self.caption_generator.generate_captions(
-            transcript_segments=segments,
-            clip_start_ms=window_start_ms,
-            clip_end_ms=window_start_ms + time_map.output_ms,
-            output_path=caption_path,
-            caption_style=style,
-            output_width=target_width,
-            output_height=target_height,
-            anchors=anchors,
-            emphasis_words=request.emphasis_words,
-            placer=placer,
-        )
+        if request.look_extras:
+            style = extras_module.caption_style(style or self.settings.get_caption_style(), request.look_extras)
+        options = dict(transcript_segments=segments, clip_start_ms=window_start_ms, clip_end_ms=window_start_ms + time_map.output_ms,
+                       output_width=target_width, output_height=target_height, anchors=anchors,
+                       emphasis_words=request.emphasis_words, placer=placer)
+        path = await self.caption_generator.generate_captions(output_path=caption_path, caption_style=style, **options)
+        base_style = style or self.settings.get_caption_style()
+        modes = {mode for *_, mode in windows if mode}
+        if path and modes:
+            # In a scene's band the same captions in another look, swapped in event by event: dark text on a light
+            # backdrop (captions already on their own solid box keep it), white words on a color box on a grid or
+            # gradient backdrop.
+            variants = []
+            if "light" in modes and not stage_scenes.boxed(base_style):
+                variants.append(("light", stage_scenes.light_backdrop_style(base_style)))
+            if "box" in modes:
+                variants.append(("box", stage_scenes.box_backdrop_style(base_style, request.scene_brand_color)))
+            if "paper" in modes:
+                variants.append(("paper", stage_scenes.paper_backdrop_style(base_style, request.scene_brand_color)))
+            for mode, variant_style in variants:
+                variant_path = f"{caption_path}.{mode}.ass"
+                try:
+                    if await self.caption_generator.generate_captions(output_path=variant_path, caption_style=variant_style, **options):
+                        with open(path, encoding="utf-8") as f, open(variant_path, encoding="utf-8") as g:
+                            merged = stage_scenes.splice_caption_events(
+                                f.read(), g.read(), windows, self.caption_generator._parse_ass_time, mode)
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(merged)
+                finally:
+                    if os.path.exists(variant_path):
+                        os.remove(variant_path)
+        return path
 
     # Pixel-sized caption style fields, scaled together for landscape output.
     _CAPTION_PIXEL_FIELDS = (
@@ -927,6 +1898,65 @@ class RenderingService:
         except Exception as e:
             logger.warning(f"Loudness measurement failed; using single-pass normalization: {e}")
             return None
+
+    async def prepend_teaser(
+        self, request: RenderRequest, result: RenderResult, teaser_start_ms: int, teaser_end_ms: int,
+    ) -> RenderResult:
+        """Open the rendered clip with a teaser of its strongest line (hook preview).
+
+        The teaser is rendered with the clip's own framing, captions, title
+        and background, then joined in front of the clip. Any failure keeps
+        the clip as it was.
+        """
+        base, ext = os.path.splitext(result.output_path)
+        teaser_path, joined_path = f"{base}.teaser{ext}", f"{base}.joined{ext}"
+        teaser_request = replace(
+            request, output_path=teaser_path, start_time_ms=teaser_start_ms, end_time_ms=teaser_end_ms,
+            apply_padding=False, pacing=Pacing.NATURAL, broll_shots=[], longform=False, skip_ranges_ms=[],
+            chapters=[], progress_callback=None, manual_plan=None, manual_ranges_ms=None,
+            editorial_context=None, editorial_service=None, coherence_reviewer=None, debug_capture=False,
+            # The keyword tag belongs at the clip's end, not the teaser's (the handle stays on).
+            cta_keyword="",
+        )
+        try:
+            teaser = await self.render_clip(teaser_request)
+            with_audio = await self._has_audio(result.output_path) and await self._has_audio(teaser.output_path)
+            streams = "[0:v][0:a][1:v][1:a]" if with_audio else "[0:v][1:v]"
+            graph = f"{streams}concat=n=2:v=1:a={1 if with_audio else 0}[v]" + ("[a]" if with_audio else "")
+            fps = await self._probe_fps(result.output_path)
+            cmd = [
+                "ffmpeg", "-nostdin", "-nostats", "-y",
+                "-protocol_whitelist", "file", "-i", teaser.output_path,
+                "-protocol_whitelist", "file", "-i", result.output_path,
+                "-filter_complex", graph, "-map", "[v]",
+                *self._video_codec_args(result.output_width or 1080, result.output_height or 1920, fps),
+                "-pix_fmt", "yuv420p", "-r", fps, "-movflags", "+faststart",
+            ]
+            cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"] if with_audio else ["-an"]
+            cmd.append(joined_path)
+            await self._run_cmd(cmd)
+            os.replace(joined_path, result.output_path)
+            if result.subtitle_path:
+                # The clip now opens with the teaser: its captions come first.
+                join_srt(teaser.subtitle_path, teaser.duration_ms, result.subtitle_path)
+            return replace(
+                result,
+                duration_ms=result.duration_ms + teaser.duration_ms,
+                file_size_bytes=os.path.getsize(result.output_path),
+                # Chapters start after the teaser (longform clips, which carry
+                # subtitles, never get a teaser).
+                chapters=[(ms + teaser.duration_ms, title) for ms, title in result.chapters],
+                layout_cost_usd=result.layout_cost_usd + teaser.layout_cost_usd,
+            )
+        except Exception as exc:
+            logger.warning(f"Hook preview failed; keeping the clip without it: {exc}")
+            return result
+        finally:
+            for path in (teaser_path, joined_path, os.path.splitext(teaser_path)[0] + ".srt"):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     async def _has_audio(self, video_path: str) -> bool:
         """Whether the source has an audio stream (the graph maps [0:a] only if so)."""
@@ -1023,7 +2053,7 @@ class RenderingService:
         """Render the channel URL banner as a transparent PNG.
 
         Drawn with Pillow rather than FFmpeg's drawtext: the static FFmpeg
-        builds BridgeClip ships (6.1+) omit drawtext, which made any render with
+        builds CreatorClips ships (6.1+) omit drawtext, which made any render with
         a banner fail.
 
         Returns (path, width, height) or None when no banner is configured.
@@ -1057,19 +2087,23 @@ class RenderingService:
             "ffprobe",
             "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=s=x:p=0",
+            "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+            "-of", "json",
             "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
             video_path,
         ]
         try:
+            from clip_engine.services.video_downloader import displayed_sideways
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: run_media(cmd, timeout=PROBE_TIMEOUT_SECONDS)
             )
-            dims = result.stdout.decode().strip().split("x")
-            width, height = int(dims[0]), int(dims[1])
+            stream = json.loads(result.stdout.decode() or "{}")["streams"][0]
+            width, height = int(stream["width"]), int(stream["height"])
+            if displayed_sideways(stream):
+                # A phone video filmed upright: FFmpeg turns its frames upright when it decodes them.
+                width, height = height, width
             validate_video_dimensions(width, height)
             return width, height
         except Exception as e:
@@ -1085,6 +2119,8 @@ class RenderingService:
         filter_complex: str,
         audio_label: Optional[str] = None,
         extra_inputs: Optional[list[str]] = None,
+        looped_inputs: Optional[list[str]] = None,
+        still_inputs: Optional[list[str]] = None,
         fps: str = "30",
         output_size: tuple[int, int] = (1080, 1920),
         output_duration_ms: Optional[int] = None,
@@ -1110,6 +2146,19 @@ class RenderingService:
             "-i", input_path,
         ]
 
+        for looped in (looped_inputs or []):
+            # Inputs 1..n: background / B-roll videos, looped forever and muted.
+            # The graph trims or stacks them so the speaker sets the length.
+            cmd.extend([
+                "-stream_loop", "-1", "-an",
+                "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
+                "-i", looped,
+            ])
+
+        for still in (still_inputs or []):
+            # Single still images the graph repeats in memory (scene backdrops, the card's mask and shadow).
+            cmd.extend(["-protocol_whitelist", "file,pipe,fd", "-i", still])
+
         for extra in (extra_inputs or []):
             cmd.extend(["-loop", "1", "-protocol_whitelist", "file,pipe,fd", "-i", extra])
 
@@ -1130,7 +2179,7 @@ class RenderingService:
         else:
             cmd.append("-an")
 
-        if extra_inputs:
+        if extra_inputs or looped_inputs or still_inputs:
             cmd.append("-shortest")
 
         cmd.append(output_path)
@@ -1324,3 +2373,13 @@ class RenderingService:
 class RenderingError(Exception):
     """Exception raised when rendering fails."""
     pass
+
+
+def graded_card(grade: Optional[str], card: tuple[str, list[int]]) -> tuple[str, list[int]]:
+    """A stage scene's speaker card (its own framing chain from the source) with the clip's color grade: the card and the
+    head that escapes it are footage, so they match the full-frame shots; the backdrop and graphics are not graded."""
+    if not grade:
+        return card
+    from clip_engine.services.color_grade import with_grade
+    graph, widths = card
+    return with_grade(graph, grade, "sc_card_frames"), widths

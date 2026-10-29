@@ -1,4 +1,10 @@
 import { awaitEditorSaveBeforeClose, stopEditorsForQuit } from './clip-editor'
+import { allowMediaCheck, allowMediaRequest } from './media-permissions'
+import { stopAvatarRenderForQuit } from './avatar-studio'
+import { stopListicleForQuit } from './listicle'
+import { stopBrollVideoForQuit } from './broll-video'
+import { cleanupAbandoned, stopRemixForQuit } from './remix'
+import { stopEditForQuit } from './edit-recording'
 import { app, BrowserWindow, dialog, nativeTheme, shell, protocol } from 'electron'
 import { extname, join } from 'path'
 import { mkdirSync } from 'fs'
@@ -8,6 +14,7 @@ import { createMenu } from './menu'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initAutoUpdater } from './auto-updater'
 import { logger, getLogFilePath, errorSummary } from './logger'
+import { MAIN_ERROR_NOTICE, offerReloadAfter, onceNotifier, rendererGoneMessage } from './crash-recovery'
 import { authorizeMedia, isTrustedExternalUrl, openAuthorizedMedia } from './security'
 import { loadSettings } from './settings-store'
 import { cleanStaleWorkspaces, stopAllJobsForQuit } from './pipeline-runner'
@@ -15,17 +22,33 @@ import { cancelQueuedJobsForQuit } from './job-manager'
 import { cancelZernioConnect } from './zernio/service'
 import { isAutomationMedia, startAutomationScheduler } from './automations'
 import { sweepDeletingRuns } from './library-management'
+import { recoverInterruptedMoves } from './library-storage'
 import { registerAssistant, type AssistantRuntime } from './assistant/ipc'
+import { AVATAR_STUDIO_E2E_ARG, isAvatarStudioEnabled, setAvatarStudioForTests } from '../shared/features'
 
 // Catch crashes anywhere in the main process so we get a log line instead
 // of a silent exit. Without these, an unhandled rejection in an IPC handler
 // would disappear into the void in a packaged build.
+// A crash is also never silent for the member: the first one in a session shows a short notice.
+const noticeMainError = onceNotifier(() => {
+  if (!app.isReady() || hiddenForTestsEarly()) return
+  const window = BrowserWindow.getAllWindows()[0]
+  const options = { type: 'warning' as const, message: MAIN_ERROR_NOTICE.message, detail: MAIN_ERROR_NOTICE.detail, buttons: ['OK'], noLink: true }
+  void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).catch(() => undefined)
+})
 process.on('uncaughtException', (err) => {
   logger.error('main.uncaughtException', errorSummary(err))
+  noticeMainError()
 })
 process.on('unhandledRejection', (reason) => {
+  // Logged only: a rejected promise nobody waited for rarely breaks what the member sees.
   logger.error('main.unhandledRejection', errorSummary(reason))
 })
+
+/** Scripted e2e runs (hiddenForTests below): no native dialogs. A function, so the crash handlers above can ask early. */
+function hiddenForTestsEarly(): boolean {
+  return !app.isPackaged && process.env.BRIDGECLIP_E2E === '1'
+}
 
 let mainWindow: BrowserWindow | null = null
 let assistant: AssistantRuntime | null = null
@@ -48,7 +71,9 @@ if (!app.isPackaged && process.env.BRIDGECLIP_USER_DATA_DIR) {
 
 // Development-only: scripted end-to-end runs keep the window hidden and out
 // of the Dock, so a test run never takes over the developer's screen.
-const hiddenForTests = !app.isPackaged && process.env.BRIDGECLIP_E2E === '1'
+const hiddenForTests = hiddenForTestsEarly()
+// Development-only: e2e runs that cover Avatar Studio turn it back on (it's switched off for members; see shared/features).
+if (hiddenForTests && process.env.BRIDGECLIP_E2E_AVATAR_STUDIO === '1') setAvatarStudioForTests(true)
 if (hiddenForTests) {
   // Nor may it open the developer's real browser from any link.
   shell.openExternal = async (url: string): Promise<void> => {
@@ -108,7 +133,7 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 520,
     show: false,
-    title: 'BridgeClip',
+    title: 'CreatorClips',
     icon: is.dev ? devIcon : undefined,
     // macOS-only window chrome: 'hiddenInset' and trafficLightPosition are
     // ignored on other platforms, so only pass them on darwin.
@@ -127,6 +152,8 @@ function createWindow(): void {
       : { backgroundColor: '#07080c' }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      // The renderer's copy of the e2e Avatar Studio switch (read by the preload).
+      ...(isAvatarStudioEnabled() ? { additionalArguments: [AVATAR_STUDIO_E2E_ARG] } : {}),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
@@ -165,6 +192,24 @@ function createWindow(): void {
     }
   })
 
+  // The page process crashed or was killed (a blank window otherwise): log it and offer to reload.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('renderer.gone', { kind: details.reason, exitCode: details.exitCode })
+    if (!offerReloadAfter(details.reason) || window.isDestroyed()) return
+    if (hiddenForTests) {
+      // A native dialog would hang scripted runs; tests check that it reloads.
+      logger.info('renderer.gone.reload', { kind: details.reason })
+      window.webContents.reload()
+      return
+    }
+    const text = rendererGoneMessage(details.reason)
+    void dialog.showMessageBox(window, { type: 'warning', message: text.message, detail: text.detail, buttons: text.buttons, defaultId: 0, cancelId: 1, noLink: true }).then(({ response }) => {
+      if (window.isDestroyed()) return
+      if (response === 0) window.webContents.reload()
+      else app.quit()
+    }).catch(() => undefined)
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (isTrustedExternalUrl(details.url)) void shell.openExternal(details.url).catch(() => {})
     return { action: 'deny' }
@@ -172,8 +217,14 @@ function createWindow(): void {
 
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  mainWindow.webContents.session.setPermissionCheckHandler(() => false)
+  // Everything is denied except the camera and microphone for the app's own page (Remix "Me, on camera").
+  const devUrl = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  mainWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    // Only the app's own top-level page asks, judged by the frame that asked.
+    const asked = details as { mediaTypes?: string[]; requestingUrl?: string; isMainFrame?: boolean }
+    callback(asked.isMainFrame !== false && allowMediaRequest(permission, asked.requestingUrl ?? contents.getURL(), asked.mediaTypes, devUrl))
+  })
+  mainWindow.webContents.session.setPermissionCheckHandler((_contents, permission, origin) => allowMediaCheck(permission, origin, devUrl))
 
   createMenu(mainWindow)
 
@@ -191,7 +242,7 @@ protocol.registerSchemesAsPrivileged([
 
 app.whenReady().then(() => {
   cleanStaleWorkspaces()
-  electronApp.setAppUserModelId('com.bridgemind.bridgeclip')
+  electronApp.setAppUserModelId('com.wealthery.creatorclips')
   if (hiddenForTests) app.dock?.hide()
 
   // Boot-time diagnostic dump. This is the first thing in the log file and
@@ -277,6 +328,10 @@ app.whenReady().then(() => {
   assistant = registerAssistant(() => mainWindow)
   const stopAutomations = startAutomationScheduler()
   void sweepDeletingRuns()
+  // Finish (or undo) a Library move interrupted by a crash or quit.
+  void recoverInterruptedMoves().catch(() => undefined)
+  // Remix plans left in review when the app closed: drop their downloads (never finished videos).
+  void cleanupAbandoned(loadSettings().outputDirectory)
   app.on('before-quit', stopAutomations)
   createWindow()
   initAutoUpdater(() => mainWindow)
@@ -301,6 +356,11 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   void assistant?.shutdown()
   stopEditorsForQuit()
+  stopAvatarRenderForQuit()
+  stopListicleForQuit()
+  stopBrollVideoForQuit()
+  stopRemixForQuit()
+  stopEditForQuit()
   cancelQueuedJobsForQuit()
   stopAllJobsForQuit()
 })
