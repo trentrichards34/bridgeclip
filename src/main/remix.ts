@@ -2056,7 +2056,9 @@ export async function recomposeRemix(outputDir: unknown, clipIndex: unknown, val
   try {
     // Nothing else changes this run's clips meanwhile (CTA changes wait; the Library refuses deletes).
     return await withRunLock(folder, async () => {
-      await remixClipRecord(folder, index)
+      const before = await remixClipRecord(folder, index)
+      // Baked in the clip editor: remaking it here would drop what the editor added. The editor is where it changes now.
+      if (typeof before.editor_candidate === 'string') throw new Error('This video was changed in the clip editor. Change it there (⋯ → Open in editor).')
       if (!existsSync(path)) throw new Error('That video file is missing.')
       if (!existsSync(join(folder, '.edit', stem, 'edit.json'))) throw new Error('This video was made before editing was possible. Make it again to edit it.')
       const result = await runEngineOnce({
@@ -2090,6 +2092,8 @@ export async function recomposeRemix(outputDir: unknown, clipIndex: unknown, val
         if (!ctaId && typeof result.duration_seconds === 'number') item.duration_ms = Math.round(result.duration_seconds * 1000)
         if (result.editable && typeof result.editable === 'object') item.editable = result.editable
         item.edited_at = new Date().toISOString()
+        // The run's editor project still has the video as it was: it is swapped for this one when the editor opens next.
+        if ((job as Record<string, unknown>).editor_project === true) item.editor_stale = true
       }
       const temp = join(folder, `.job_output-${randomBytes(4).toString('hex')}.json`)
       await writeFile(temp, JSON.stringify(job, null, 2), { mode: 0o600 })

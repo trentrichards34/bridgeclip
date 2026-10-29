@@ -4,7 +4,7 @@ import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync
 import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
+import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, ctaInPicture, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
 import { isCaptionLanguage } from '../shared/caption-language'
 import type { SummaryEditorClip } from '../shared/library-summary'
 import { loadSettings, getSettingsForBridge } from './settings-store'
@@ -71,7 +71,10 @@ async function libraryClipCta(run: string, candidate: EditorCandidate): Promise<
 async function addExportCta(run: string, candidateId: string, libraryCta?: string | null): Promise<void> {
   if (!applyExportCta) return
   try {
-    const candidate = readProject(run).candidates.find((c) => c.id === candidateId)
+    const project = readProject(run)
+    const candidate = project.candidates.find((c) => c.id === candidateId)
+    // A Remix video whose call to action is already in its picture (its copy without one was freed): never a second one.
+    if (candidate && ctaInPicture(project, candidate)) return
     const index = candidate?.exports.at(-1)
     const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
       : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
@@ -433,6 +436,9 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       previousMedia = [session.sourcePath, session.previewPath]
     }
     if (action === 'export' && session.project.candidates.find((c) => c.id === candidateId)!.status !== 'ready') throw new Error('Mark this clip ready before baking it')
+    if ((action === 'export' || action === 'export-all') && session.project.automatic?.remix && (await getJobOutput(run))?.clips.some((clip) => clip.editor_stale)) {
+      throw new Error('A video in this run was changed with “Edit hook text & captions”. Open the run in the editor again from the Library to update its copy here, then bake.')
+    }
     const candidates = action === 'replace-source' ? session.project.candidates.slice(0, 1) : action === 'export-all' ? session.project.candidates.filter((c) => c.status === 'ready') : session.project.candidates.filter((c) => c.id === candidateId)
     if (!candidates.length) throw new Error('Mark at least one clip ready before baking.')
     if (action === 'export-all') operation.batch = { completed: 0, total: candidates.length }

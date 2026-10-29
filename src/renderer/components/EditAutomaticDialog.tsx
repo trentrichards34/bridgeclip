@@ -14,8 +14,9 @@ export function automaticEditSummary(info: AutomaticEditInfo): string[] {
   if (info.remix) {
     const videos = info.clipCount === 1 ? 'Your video opens in the editor exactly as it looks' : `Your ${info.clipCount} videos open in the editor exactly as they look`
     if (info.state === 'convert') lines.push(`${videos} now: the layout, captions, hook text and graphics stay. Add graphics and effects on top. No AI is used.`)
+    else if (info.refreshVideos) lines.push(`${info.refreshVideos === 1 ? 'A video was' : `${info.refreshVideos} videos were`} changed with “Edit hook text & captions”. Opening puts the new ${info.refreshVideos === 1 ? 'version' : 'versions'} in the editor. Graphics and other changes you made in the editor are kept.`)
     else lines.push('The editor’s copy of these videos was removed to save space. Opening makes it again from the videos in your Library, with everything you baked. Changes you didn’t bake aren’t kept.')
-    lines.push('Baking a video replaces it in your Library, with its call to action. Videos you don’t bake stay exactly as they are.')
+    lines.push('Baking a video replaces it in your Library, with its call to action. Videos you don’t bake stay exactly as they are. Once baked, a video’s hook text and captions change here, not in Remix.')
     lines.push('Uses the finished videos in this run, so nothing is downloaded.')
     return lines
   }
@@ -86,7 +87,7 @@ export function EditAutomaticDialog({ outputDir, info, onClose, onReady }: {
     } catch (err) { setError(errorMessage(err)) }
   }
   const missing = info.source === 'missing'
-  const title = info.state === 'restore' ? 'Get this run’s video again' : info.remix ? 'Edit videos in the editor' : 'Edit clips in the editor'
+  const title = info.refreshVideos ? 'Update the editor’s videos' : info.state === 'restore' ? 'Get this run’s video again' : info.remix ? 'Edit videos in the editor' : 'Edit clips in the editor'
 
   return (
     <Dialog ref={ref} aria-labelledby="edit-automatic-title" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[560px]"
