@@ -64,6 +64,10 @@ test('Launch shell: Report an issue shows the report and never pastes it into a 
   assert.deepEqual(errors, [])
 
   // The page process crashes: logged, and (in tests, without the native dialog) the window reloads.
+  // Crash only once the page is idle: a DevTools call still in flight when the renderer goes makes
+  // Playwright's session throw an uncaught 'Target crashed' (its reply id was already dropped).
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 300))))
+  await new Promise((resolve) => setTimeout(resolve, 500))
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer())
   const log = () => { try { return fs.readFileSync(path.join(userData, 'logs', 'bridgeclip.log'), 'utf8') } catch { return '' } }
   for (let i = 0; i < 100 && !log().includes('renderer.gone.reload'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
