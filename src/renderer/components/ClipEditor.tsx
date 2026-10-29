@@ -1,5 +1,5 @@
 import type { LibraryView } from '../../shared/motion-library'
-import type { EditorDesignInfo } from '../../shared/custom-graphics'
+import type { DesignQuality, EditorDesignInfo } from '../../shared/custom-graphics'
 import type { LogoSummary } from '../../shared/logos'
 import { SavedStageTimings } from './StageBreakdown'
 import { registerNavigationCommit } from '../lib/navigation'
@@ -755,11 +755,11 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     }).catch((e: unknown) => setLibraryError(errorMessage(e))).finally(() => setLibraryBusy(null))
   }
   // A new custom graphic designed by the member's AI at the gallery's spot (paid: the estimate is shown first), added like any graphic.
-  const insertDesign = (note: string): void => {
+  const insertDesign = (note: string, quality: DesignQuality = 'best'): void => {
     if (gallery === null || editingDisabled || designBusy) return
     const at = gallery
     setDesignBusy(true); setDesignError(null)
-    void getApi().editor.designCustom(outputDir, candidate.id, Math.round(at), note).then((result) => {
+    void getApi().editor.designCustom(outputDir, candidate.id, Math.round(at), note, quality).then((result) => {
       if (!result.graphic) { setDesignError(result.reason ?? 'The design didn’t pass our checks, so nothing was added.'); return }
       const g = result.graphic
       setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')

@@ -380,7 +380,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
               onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
               onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
-              onEditHeadline={editor ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
+              onEditHeadline={editor && !isRemixOutput(output) ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {

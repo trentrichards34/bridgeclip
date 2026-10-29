@@ -38,7 +38,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value))
 const isWebUrl = (value) => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) } catch { return false } }
 const RUN = '11111111-2222-4333-8444-555555555555'
 
-function setup({ videoUrl = 'https://www.youtube.com/watch?v=abcdefghijk', metrics = {}, kept = false, transcript = true, request = null, live = false } = {}) {
+function setup({ videoUrl = 'https://www.youtube.com/watch?v=abcdefghijk', metrics = {}, kept = false, transcript = true, request = null, live = false, remixBusy = null } = {}) {
   const lib = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'edit-automatic-')))
   const run = path.join(lib, RUN)
   fs.mkdirSync(run)
@@ -76,6 +76,7 @@ function setup({ videoUrl = 'https://www.youtube.com/watch?v=abcdefghijk', metri
     './network-policy': { assertPublicWebUrl: async (url) => { calls.checkedUrls.push(url) } },
     './brands': { brandForJob: () => ({ name: 'Me', text: '', mark: { handle: '@me', logo_path: null, position: 'top-left' } }) },
     './job-manager': { liveJobIds: () => new Set(live ? [RUN] : []) },
+    './remix': { remixFolderInUse: () => remixBusy === 'render' ? run : null, remixRecomposingFolder: () => remixBusy === 'recompose' ? run : null },
     './clip-editor': { withEditorPreparation: async (dir, work) => work(prep(fs.realpathSync(dir))) },
     './logger': { logger: { info() {}, warn() {} } }
   })
@@ -132,9 +133,7 @@ test('an older run that didn’t save its cuts says so; recorded cuts, a framing
   assert.equal((await unfinishedOlder.module.automaticEditInfo(unfinishedOlder.run)).estimatedCuts, true)
 })
 
-test('Remix, Avatar Studio, running, transcript-less and outside runs are refused with plain words', async () => {
-  const remix = setup({ metrics: { remix: true } })
-  await assert.rejects(remix.module.automaticEditInfo(remix.run), /Remix, Avatar Studio and edited recordings are changed from their own menus/)
+test('Avatar Studio, running, transcript-less and outside runs are refused with plain words', async () => {
   const avatar = setup({ metrics: { avatar_studio: 'v1' } })
   await assert.rejects(avatar.module.automaticEditInfo(avatar.run), /own menus/)
   // An Edit my recording reel isn't a Create run (it has no saved transcript for the clip editor).
@@ -275,4 +274,57 @@ test('More clips reuses the source an Automatic run kept', () => {
   fs.rmSync(path.join(run, 'editor-source.mp4'))
   fs.symlinkSync('/etc/hosts', path.join(run, 'editor-source.mp4'))
   assert.equal(moreClips.keptSourcePath(run), null)
+})
+
+// A Remix run opens over its finished videos (engine remix_editor.py): no transcript, download or copy is needed.
+function remixProject(extra = {}) {
+  return project({ automatic: { omitted: [], estimated_cuts: 0, remix: true }, source_id: 'f'.repeat(32), width: 1080, height: 1920, duration_ms: 30000, ...extra })
+}
+
+test('a Remix run opens in the editor from its finished videos, and is marked once the project is committed', async () => {
+  const { run, module, calls, setWorker } = setup({ metrics: { remix: true }, transcript: false, videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' })
+  assert.equal(module.isRemixRun(jobOutput.parseJobOutput(read(run, 'job_output.json'))), true)
+  const info = plain(await module.automaticEditInfo(run))
+  assert.deepEqual(info, { videoLabel: 'The talk', clipCount: 1, source: 'kept', remix: true, state: 'convert' })
+  setWorker((req) => {
+    fs.writeFileSync(path.join(run, 'editor-project.json'), JSON.stringify(remixProject({ source_id: req.media_id })))
+    for (const kind of ['source', 'preview']) fs.writeFileSync(path.join(run, `editor-${kind}-${req.media_id}.mp4`), kind)
+    return { ok: true }
+  })
+  const ready = await module.prepareAutomaticEditor(run)
+  assert.equal(ready.state, 'ready')
+  const [request] = calls.worker
+  assert.equal(request.mode, 'remix')
+  assert.match(request.media_id, /^[a-f0-9]{32}$/)
+  assert.equal(request.revision, undefined)
+  assert.equal(request.source, undefined)
+  assert.equal(read(run, 'job_output.json').editor_project, true)
+  // Ready now: nothing is made again.
+  await module.prepareAutomaticEditor(run)
+  assert.equal(calls.worker.length, 1)
+  // Its editor video freed: made again from the Library's videos, against the project's revision.
+  for (const file of fs.readdirSync(run)) if (/^editor-(source|preview)-/.test(file)) fs.rmSync(path.join(run, file))
+  assert.equal((await module.automaticEditInfo(run)).state, 'restore')
+  await module.prepareAutomaticEditor(run)
+  assert.equal(calls.worker[1].mode, 'remix')
+  assert.equal(calls.worker[1].revision, 0)
+})
+
+test('a Remix run being made or re-made waits; a failed conversion leaves nothing behind', async () => {
+  const busy = setup({ metrics: { remix: true }, transcript: false, remixBusy: 'render' })
+  await assert.rejects(busy.module.automaticEditInfo(busy.run), /Wait for this remix to finish/)
+  const remaking = setup({ metrics: { remix: true }, transcript: false, remixBusy: 'recompose' })
+  await assert.rejects(remaking.module.automaticEditInfo(remaking.run), /Wait for this remix to finish/)
+  const failing = setup({ metrics: { remix: true }, transcript: false })
+  failing.setWorker((req) => {
+    fs.writeFileSync(path.join(failing.run, `editor-source-${req.media_id}.mp4`), 'half')
+    throw new Error('The editor could not prepare this run.')
+  })
+  await assert.rejects(failing.module.prepareAutomaticEditor(failing.run), /could not prepare/)
+  assert.deepEqual(fs.readdirSync(failing.run).filter((f) => f.startsWith('editor-')), [])
+  assert.equal(read(failing.run, 'job_output.json').editor_project, undefined)
+  // Another kind of project in a Remix run is refused, not overwritten.
+  const odd = setup({ metrics: { remix: true }, transcript: false })
+  fs.writeFileSync(path.join(odd.run, 'editor-project.json'), JSON.stringify(project()))
+  await assert.rejects(odd.module.automaticEditInfo(odd.run), /editor project could not be read/)
 })

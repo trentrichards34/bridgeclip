@@ -6,7 +6,7 @@
 import { readFileSync, realpathSync } from 'fs'
 import { join } from 'path'
 import {
-  CUSTOM_MIN_MS, DEFAULT_PRICE, DEFAULT_THEME, MAX_NOTE_CHARS, REEL_HERO_MAX_MS, REEL_HERO_MIN_MS, customDesignEstimate, customIdea, customLook, designKindFor, heroFrame, isCustomComp, isTheme, revisionCap, saidIndex, stressedWords, worldLine,
+  CUSTOM_MIN_MS, DEFAULT_DESIGN_QUALITY, DEFAULT_PRICE, DEFAULT_THEME, designRevisions, isDesignQuality, type DesignQuality, MAX_NOTE_CHARS, REEL_HERO_MAX_MS, REEL_HERO_MIN_MS, customDesignEstimate, customIdea, customLook, designKindFor, heroFrame, isCustomComp, isTheme, saidIndex, stressedWords, worldLine,
   type CustomFrameKind, type CustomGeometry, type CustomLook, type CustomTheme, type EditorCustomInfo, type EditorCustomRemake, type EditorDesignInfo, type HeroKind, type SaidIndex, type VisualWorld, type WriterBrief
 } from '../shared/custom-graphics'
 import type { CandidateEdit, EditorProject } from '../shared/clip-editor'
@@ -155,18 +155,23 @@ export async function editorDesignInfo(path: unknown, deps: { model?: CustomMode
   const { run, session } = await editorRun(path)
   const m = deps.model !== undefined ? deps.model : await customModel()
   const world = readVisualWorld(run)
-  const estimate = customDesignEstimate(m?.price ?? DEFAULT_PRICE, !!world)
-  return { available: !!m, reason: m ? null : NO_KEY, model: m?.model ?? '', expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, theme: editorTheme(run, session.project), world: worldLine(world) }
+  const price = m?.price ?? DEFAULT_PRICE
+  const best = customDesignEstimate(price, !!world, 'best'), lower = customDesignEstimate(price, !!world, 'lower')
+  return { available: !!m, reason: m ? null : NO_KEY, model: m?.model ?? '', expectedUsd: best.expectedUsd, mostUsd: best.mostUsd, qualities: { best, lower },
+    theme: editorTheme(run, session.project), world: worldLine(world) }
 }
 
-/** The spending check's estimate for one new design (the most it can cost), or null without a key. */
-export async function editorDesignEstimate(path: unknown): Promise<number | null> {
+/** The quality a request asked for: Best unless it says Lower cost. */
+const qualityOf = (value: unknown): DesignQuality => isDesignQuality(value) ? value : DEFAULT_DESIGN_QUALITY
+
+/** The spending check's estimate for one new design at this quality (the most it can cost), or null without a key. */
+export async function editorDesignEstimate(path: unknown, quality?: unknown): Promise<number | null> {
   try {
     const m = await customModel()
     if (!m) return null
     let world = false
     try { world = !!readVisualWorld(realpathSync(path as string)) } catch { world = false }
-    return customDesignEstimate(m.price, world).mostUsd
+    return customDesignEstimate(m.price, world, qualityOf(quality)).mostUsd
   } catch { return null }
 }
 
@@ -198,7 +203,8 @@ export interface DesignDeps {
  * the video's visual world (proposed and kept with the first design when the project has none). Returns the new
  * graphic to add to the clip, or why none was kept.
  */
-export async function editorDesignCustom(path: unknown, candidateId: unknown, atMs: unknown, note: unknown, deps: DesignDeps = {}): Promise<EditorCustomRemake> {
+export async function editorDesignCustom(path: unknown, candidateId: unknown, atMs: unknown, note: unknown, deps: DesignDeps = {}, quality?: unknown): Promise<EditorCustomRemake> {
+  if (quality !== undefined && quality !== null && !isDesignQuality(quality)) throw new Error('Choose Best or Lower cost.')
   const { run, session } = await editorRun(path)
   const project = session.project
   if (project.media_freed) throw new Error('This project’s video was freed to save space. Open it again to get the video back first.')
@@ -251,7 +257,7 @@ export async function editorDesignCustom(path: unknown, candidateId: unknown, at
     // Designed fresh (the gallery's My graphics tab offers the library's); a design that passes still joins the library.
     const base = deps.library === undefined ? memberLibrary : deps.library
     const library = base ? { ...base, match: () => null } : undefined
-    const result = await produceCustomGraphic({ run, brief: made.brief, words: made.words, said: made.said, frame: made.frame, fallback: null, model: m.model, maxRevisions: revisionCap(1, m.price), grade: m.vision },
+    const result = await produceCustomGraphic({ run, brief: made.brief, words: made.words, said: made.said, frame: made.frame, fallback: null, model: m.model, maxRevisions: designRevisions(qualityOf(quality), m.price), grade: m.vision },
       { call, sandbox: deps.sandbox, library })
     costUsd += result.costUsd
     if (!result.meta) return { graphic: null, costUsd, reason: `The design didn’t pass our checks, so nothing was added. ${(result.reason ?? '').slice(0, 220)}`.trim() }

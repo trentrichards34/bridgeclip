@@ -11,7 +11,7 @@ import type { CtaSummary } from '../shared/ctas'
 import type { LogoSummary } from '../shared/logos'
 import type { ReferenceImage, ReferenceSupport } from '../shared/purpose'
 import type { EditAudit } from '../shared/editorial'
-import type { EditCustomInfo, EditCustomOutcome, EditorCustomInfo, EditorCustomRemake, EditorDesignInfo } from '../shared/custom-graphics'
+import type { EditCustomInfo, EditCustomOutcome, EditorCustomInfo, EditorCustomRemake, EditorDesignInfo, DesignQuality } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
 import type { LibraryView } from '../shared/motion-library'
 import { contextBridge, ipcRenderer } from 'electron'
@@ -256,7 +256,7 @@ export interface BridgeClipAPI {
     /** What designing a new custom graphic at the playhead costs, and its look (free). */
     designInfo: (path: string) => Promise<EditorDesignInfo>
     /** A new custom graphic designed at a time (source ms) on a clip from the words said there and an optional note (paid). `graphic`: null when none passed. */
-    designCustom: (path: string, candidateId: string, atMs: number, note: string) => Promise<EditorCustomRemake>
+    designCustom: (path: string, candidateId: string, atMs: number, note: string, quality?: DesignQuality) => Promise<EditorCustomRemake>
     /** What opening an Automatic run (or a project made from one) in the editor involves. */
     automaticInfo: (path: string) => Promise<AutomaticEditInfo>
     /** Make the run's editor project from its clips, or get its video back. `localFile`: a video the member chose. */
@@ -892,7 +892,7 @@ const api: BridgeClipAPI = {
     customGraphic: (path, candidateId, graphic, note) => paid('editor:customGraphic', path, candidateId, graphic, note),
     libraryAdd: (path, candidateId, itemId, atMs) => paid('editor:libraryAdd', path, candidateId, itemId, atMs),
     designInfo: (path) => ipcRenderer.invoke('editor:designInfo', path),
-    designCustom: (path, candidateId, atMs, note) => paid('editor:designCustom', path, candidateId, atMs, note),
+    designCustom: (path, candidateId, atMs, note, quality) => paid('editor:designCustom', path, candidateId, atMs, note, quality ?? 'best'),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
     operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),

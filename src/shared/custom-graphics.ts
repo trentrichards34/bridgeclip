@@ -1030,8 +1030,8 @@ export function revisionCap(moments: number, price: { input: number; output: num
  * The estimate shown before running: expected and most (every graphic using every revision), in USD. `scenes`: how
  * many of the graphics are 15-20 s scenes (they come with the video's plan call).
  */
-export function customGraphicsEstimate(moments: number, price: { input: number; output: number } = DEFAULT_PRICE, scenes = 0): { expectedUsd: number; mostUsd: number; revisions: number } {
-  const revisions = revisionCap(moments + scenes, price)
+export function customGraphicsEstimate(moments: number, price: { input: number; output: number } = DEFAULT_PRICE, scenes = 0, cap?: number): { expectedUsd: number; mostUsd: number; revisions: number } {
+  const revisions = cap ?? revisionCap(moments + scenes, price)
   const pop = customCallCosts(price), big = customCallCosts(price, true, true)
   // The first write reads the system prompt fresh; the video's plan (scenes) or world (pop-ups only) is one call before the first graphic.
   const first = moments + scenes > 0 ? customCallCosts(price, false).write - pop.write + (scenes ? planCallCost(price) : worldCallCost(price)) : 0
@@ -1041,9 +1041,27 @@ export function customGraphicsEstimate(moments: number, price: { input: number; 
   return { expectedUsd: Math.round(expectedUsd * 1000) / 1000, mostUsd: Math.round(mostUsd * 1000) / 1000, revisions }
 }
 
+/**
+ * "Design a custom graphic here" quality: Best (the default: the member's planning model with every revision) or
+ * Lower cost (the same model, one design and no revisions). Both keep our checks: only the words said may appear,
+ * nothing clipped, a build-up that moves; the grade still decides whether it joins My motion library.
+ */
+export type DesignQuality = 'best' | 'lower'
+export const DESIGN_QUALITIES: readonly DesignQuality[] = ['best', 'lower']
+export const DEFAULT_DESIGN_QUALITY: DesignQuality = 'best'
+/** Revisions a Lower cost design may get. */
+export const LOWER_COST_REVISIONS = 0
+export function isDesignQuality(value: unknown): value is DesignQuality {
+  return typeof value === 'string' && (DESIGN_QUALITIES as readonly string[]).includes(value)
+}
+/** Revisions a design made here may get at this quality. */
+export function designRevisions(quality: DesignQuality = DEFAULT_DESIGN_QUALITY, price: { input: number; output: number } = DEFAULT_PRICE): number {
+  return quality === 'lower' ? LOWER_COST_REVISIONS : revisionCap(1, price)
+}
+
 /** One new custom graphic designed at a spot in the clip editor: one write and grade with its revisions, plus the video's world call when it has none yet. */
-export function customDesignEstimate(price: { input: number; output: number } = DEFAULT_PRICE, hasWorld = false): { expectedUsd: number; mostUsd: number; revisions: number } {
-  const one = customGraphicsEstimate(1, price)
+export function customDesignEstimate(price: { input: number; output: number } = DEFAULT_PRICE, hasWorld = false, quality: DesignQuality = DEFAULT_DESIGN_QUALITY): { expectedUsd: number; mostUsd: number; revisions: number } {
+  const one = customGraphicsEstimate(1, price, 0, designRevisions(quality, price))
   const less = hasWorld ? worldCallCost(price) : 0
   return { expectedUsd: Math.round((one.expectedUsd - less) * 1000) / 1000, mostUsd: Math.round((one.mostUsd - less) * 1000) / 1000, revisions: one.revisions }
 }
@@ -1310,8 +1328,11 @@ export interface EditorDesignInfo {
   /** Why it can't (no OpenRouter key), or null. */
   reason: string | null
   model: string
+  /** Best quality (the default): what one design costs, expected and at most. */
   expectedUsd: number
   mostUsd: number
+  /** Each quality's estimate (shown next to the choice before anything is spent). */
+  qualities: Record<DesignQuality, { expectedUsd: number; mostUsd: number; revisions: number }>
   /** The theme this project's custom graphics are designed in (kept for the project's later designs). */
   theme: CustomTheme
   /** The video's visual world in one line (empty: proposed with the first design). */

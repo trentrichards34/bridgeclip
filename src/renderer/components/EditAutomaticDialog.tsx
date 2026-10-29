@@ -12,8 +12,8 @@ import { ProgressBar } from './ui/ProgressBar'
 export function automaticEditSummary(info: AutomaticEditInfo): string[] {
   const lines: string[] = []
   if (info.remix) {
-    const videos = info.clipCount === 1 ? 'Your video opens' : `Your ${info.clipCount} videos open`
-    if (info.state === 'convert') lines.push(`${videos} in the editor exactly as they look now: the layout, captions, hook text and graphics stay. Add graphics and effects on top. No AI is used.`)
+    const videos = info.clipCount === 1 ? 'Your video opens in the editor exactly as it looks' : `Your ${info.clipCount} videos open in the editor exactly as they look`
+    if (info.state === 'convert') lines.push(`${videos} now: the layout, captions, hook text and graphics stay. Add graphics and effects on top. No AI is used.`)
     else lines.push('The editor’s copy of these videos was removed to save space. Opening makes it again from the videos in your Library, with everything you baked. Changes you didn’t bake aren’t kept.')
     lines.push('Baking a video replaces it in your Library, with its call to action. Videos you don’t bake stay exactly as they are.')
     lines.push('Uses the finished videos in this run, so nothing is downloaded.')
