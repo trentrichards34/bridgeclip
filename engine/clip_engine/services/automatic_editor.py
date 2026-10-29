@@ -504,7 +504,11 @@ async def prepare(config, progress=None):
         again = config.get('revision')
         if again is not None and (type(again) is not int or again < 0):
             raise ValueError('Invalid editor preparation')
-        return await prepare_remix(run, {'media_id': media_id, 'revision': again}, report)
+        refresh = config.get('refresh')
+        if refresh is not None and (again is None or not isinstance(refresh, list) or not 1 <= len(refresh) <= 1000
+                                    or any(type(i) is not int or not 0 <= i <= 999 for i in refresh)):
+            raise ValueError('Invalid editor preparation')
+        return await prepare_remix(run, {'media_id': media_id, 'revision': again, 'refresh': refresh}, report)
     if mode not in ('convert', 'restore') or kind not in ('kept', 'file', 'download'):
         raise ValueError('Invalid editor preparation')
     project_path = run / 'editor-project.json'
