@@ -92,7 +92,9 @@ test('Brand look: make looks, set color, type, captions and a CTA, make one the 
   const others = logos.getByRole('textbox', { name: 'Other words for Meta' })
   await others.fill('Facebook, Instagram ads')
   await others.press('Enter')
-  await page.waitForFunction(async () => JSON.stringify((await window.bridgeclip.logos.list()).map((l) => [l.name, l.aliases])) === '[["Meta",["Facebook","Instagram ads"]]]')
+  for (let start = Date.now(); await page.evaluate(async () => JSON.stringify((await window.bridgeclip.logos.list()).map((l) => [l.name, l.aliases]))) !== '[["Meta",["Facebook","Instagram ads"]]]';) {
+    assert.ok(Date.now() - start < 30_000, 'the logo and its other words are saved'); await page.waitForTimeout(200)
+  }
   await logos.getByRole('img').or(logos.locator('img')).first().waitFor()
 
   const stored = () => fs.readdirSync(path.join(userData, 'brand-identities')).filter((file) => file.endsWith('.json'))

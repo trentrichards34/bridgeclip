@@ -288,7 +288,9 @@ test('retry displays a channel restriction instead of an unrelated API countdown
   await shot(page, 'retry-channel-restriction')
   assert.equal(posting.state.creates.length, 1)
   await page.getByRole('button', { name: 'Retry', exact: true }).click()
-  await page.waitForFunction(async () => (await window.bridgeclip.zernio.posts.list())[0].status === 'published')
+  for (let start = Date.now(); (await page.evaluate(async () => (await window.bridgeclip.zernio.posts.list())[0].status)) !== 'published';) {
+    assert.ok(Date.now() - start < 60_000, 'the retried post is published'); await page.waitForTimeout(200)
+  }
   assert.equal(posting.state.creates.length, 1, 'successful retry uses the existing post')
 })
 
