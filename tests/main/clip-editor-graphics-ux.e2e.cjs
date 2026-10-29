@@ -99,7 +99,8 @@ test('graphics: gallery at the playhead with the words said there, edited and mo
   // picked from the gallery), counted from the shared list.
   const templateCount = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx' && t.id !== 'custom').length
   assert.equal(await gallery.locator('.editor-graphic-tile:not([aria-label^="Add effect"])').count(), templateCount)
-  await page.waitForFunction((n) => document.querySelectorAll('.graphic-gallery .mg-root').length === n, templateCount)
+  // Each template tile draws its live preview (effect tiles on screen can draw one too: not counted here).
+  await page.waitForFunction((n) => document.querySelectorAll('.graphic-gallery .editor-graphic-tile:not([aria-label^="Add effect"]) .mg-root').length === n, templateCount)
   assert.ok(await gallery.getByText('Your words').count() > 3, 'tiles show the words said at the playhead')
   await shot('01-gallery')
   await gallery.getByRole('searchbox', { name: 'Search graphics' }).fill('stair')
