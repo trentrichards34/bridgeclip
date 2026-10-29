@@ -171,7 +171,7 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
     if (basename(file) !== `${name}.mp4` || realpathSync(dirname(file)) !== canonical) throw new Error('The selected clip is outside its Library run.')
     include(file)
     // Sidecars written next to each clip: framing, captions and upload notes.
-    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json', '.original.mp4']) include(join(run, `${name}${suffix}`))
+    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json', '.original.mp4', '.words.json']) include(join(run, `${name}${suffix}`))
     include(join(run, manualPostedFile(clip.clip_index)))
     // A Remix video's saved parts for re-editing (which can include the member's own recording).
     const parts = join(run, '.edit', name)

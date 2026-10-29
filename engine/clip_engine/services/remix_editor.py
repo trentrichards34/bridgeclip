@@ -62,18 +62,37 @@ def remix_videos(run, output):
     return found[:MAX_VIDEOS]
 
 
-def bundle_words(run, index, duration_ms):
-    """The words a video says, as captioned (its edit bundle), in the video's own time; [] when it has none."""
+def cta_in_picture(clip, path):
+    """The file the editor uses already ends with the clip's call to action: "Free up space" removed its copy without
+    one (clip_NN.original.mp4), so clip_NN.mp4 is all there is. Baking must not add it again."""
+    cta = clip.get('cta')
+    return not path.name.endswith('.original.mp4') and isinstance(cta, dict) and isinstance(cta.get('id'), str)
+
+
+def words_path(run, index):
+    """Where a Remix video's words are kept apart from its edit bundle (Free up space removes the bundle)."""
+    return run / f'clip_{index:02d}.words.json'
+
+
+def _read_words(path):
     try:
-        path = run / '.edit' / f'clip_{index:02d}' / 'edit.json'
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
-            return []
+            return None
         with open(path, encoding='utf-8') as handle:
             data = json.load(handle)
         words = data.get('words') if isinstance(data, dict) else None
-        if not isinstance(words, list):
-            return []
+        return words if isinstance(words, list) else None
     except (OSError, ValueError):
+        return None
+
+
+def bundle_words(run, index, duration_ms):
+    """The words a video says, as captioned (its edit bundle, or the copy of its words kept when the bundle was freed),
+    in the video's own time; [] when it has none."""
+    words = _read_words(run / '.edit' / f'clip_{index:02d}' / 'edit.json')
+    if words is None:
+        words = _read_words(words_path(run, index))
+    if words is None:
         return []
     out = []
     for w in words[:20000]:
@@ -131,14 +150,20 @@ def build_remix_project(output, videos, infos, spans, words_by_clip, media_id):
         segments += caption_lines([w for w in words if w[1] < end - start], start)
         title = ' '.join(str(clip.get('summary') or clip.get('headline') or '').split())
         cta = clip.get('cta') if isinstance(clip.get('cta'), dict) else None
+        in_picture = cta_in_picture(clip, _path)
         c = {'id': f'remix-{index:03d}', 'title': utf16_prefix(title, 200) or f'Video {index + 1}', 'ranges': [[start, end]],
              'scenes': [{'at_ms': 0, 'layout': 'fill', 'crops': [crop]}],
              # Already in the picture: drawn again they would show twice.
              'captions': False, 'caption_preset': 'pop', 'hook': None, 'video_speed': 1,
              'score': 0, 'requires_visual_context': False, 'reason': '', 'review': None,
              'exports': [index], 'status': 'baked', 'caption_edits': [], 'caption_suppression_ranges': [],
-             'cta_id': cta['id'] if cta and isinstance(cta.get('id'), str) and CTA_ID.fullmatch(cta['id']) else None,
-             'library_clip': index}
+             'cta_id': cta['id'] if cta and not in_picture and isinstance(cta.get('id'), str) and CTA_ID.fullmatch(cta['id']) else None,
+             'library_clip': index,
+             # Where this video sits in the joined source (refreshing it after a Remix re-make swaps just this part).
+             'remix_span': [start, end]}
+        if in_picture:
+            # Its call to action is already at the end of the picture: baking keeps it and never adds one again.
+            c['cta_in_picture'] = True
         candidates.append(c)
     for c in candidates:
         validate_candidate(c, duration_ms, len(segments))
@@ -192,6 +217,136 @@ async def join_videos(paths, infos, spans, fps, target, renderer):
             pass
 
 
+def refresh_plan(project, output, run, indices):
+    """The joined source's parts when some videos were re-made in Remix ("Edit hook text & captions") after the editor
+    project was made: [(start_ms, end_ms, file or None)], end to end over the whole source, where None keeps that part
+    of the current source and a file puts the re-made video there (fitted to the same length, so every clip's cut,
+    graphics and timing stay). None when it can't be done that way (the editor's video is gone, or a re-made video has
+    no place in the source); the project is then made again from the Library's videos."""
+    if project.get('media_freed') or not isinstance(project.get('source_id'), str):
+        return None
+    source = _video(run, f"editor-source-{project['source_id']}.mp4")
+    if source is None:
+        return None
+    clips = {c['clip_index']: c for c in output.get('clips', []) if isinstance(c, dict) and type(c.get('clip_index')) is int}
+    duration = project['duration_ms']
+    swaps = []
+    for index in sorted(set(indices)):
+        candidate = next((c for c in project['candidates'] if c.get('library_clip') == index and isinstance(c.get('remix_span'), list)), None)
+        if candidate is None or index not in clips:
+            return None
+        start, end = candidate['remix_span']
+        path = _video(run, f'clip_{index:02d}.original.mp4') or _video(run, f'clip_{index:02d}.mp4')
+        if path is None or type(start) is not int or type(end) is not int or not 0 <= start < end <= duration:
+            return None
+        swaps.append((start, end, path))
+    swaps.sort(key=lambda s: s[0])
+    parts, at = [], 0
+    for start, end, path in swaps:
+        if start < at:
+            return None
+        if start > at:
+            parts.append((at, start, None))
+        parts.append((start, end, path))
+        at = end
+    if at < duration:
+        parts.append((at, duration, None))
+    return source, parts
+
+
+async def refresh_source(source, parts, fps, width, height, target, renderer):
+    """The joined source again, with the re-made videos in their places: kept parts are cut from the current source on
+    whole frames, each re-made video is fitted to its part's frames (cut, or its last frame held). One encode."""
+    from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, run_media
+    rate = float(Fraction(fps))
+    frame = lambda ms: round(ms * rate / 1000)
+    old_audio = (await asyncio.to_thread(source_info, source))['audio']
+    inputs, graph, files = [*MEDIA_INPUT_OPTIONS, '-i', str(source)], [], 0
+    kept = [i for i, part in enumerate(parts) if part[2] is None]
+    if kept:
+        # The current source feeds every kept part.
+        graph.append(f'[0:v:0]split={len(kept)}' + ''.join(f'[s{i}]' for i in kept))
+        if old_audio:
+            graph.append(f'[0:a:0]asplit={len(kept)}' + ''.join(f'[t{i}]' for i in kept))
+    look = f'fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p'
+    for i, (start, end, path) in enumerate(parts):
+        frames = max(1, frame(end) - frame(start))
+        seconds = frames / rate
+        if path is None:
+            graph.append(f'[s{i}]trim=start_frame={frame(start)}:end_frame={frame(start) + frames},setpts=PTS-STARTPTS,{look}[v{i}]')
+            audio = f'[t{i}]atrim=start={frame(start) / rate:.6f},asetpts=PTS-STARTPTS,' if old_audio else None
+        else:
+            files += 1
+            info = await asyncio.to_thread(source_info, path)
+            inputs += [*MEDIA_INPUT_OPTIONS, '-i', str(path)]
+            graph.append(f'[{files}:v:0]{look},tpad=stop_mode=clone:stop_duration={seconds:.3f},trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}]')
+            audio = f'[{files}:a:0]' if info['audio'] else None
+        if audio:
+            graph.append(f'{audio}aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end={seconds:.6f},asetpts=PTS-STARTPTS[a{i}]')
+        else:
+            graph.append(f'anullsrc=r=48000:cl=stereo,atrim=end={seconds:.6f},asetpts=PTS-STARTPTS[a{i}]')
+    joined = ''.join(f'[v{i}][a{i}]' for i in range(len(parts)))
+    filters = ';'.join(graph) + f';{joined}concat=n={len(parts)}:v=1:a=1[v][a]'
+    renderer.quality_scale = SOURCE_QUALITY
+    try:
+        codec = renderer._video_codec_args(width, height, fps)
+    finally:
+        renderer.quality_scale = 1.0
+    temporary = target.with_name(target.name + '.partial.mp4')
+    try:
+        await asyncio.to_thread(run_media, ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', *inputs, '-filter_complex', filters,
+                                            '-map', '[v]', '-map', '[a]', *codec, '-pix_fmt', 'yuv420p', '-r', str(fps),
+                                            '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', '-movflags', '+faststart', str(temporary)],
+                                check=True)
+        os.replace(temporary, target)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+async def refresh_remix(run, current, output, plan, media_id, report):
+    """Put re-made videos into the editor project in place: a new joined source and preview, the same project (every
+    clip's cut, graphics and other changes kept), the re-made clips' call to action as their files now have it."""
+    from clip_engine.services.rendering_service import RenderingService
+    source, parts = plan
+    with failure_code('engine_unavailable'):
+        renderer = RenderingService()
+    fps = await renderer._probe_fps(str(source))
+    target = run / f'editor-source-{media_id}.mp4'
+    report('copy', 0)
+    with failure_code('render_failed'):
+        await refresh_source(source, parts, fps, current['width'], current['height'], target, renderer)
+    report('copy', 100)
+    with failure_code('source_incompatible'):
+        info = await asyncio.to_thread(source_info, target)
+    if info['width'] != current['width'] or info['height'] != current['height'] or info['duration'] < current['duration_ms'] - 100:
+        raise EditorError('render_failed', 'The joined video is not the expected size or length')
+    preview = run / f'editor-preview-{media_id}.mp4'
+    with failure_code('render_failed'):
+        await RenderingService().capture_framing_source(str(target), str(preview), progress=lambda p: report('preview', p),
+                                                        duration_ms=current['duration_ms'])
+    clips = {c['clip_index']: c for c in output['clips'] if isinstance(c, dict) and type(c.get('clip_index')) is int}
+    remade = {path: start for start, _end, path in parts if path is not None}
+    for c in current['candidates']:
+        span = c.get('remix_span')
+        index = c.get('library_clip')
+        path = next((p for p, start in remade.items() if isinstance(span, list) and span[0] == start), None)
+        if path is None or index not in clips:
+            continue
+        cta = clips[index].get('cta') if isinstance(clips[index].get('cta'), dict) else None
+        if cta_in_picture(clips[index], path):
+            c['cta_in_picture'] = True
+            c['cta_id'] = None
+        elif c.pop('cta_in_picture', None) and not c.get('cta_edited'):
+            c['cta_id'] = cta['id'] if cta and isinstance(cta.get('id'), str) and CTA_ID.fullmatch(cta['id']) else None
+    current['source_id'] = media_id
+    current.pop('preview_id', None)
+    current['frame_preview'] = True
+    return current
+
+
 async def prepare_remix(run, config, report):
     """Make (or make again) a Remix run's editor project from its finished videos.
 
@@ -211,6 +366,15 @@ async def prepare_remix(run, config, report):
     output = read_json(run, 'job_output.json', 64 * 1024 * 1024)
     if not is_remix_output(output):
         raise ValueError('Not a Remix run')
+    plan = refresh_plan(current, output, run, config['refresh']) if again is not None and config.get('refresh') else None
+    if plan is not None:
+        project = await refresh_remix(run, current, output, plan, media_id, report)
+        latest = read_json(run, 'editor-project.json')
+        if latest.get('revision') != again:
+            raise EditorError('project_changed', 'The editor project changed')
+        project['revision'] = again + 1
+        atomic_json(project_path, project)
+        return {'candidates': len(project['candidates']), 'refreshed': sum(1 for p in plan[1] if p[2] is not None)}
     videos = remix_videos(run, output)
     if not videos:
         raise EditorError('source_missing', 'This run has no videos to edit')

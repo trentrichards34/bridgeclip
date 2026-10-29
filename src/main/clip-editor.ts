@@ -4,7 +4,7 @@ import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync
 import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
+import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, ctaInPicture, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
 import { isCaptionLanguage } from '../shared/caption-language'
 import type { SummaryEditorClip } from '../shared/library-summary'
 import { loadSettings, getSettingsForBridge } from './settings-store'
@@ -28,7 +28,7 @@ type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promi
 let applyExportCta: EditorCtaApplier | null = null
 export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
 /** Records what an editor AI call cost in the spending ledger (set by the IPC layer, which owns it). */
-type EditorSpendRecorder = (usd: number, label: string) => Promise<unknown>
+type EditorSpendRecorder = (usd: number, label: string, run: string) => Promise<unknown>
 let recordEditorSpend: EditorSpendRecorder | null = null
 export function onEditorSpend(recorder: EditorSpendRecorder): void { recordEditorSpend = recorder }
 /** Exports rewrite the run's clips and job_output.json: they wait for other changes to the run (CTA changes, re-makes). */
@@ -71,7 +71,10 @@ async function libraryClipCta(run: string, candidate: EditorCandidate): Promise<
 async function addExportCta(run: string, candidateId: string, libraryCta?: string | null): Promise<void> {
   if (!applyExportCta) return
   try {
-    const candidate = readProject(run).candidates.find((c) => c.id === candidateId)
+    const project = readProject(run)
+    const candidate = project.candidates.find((c) => c.id === candidateId)
+    // A Remix video whose call to action is already in its picture (its copy without one was freed): never a second one.
+    if (candidate && ctaInPicture(project, candidate)) return
     const index = candidate?.exports.at(-1)
     const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
       : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
@@ -433,6 +436,9 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       previousMedia = [session.sourcePath, session.previewPath]
     }
     if (action === 'export' && session.project.candidates.find((c) => c.id === candidateId)!.status !== 'ready') throw new Error('Mark this clip ready before baking it')
+    if ((action === 'export' || action === 'export-all') && session.project.automatic?.remix && (await getJobOutput(run))?.clips.some((clip) => clip.editor_stale)) {
+      throw new Error('A video in this run was changed with “Edit hook text & captions”. Open the run in the editor again from the Library to update its copy here, then bake.')
+    }
     const candidates = action === 'replace-source' ? session.project.candidates.slice(0, 1) : action === 'export-all' ? session.project.candidates.filter((c) => c.status === 'ready') : session.project.candidates.filter((c) => c.id === candidateId)
     if (!candidates.length) throw new Error('Mark at least one clip ready before baking.')
     if (action === 'export-all') operation.batch = { completed: 0, total: candidates.length }
@@ -602,7 +608,7 @@ async function recordEditorCost(run: string, result: WorkerResult, section: keyo
   if (!cost && !incomplete) return
   if (cost && recordEditorSpend) {
     // The spending ledger (Settings → Spending), apart from the run's own cost record.
-    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section]) } catch { /* never breaks the editor */ }
+    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section], run) } catch { /* never breaks the editor */ }
   }
   const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
   try {

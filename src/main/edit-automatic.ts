@@ -106,7 +106,10 @@ function remixEditInfo(run: string, output: JobOutput, project: EditorProject | 
   const base = { videoLabel: output.source_video_title || 'your remix', clipCount: output.clips.length, source: 'kept' as const, remix: true as const }
   if (project && output.editor_project) {
     if (!project.automatic?.remix) throw new Error('This run’s editor project could not be read.')
-    return { ...base, state: projectMediaPresent(run, project) ? 'ready' : 'restore' }
+    if (!projectMediaPresent(run, project)) return { ...base, state: 'restore' }
+    // Videos re-made with "Edit hook text & captions" since: the editor's copy of them is swapped for the new ones first.
+    const stale = remixStaleClips(output).length
+    return stale ? { ...base, state: 'restore', refreshVideos: stale } : { ...base, state: 'ready' }
   }
   if (!output.clips.length) throw new Error('This run has no videos to edit.')
   // An unfinished conversion (the project was written, the run not yet marked) is finished without new video.
@@ -114,7 +117,29 @@ function remixEditInfo(run: string, output: JobOutput, project: EditorProject | 
   return { ...base, state: 'convert' }
 }
 
-/** What opening this run in the editor involves. */
+/** A Remix run's videos re-made in Remix since its editor project was made (their editor copy is out of date). */
+function remixStaleClips(output: JobOutput): number[] {
+  return output.clips.filter((clip) => clip.editor_stale === true).map((clip) => clip.clip_index)
+}
+
+/** The editor's copy is up to date again: the re-made marks come off (under the run's lock, in the job output as stored). */
+function clearRemixStale(run: string, indices: number[]): void {
+  if (!indices.length) return
+  const file = join(run, 'job_output.json')
+  const stat = lstatSync(file)
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_JSON_BYTES) throw new Error('This run’s details could not be read.')
+  const raw = JSON.parse(readFileSync(file, 'utf8')) as { clips?: Record<string, unknown>[] }
+  let changed = false
+  for (const clip of Array.isArray(raw.clips) ? raw.clips : []) if (clip && indices.includes(clip.clip_index as number) && clip.editor_stale) { delete clip.editor_stale; changed = true }
+  if (!changed) return
+  const temporary = join(run, `.editor-${randomUUID()}.tmp`)
+  try {
+    writeFileSync(temporary, JSON.stringify(raw), { mode: 0o600, flag: 'wx' })
+    renameSync(temporary, file)
+  } finally { try { unlinkSync(temporary) } catch { /* Already committed. */ } }
+}
+
+/** What opening this run in the editor does. */
 export async function automaticEditInfo(path: unknown): Promise<AutomaticEditInfo> {
   const { run, output, project } = await readRun(path)
   if (isRemixRun(output)) return remixEditInfo(run, output, project)
@@ -346,9 +371,14 @@ async function prepareRemixEditor(prep: EditorPreparation): Promise<void> {
   try {
     const durationMs = output.clips.reduce((sum, clip) => sum + Math.max(0, clip.duration_ms || 0), 0)
     prep.setProgress({ phase: 'copy', percent: 0 })
-    await prep.worker({ media_id: mediaId, mode: 'remix', ...(now.state === 'restore' && project ? { revision: project.revision } : {}) }, Math.max(60_000, durationMs))
+    const stale = remixStaleClips(output)
+    // With its video still in place, only the re-made videos are swapped in (every editor change is kept).
+    const refresh = now.state === 'restore' && now.refreshVideos && stale.length ? { refresh: stale } : {}
+    await prep.worker({ media_id: mediaId, mode: 'remix', ...(now.state === 'restore' && project ? { revision: project.revision, ...refresh } : {}) }, Math.max(60_000, durationMs))
     committed = true
     markEditorProject(run)
+    // Made again from the Library's videos, or refreshed: either way the editor has the re-made videos now.
+    clearRemixStale(run, stale)
     logger.info('editor.remix.prepared', { mode: now.state, videos: output.clips.length })
   } catch (error) {
     if (prep.cancelled()) throw new Error(editorFailureMessage('prepare', 'cancelled'))

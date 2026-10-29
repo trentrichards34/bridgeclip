@@ -23,8 +23,10 @@ function startLook(clip: ClipArtifact): HeadlineLook {
  * size. It's rebuilt from the parts saved when it was made: no AI cost, and
  * its call to action is added back at the end.
  */
-export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
+export function RemixEditDialog({ outputDir, clip, inEditor = false, onDone, onClose }: {
   outputDir: string; clip: ClipArtifact; onDone: (output: JobOutput | null, note: string | null) => void; onClose: () => void
+  /** The run is open in the clip editor too: its copy of this video is refreshed when the editor opens next. */
+  inEditor?: boolean
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   // Focus moves into the dialog, so Escape and Tab work from the start.
@@ -88,6 +90,7 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
             control={<Switch label="Captions" checked={captions} disabled={working} onChange={setCaptions} />} />
           {captions && <CaptionPresetPicker value={preset} onChange={setPreset} />}
         </div>
+        {inEditor && <p className="text-2xs text-ink-subtle" data-testid="remix-edit-in-editor">This run is also in the clip editor: the editor gets the new version of this video the next time you open it there, and the graphics you added there stay.</p>}
         {problem && <p className="text-2xs text-danger">{problem}</p>}
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
       </fieldset>

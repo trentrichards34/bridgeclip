@@ -173,3 +173,80 @@ def test_remix_bakes_use_more_bits():
     import sys
     if sys.platform != 'darwin':
         assert '12M' in renderer._video_codec_args()
+
+
+def test_cta_already_in_the_picture_is_never_added_again(tmp_path):
+    # "Free up space" removed the last video's copy without its call to action: clip_01.mp4 (CTA included) is all there is.
+    run, output = remix_run(tmp_path)
+    (run / 'clip_01.original.mp4').unlink()
+    videos = remix_videos(run, output)
+    assert [p.name for _c, p in videos] == ['clip_00.mp4', 'clip_01.mp4']
+    infos = [{'width': 216, 'height': 384, 'duration': 1000, 'audio': True}, {'width': 216, 'height': 384, 'duration': 3000, 'audio': True}]
+    spans = plan_layout(infos, '30')
+    project, _ = build_remix_project(output, videos, infos, spans, [[], []], MEDIA_ID)
+    a, b = project['candidates']
+    assert b['cta_in_picture'] is True and b['cta_id'] is None and 'cta_in_picture' not in a
+    assert a['remix_span'] == [0, 1000] and b['remix_span'] == [1000, 4000]
+    # Baking keeps the card's call to action (it is in the picture); a video with its original kept gets it added back by main.
+    rendered = run / 'render.mp4'
+    rendered.write_bytes(b'new')
+    result = SimpleNamespace(output_path=str(rendered), subtitle_path=None, duration_ms=3000, layout_type='fill')
+    replace_library_clip(run, output, 1, result, b, project, None, 1000, 4000)
+    assert output['clips'][1]['cta'] == {'id': CTA}
+    rendered.write_bytes(b'new')
+    replace_library_clip(run, output, 0, result, a, project, None, 0, 1000)
+    assert output['clips'][0]['cta'] is None
+
+
+def test_words_survive_free_up_space(tmp_path):
+    run, _ = remix_run(tmp_path, count=1)
+    from clip_engine.services.remix_editor import words_path
+    words = json.loads((run / '.edit' / 'clip_00' / 'edit.json').read_text())['words']
+    words_path(run, 0).write_text(json.dumps({'words': words}))
+    import shutil
+    shutil.rmtree(run / '.edit')
+    assert [w[0] for w in bundle_words(run, 0, 1000)] == ['Money', 'moves', 'fast.', 'Gone']
+
+
+def test_remix_bake_never_draws_captions_hook_layout_or_grade_again():
+    project = {'aspect_ratio': '9:16', 'width': 1080, 'height': 1920, 'automatic': {'remix': True}}
+    c = {'id': 'remix-000', 'title': 't', 'ranges': [[0, 1000]], 'captions': True, 'hook': {'text': 'two words'}, 'grade': 'warm',
+         'scenes': [{'at_ms': 0, 'layout': 'split', 'crops': [[0, 0, .5, .5], [.5, .5, .5, .5]]}], 'stage_scenes': [{}], 'graphics': [{'id': 'g'}]}
+    out = manual_editor.remix_render_candidate(project, c)
+    assert out['captions'] is False and out['hook'] is None and 'grade' not in out and 'stage_scenes' not in out
+    assert out['scenes'] == [{'at_ms': 0, 'layout': 'fill', 'crops': [[0, 0, 1, 1]]}] and out['graphics'] == [{'id': 'g'}]
+    assert c['captions'] is True and c['grade'] == 'warm'
+
+
+def frame_color(video, seconds):
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(seconds), '-i', str(video), '-frames:v', '1', '-vf', 'scale=1:1',
+                          '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True).stdout
+    return tuple(raw[:3])
+
+
+def test_a_video_remade_in_remix_is_refreshed_in_place_keeping_editor_changes(tmp_path):
+    run, _ = remix_run(tmp_path, count=3)
+    asyncio.run(prepare({'run': str(run), 'library': str(tmp_path), 'media_id': MEDIA_ID, 'mode': 'remix'}))
+    project = json.loads((run / 'editor-project.json').read_text())
+    project['candidates'][0]['title'] = 'My graphics stay'
+    project['candidates'][2]['title'] = 'So do these'
+    (run / 'editor-project.json').write_text(json.dumps(project))
+    # "Edit hook text & captions" re-made the middle video (blue → yellow, about the same length).
+    make_video(run / 'clip_01.mp4', 1.5, 'yellow')
+    fresh = 'e' * 32
+    result = asyncio.run(prepare({'run': str(run), 'library': str(tmp_path), 'media_id': fresh, 'mode': 'remix', 'revision': 0, 'refresh': [1]}))
+    assert result == {'candidates': 3, 'refreshed': 1}
+    after = json.loads((run / 'editor-project.json').read_text())
+    assert after['revision'] == 1 and after['source_id'] == fresh and after['duration_ms'] == project['duration_ms']
+    assert [c['title'] for c in after['candidates']] == ['My graphics stay', 'Remix take 2', 'So do these']
+    assert [c['ranges'] for c in after['candidates']] == [c['ranges'] for c in project['candidates']]
+    source = run / f'editor-source-{fresh}.mp4'
+    assert (run / f'editor-preview-{fresh}.mp4').is_file()
+    assert abs(source_info(source)['duration'] - project['duration_ms']) < 80
+    red, yellow, green = frame_color(source, .5), frame_color(source, 1.75), frame_color(source, 3.5)
+    assert red[0] > 200 and red[1] < 60 and yellow[0] > 200 and yellow[1] > 200 and green[1] > 90 and green[0] < 60, (red, yellow, green)
+    # Refreshing needs the current revision too.
+    with pytest.raises(EditorError):
+        asyncio.run(prepare({'run': str(run), 'library': str(tmp_path), 'media_id': 'f' * 32, 'mode': 'remix', 'revision': 0, 'refresh': [1]}))
+    with pytest.raises(ValueError):
+        asyncio.run(prepare({'run': str(run), 'library': str(tmp_path), 'media_id': 'f' * 32, 'mode': 'remix', 'refresh': [1]}))

@@ -74,6 +74,9 @@ test('Settings → Spending: totals, balance, monthly limit, the check before a 
   const byKind = page.getByRole('region', { name: 'Spending by kind' })
   await byKind.getByRole('row', { name: /Voices & AI media \$0\.16 \$2\.16/ }).waitFor()
   await byKind.getByRole('row', { name: /Remix \$1\.25 \$1\.25/ }).waitFor()
+  // B-roll videos have their own row (apart from the B-roll library).
+  await byKind.getByRole('row', { name: /^B-roll video \$0\.00 \$0\.00/ }).waitFor()
+  await byKind.getByRole('row', { name: /^B-roll library \$0\.00 \$0\.00/ }).waitFor()
 
   const recent = page.getByRole('region', { name: 'Recent spending' })
   await recent.getByText('Remix videos', { exact: true }).waitFor()

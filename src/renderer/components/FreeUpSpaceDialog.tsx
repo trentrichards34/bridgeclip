@@ -20,7 +20,7 @@ const GROUPS: { id: CleanupGroupId; title: string; body: string; warning?: strin
     body: 'Remix working folders and recordings from runs that already finished, and temporary files left by a quit or a crash.' },
   { id: 'remixParts', title: 'Remix and b-roll video parts', defaultOn: false,
     body: 'The parts saved to re-make a Remix video without AI cost, and the voice and shots kept to swap shots in a b-roll video.',
-    warning: 'You can no longer use “Edit hook text & captions” on these Remix videos, or swap shots in these b-roll videos.' },
+    warning: 'You can no longer use “Edit hook text & captions” on these Remix videos, or swap shots in these b-roll videos. Each Remix video’s words are kept, so graphics in the clip editor still work.' },
   { id: 'ctaOriginals', title: 'Clip copies without the call to action', defaultOn: false,
     body: 'The copy of each clip saved before its call to action was added.',
     warning: 'You can no longer remove or switch the call to action on these clips. It stays part of the video.' }
