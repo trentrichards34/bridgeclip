@@ -135,6 +135,9 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   })
   await page.getByPlaceholder('sk-or-…').fill('sk-or-test-key')
   await page.getByPlaceholder('sk-or-…').blur()
+  // With the key saved, Clip shows one line of progress; open the steps again.
+  await page.locator('[data-testid="setup-checklist"][data-compact="true"]').waitFor()
+  await checklist.getByRole('button', { name: /Continue setup|Show steps/ }).click()
   await page.waitForFunction(() => document.querySelector('[data-setup-item="openrouter"]')?.getAttribute('data-done') === 'true')
   await app.evaluate(({ ipcMain }) => {
     for (const [channel, value] of [['brandIdentities:list', [{ id: 'a'.repeat(16), name: 'My brand', text: 'We help.' }]], ['ctas:list', [{ id: 'b'.repeat(16), name: 'Follow me' }]], ['avatars:list', [{ id: 'c' }]]]) {
