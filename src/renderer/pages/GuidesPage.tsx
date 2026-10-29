@@ -26,13 +26,13 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
     const id = peekGuide()
     if (!id) return
     // After the app's own "each page starts at the top" scroll, which runs after this page's effects.
-    const frame = requestAnimationFrame(() => {
+    const timer = setTimeout(() => {
       takeGuide()
       const section = document.getElementById(`guide-${id}`)
       section?.scrollIntoView({ block: 'start' })
       section?.focus({ preventScroll: true })
-    })
-    return () => cancelAnimationFrame(frame)
+    }, 0)
+    return () => clearTimeout(timer)
   }, [])
   const start = (guide: Guide, mine: boolean): React.JSX.Element => {
     const variant = mine ? 'primary' : 'secondary'

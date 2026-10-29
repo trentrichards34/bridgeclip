@@ -194,11 +194,11 @@ function createWindow(): void {
 
   // The page process crashed or was killed (a blank window otherwise): log it and offer to reload.
   window.webContents.on('render-process-gone', (_event, details) => {
-    logger.error('renderer.gone', { reason: details.reason, exitCode: details.exitCode })
+    logger.error('renderer.gone', { kind: details.reason, exitCode: details.exitCode })
     if (!offerReloadAfter(details.reason) || window.isDestroyed()) return
     if (hiddenForTests) {
       // A native dialog would hang scripted runs; tests check that it reloads.
-      logger.info('renderer.gone.reload', { reason: details.reason })
+      logger.info('renderer.gone.reload', { kind: details.reason })
       window.webContents.reload()
       return
     }
