@@ -86,8 +86,8 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSCameraUsageDescription: CreatorClips records you on camera when you choose "Me, on camera" in Remix (reactions, takes and article or post videos).
-    NSMicrophoneUsageDescription: CreatorClips records your voice for your on-camera reactions and takes in Remix.
+    NSCameraUsageDescription: CreatorClips uses your camera when you record yourself in Edit my recording, or record a reaction, take or article video in Remix.
+    NSMicrophoneUsageDescription: CreatorClips records your voice when you record yourself in Edit my recording or Remix.
   # Each native CI job stages one architecture's Python and media binaries.
   # Let the CLI architecture select these targets; an explicit arch list here
   # would override it and package incompatible resources into the other app.

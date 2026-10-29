@@ -73,6 +73,12 @@ test('setup path: only the steps the goals need, a first-run step per kind of vi
   assert.deepEqual(ids({ goals: ['ai-reactions', 'avatar-videos', 'posting'], platforms: ['tiktok'] }), ['openrouter', 'tools', 'posting', 'brand', 'cta'])
   assert.deepEqual(ids({ goals: [], platforms: [] }), ['openrouter', 'tools', 'posting', 'brand', 'cta', 'first-clip'])
   assert.match(setupItems(facts(), { goals: [], platforms: [] }).find((item) => item.id === 'brand').how.join(' '), /on Clip or Remix/)
+  // Brand and call to action are optional (as the guided setup says); with no goals picked, posting (Zernio, a separate
+  // paid service) is offered but never required, so a member who only clips can reach "all set".
+  const general = setupItems(facts(), { goals: [], platforms: [] })
+  assert.deepEqual(general.filter((item) => item.optional).map((item) => item.id), ['posting', 'brand', 'cta'])
+  assert.equal(remainingSetup(setupItems(facts({ openrouter: true, runs: 1 }), { goals: [], platforms: [] })), 0)
+  assert.equal(setupItems(facts(), { goals: ['posting'], platforms: [] }).find((item) => item.id === 'posting').optional, false, 'picked Post and schedule: required')
   // The rest of this test: with Avatar Studio on (as BRIDGECLIP_E2E_AVATAR_STUDIO=1 does).
   setAvatarStudioForTests(true)
 
@@ -102,9 +108,13 @@ test('setup path: only the steps the goals need, a first-run step per kind of vi
   const first = (runsByKind) => setupItems(facts({ runs: 1, runsByKind: { ...NO_RUNS, ...runsByKind } }), { goals: ['clips', 'article'], platforms: [] })
   assert.deepEqual(first({ clips: 1 }).filter((item) => item.goal).map((item) => item.done), [true, false])
   assert.deepEqual(first({ articles: 2 }).filter((item) => item.goal).map((item) => item.done), [false, true])
+  // The camera-reaction step names the Remix choices members see (not the hidden "You on camera").
+  const cameraStep = setupItems(facts(), { goals: ['camera-reactions'], platforms: [] }).find((item) => item.id === 'first-camera-reaction')
+  assert.doesNotMatch(cameraStep.detail, /You on camera/)
+  assert.match(cameraStep.detail, /Pause & react/)
   // Camera: unknown and refused aren't done.
   assert.equal(setupItems(facts({ camera: false }), { goals: ['article'], platforms: [] }).find((item) => item.id === 'camera').done, false)
-  assert.equal(remainingSetup(setupItems(facts({ openrouter: true, camera: true, brandIdentities: 1, ctas: 1, runsByKind: { ...NO_RUNS, articles: 1 } }), { goals: ['article'], platforms: [] })), 0)
+  assert.equal(remainingSetup(setupItems(facts({ openrouter: true, camera: true, runsByKind: { ...NO_RUNS, articles: 1 } }), { goals: ['article'], platforms: [] })), 0)
 
   // Edit my recording: films with the camera, and has its own first-run step, counted from its own reels.
   assert.deepEqual(ids({ goals: ['clips', 'edit-recording'], platforms: [] }), ['openrouter', 'tools', 'camera', 'brand', 'cta', 'first-clip', 'first-edited-recording'])
