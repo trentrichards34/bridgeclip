@@ -205,6 +205,9 @@ test('A YouTube video: switched from Reel, screen + webcam picture-in-picture at
   await chapters.getByRole('button', { name: 'Copy chapters' }).waitFor()
   assert.match(await chapters.getByRole('list', { name: 'Chapters' }).innerText(), /^0:00 brand new tool\n/)
   await page.getByRole('button', { name: 'Open in Library' }).click()
+  // It opens the run itself (named as a YouTube video); its card in the Library list carries the YouTube tag.
+  await page.getByText('YouTube · I launched a brand new tool', { exact: true }).waitFor()
+  await page.locator('button', { hasText: /^Library$/ }).filter({ has: page.locator('svg.lucide-arrow-left') }).click()
   await page.getByTestId('run-format').filter({ hasText: 'YouTube' }).first().waitFor()
   assert.deepEqual(errors, [])
 })

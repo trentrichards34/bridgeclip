@@ -67,7 +67,9 @@ test('text templates read on a phone: big type, wide cards, one look, never an e
           }
           await w.webContents.executeJavaScript(`window.__graphic.frame(${Math.round(ms * .85)})`)
           const settled = await w.webContents.executeJavaScript(measure)
-          // The drawn width: the outermost columns with ink, from the captured frame.
+          // The drawn width: the outermost columns with ink, from the captured frame
+          // (after two paints, so a busy machine cannot hand back the frame before).
+          await w.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
           let img = await w.webContents.capturePage()
           if (img.getSize().width !== 1080) img = img.resize({ width: 1080, height: 1920 })
           const bm = img.toBitmap()
