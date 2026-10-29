@@ -185,6 +185,9 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   // Back on Clip: the sample action shows only while "first clip" is not done. Remove the run to see it fill Create.
   fs.rmSync(path.join(library, '44444444-4444-4444-8444-444444444444'), { recursive: true })
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
+  // The key is saved, so Clip shows the compact bar again: open the steps.
+  await page.locator('[data-testid="setup-checklist"][data-compact="true"]').waitFor()
+  await page.getByTestId('setup-checklist').getByRole('button', { name: /Continue setup|Show steps/ }).click()
   const sample = page.getByTestId('setup-checklist').getByRole('button', { name: 'Try it with a sample video' })
   await sample.waitFor()
   await sample.click()
