@@ -2,6 +2,7 @@ import { useEffect, useMemo, type ReactNode } from 'react'
 import { NAV_ITEMS, Sidebar, toolFor, type Page } from './Sidebar'
 import { PageToolContext, type PageTool } from './ui/page-tool'
 import { TopBar } from './TopBar'
+import { PAGE_GUIDES, requestGuide } from '../lib/guide-focus'
 
 interface LayoutProps {
   children: ReactNode
@@ -24,8 +25,12 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps): Reac
   }, [tool])
   const pageTool = useMemo<PageTool>(() => {
     const item = NAV_ITEMS.find((entry) => entry.id === currentPage)
-    return { tool, label: item?.label ?? '', icon: item?.icon ?? null }
-  }, [tool, currentPage])
+    const guide = PAGE_GUIDES[currentPage]
+    return {
+      tool, label: item?.label ?? '', icon: item?.icon ?? null,
+      ...(guide ? { openGuide: () => { requestGuide(guide); onNavigate('guides') } } : {})
+    }
+  }, [tool, currentPage, onNavigate])
   return (
     <div className="app-backdrop relative flex h-screen w-screen overflow-hidden">
       <Sidebar currentPage={currentPage} onNavigate={onNavigate} />

@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import {
-  MAX_PRESETS, isBeatSheetChoice, isPresetId, parseDefaultBrandId, parseMemberPrefs, parseSampleVideoLink, parseStyleOf, parseSupportLink, presetName,
+  MAX_PRESETS, isBeatSheetChoice, isPresetId, parseDefaultBrandId, parseLastSeenVersion, parseMemberPrefs, parseSampleVideoLink, parseStyleOf, parseSupportLink, presetName,
   type MemberPrefs, type StyleKind, type StylePreset
 } from '../shared/member-prefs'
 import { parseProfileUpdate } from '../shared/onboarding'
@@ -134,6 +134,12 @@ export function saveAppPrefs(update: unknown): MemberPrefs {
   if ('useMyLook' in raw) {
     if (typeof raw.useMyLook !== 'boolean') throw new Error('Invalid look setting')
     next.useMyLook = raw.useMyLook
+  }
+  // The version that last ran, for "What's new" after an update.
+  if ('lastSeenVersion' in raw) {
+    const version = parseLastSeenVersion(raw.lastSeenVersion)
+    if (!version) throw new Error('Invalid version')
+    next.lastSeenVersion = version
   }
   return write(next)
 }

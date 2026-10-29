@@ -1,7 +1,6 @@
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { APP_NAME, REPO_URL } from '../shared/brand'
-import { reportIssue } from './support-report'
 import { getLogFilePath } from './logger'
 import { checkForUpdatesFromMenu } from './auto-updater'
 
@@ -88,11 +87,12 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Report an Issue…',
           click: (): void => {
-            // Copies the support report (no keys), then opens the member's support link, or the public issues page.
-            void reportIssue(null, true).then(({ opened }) => {
-              if (opened || mainWindow.isDestroyed()) return
-              return dialog.showMessageBox(mainWindow, { type: 'info', message: 'Support report copied', detail: 'Paste it in your support chat. You can add a support link or email in Settings → About.' })
-            }).catch(() => undefined)
+            // The window shows the support report first (no keys), with Save to a file, Copy and the support page:
+            // the report is never added to a page for the member, since the default page is public.
+            if (mainWindow.isDestroyed()) return
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.show()
+            mainWindow.webContents.send('support:show')
           }
         },
         { type: 'separator' as const },

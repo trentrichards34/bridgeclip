@@ -135,9 +135,9 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   })
   await page.getByPlaceholder('sk-or-…').fill('sk-or-test-key')
   await page.getByPlaceholder('sk-or-…').blur()
-  // With the key saved, Clip folds the checklist into one line of progress; open it to see the steps.
-  await page.locator('[data-testid="setup-checklist"][data-compact="true"]').getByText('1 of 6 set up', { exact: true }).waitFor()
-  await checklist.getByRole('button', { name: 'Continue setup' }).click()
+  // With the key saved, Clip shows one line of progress; open the steps again.
+  await page.locator('[data-testid="setup-checklist"][data-compact="true"]').waitFor()
+  await checklist.getByRole('button', { name: /Continue setup|Show steps/ }).click()
   await page.waitForFunction(() => document.querySelector('[data-setup-item="openrouter"]')?.getAttribute('data-done') === 'true')
   await app.evaluate(({ ipcMain }) => {
     for (const [channel, value] of [['brandIdentities:list', [{ id: 'a'.repeat(16), name: 'My brand', text: 'We help.' }]], ['ctas:list', [{ id: 'b'.repeat(16), name: 'Follow me' }]], ['avatars:list', [{ id: 'c' }]]]) {
@@ -185,7 +185,9 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   // Back on Clip: the sample action shows only while "first clip" is not done. Remove the run to see it fill Create.
   fs.rmSync(path.join(library, '44444444-4444-4444-8444-444444444444'), { recursive: true })
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
-  await page.getByTestId('setup-checklist').getByRole('button', { name: 'Continue setup' }).click()
+  // The key is saved, so Clip shows the compact bar again: open the steps.
+  await page.locator('[data-testid="setup-checklist"][data-compact="true"]').waitFor()
+  await page.getByTestId('setup-checklist').getByRole('button', { name: /Continue setup|Show steps/ }).click()
   const sample = page.getByTestId('setup-checklist').getByRole('button', { name: 'Try it with a sample video' })
   await sample.waitFor()
   await sample.click()

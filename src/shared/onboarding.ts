@@ -135,12 +135,14 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Open Clip. Paste a YouTube or Twitch link, or choose a file from your computer. You can add up to 10 videos at once.',
       'Pick a workflow. Automatic makes finished clips. Review & edit shows you the candidates first so you can pick and trim them.',
       'Under Format, choose Vertical for TikTok, Reels and Shorts.',
-      'Under Clips, describe the moments you want if you have something in mind, and pick the lengths.',
+      'Under Clips, type in What to clip the moments you want, if you have something in mind, and pick the lengths.',
       'Under Captions, choose a caption style and your brand, then Generate clips.',
-      'Finished clips land in your Library, ready to post, schedule or edit.'
+      'Finished clips land in your Library, ready to post, schedule or edit.',
+      'To change one, choose ⋯ → Open in editor. There, Add graphic opens the gallery; Design a custom graphic here has your AI design one for the words said at that spot. Pick Best or Lower cost: each shows its estimate before you spend anything.'
     ],
     tips: [
       'In the Library, “More clips from this video” finds new moments and reuses the transcript, so you don’t pay to transcribe it again.',
+      'In the editor, Hook ideas writes hook options. Tick Trial reel on several to make a copy of the clip for each hook, for Instagram trial reels.',
       'Choosing your brand fills in your hook look, caption style and call to action for you.',
       'Edit a clip after it’s made: its framing, the size of each part of a split screen, the hook text, captions and call to action.'
     ]
@@ -151,15 +153,17 @@ export const GUIDES: Record<GoalId, Guide> = {
     summary: 'Turn a raw recording of you talking to camera into one finished vertical reel.',
     needs: ['Your OpenRouter key', 'The system check passing'],
     steps: [
-      'Open Edit my recording. Choose your recording, or a few takes of the same video. Or choose Film it here to record with your camera.',
+      'Open Edit my recording. Choose your recording, or a few takes of the same video. Or choose Film it here to record with your camera. Filmed your screen at the same time? Choose + Add a screen recording.',
       'Pick your brand, then choose Edit my recording. It listens to every word and plans the edit: the strongest hook first, your last complete take of each line, filler words and false starts cut.',
       'Review it: click any word to keep or cut it, try another hook, edit the hook text, and switch pop-ups and sounds on or off.',
-      'Choose Make my reel. It lands in your Library, ready to post, and you can still change its hook text and captions there.'
+      'Under Skills, turn on what you want, like Sound effects, or Custom graphics (Beta), where your AI designs scenes for the parts where you teach. Pick how many with Scenes: Light, Standard or Full. Each shows its estimate before you spend anything.',
+      'Choose Make my reel. It lands in your Library, ready to post. To change it later, choose ⋯ → Open in editor.'
     ],
     tips: [
       'Fluff a line? Say it again, or say “scratch that” and start the line over: the edit keeps your last complete take.',
       'Not sure what to film? Open What should I film? for five ideas with a hook and talking points, then Film this.',
-      'In the clip editor, Hook ideas writes hook options from what you said. Tick Trial reel on several to make a copy of the clip for each hook, for Instagram trial reels.'
+      'In the clip editor, Hook ideas writes hook options from what you said. Tick Trial reel on several to make a copy of the clip for each hook, for Instagram trial reels.',
+      'Also in the clip editor: Hook stays on screen sets how long the hook text shows, Fix layout redoes the scenes from your graphics, and Design a custom graphic here (under Add graphic) designs one for a single spot.'
     ]
   },
   'ai-reactions': {
@@ -195,6 +199,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     ],
     tips: [
       'Wear headphones when you record in the app, so their video’s sound stays out of your microphone.',
+      'To add graphics to a finished video, choose ⋯ → Open in editor in your Library, then Add graphic. Design a custom graphic here has your AI design one for that spot.',
       'Listening on the go? Screenshot the player when something stands out. Later, drop those screenshots into Moment + my take to set your ranges.',
       'Face a window or a lamp and keep your head and shoulders in the frame; the cut-out background works best with good light.',
       'Only remix videos you own or have permission to use.'

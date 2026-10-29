@@ -2,7 +2,11 @@ import { createContext, useContext } from 'react'
 import type { LucideIcon } from 'lucide-react'
 
 /** The current page's tool colour id, sidebar label and icon (set by Layout). */
-export interface PageTool { tool: string; label: string; icon: LucideIcon | null }
+export interface PageTool {
+  tool: string; label: string; icon: LucideIcon | null
+  /** Make pages: opens this page's guide in Guides ("How it works" in the header). */
+  openGuide?: () => void
+}
 
 export const PageToolContext = createContext<PageTool | null>(null)
 

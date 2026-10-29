@@ -25,6 +25,7 @@ import { SettingRow } from '../components/ui/SettingRow'
 import { Switch } from '../components/ui/Switch'
 import { UpdatesRow } from '../components/Updates'
 import { OutputStorage } from '../components/OutputStorage'
+import { YourData } from '../components/YourData'
 import { useOutputFolderChange } from '../components/OutputFolderChange'
 import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
@@ -435,6 +436,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             <SupportSettings />
             <UpdatesRow />
             <OutputStorage outputDirectory={outputDirectory} />
+            <YourData />
           </Section>
         </div>
       </div>

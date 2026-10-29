@@ -62,7 +62,7 @@ export interface SetupProfile { goals: readonly GoalId[]; platforms: readonly Ze
 const FIRST_RUNS: Record<VideoGoalId, { id: FirstRunId; title: string; detail: string; count: keyof RunCounts }> = {
   clips: { id: 'first-clip', title: 'Make your first clips', detail: 'Paste a video link on Clip and start a run.', count: 'clips' },
   'ai-reactions': { id: 'first-ai-reaction', title: 'Make your first AI reaction', detail: 'In Remix, choose AI presenter and remix a video with your avatar.', count: 'aiReactions' },
-  'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'In Remix, choose You on camera: Pause & react, Their clip then me, React then my thoughts, or a moment from a long video.', count: 'cameraReactions' },
+  'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'In Remix, choose Pause & react, Their clip then me, React then my thoughts, or Moment + my take.', count: 'cameraReactions' },
   article: { id: 'first-article', title: 'Make your first article or post video', detail: 'Talk over a screenshot in Remix.', count: 'articles' },
   'avatar-videos': { id: 'first-avatar-video', title: 'Make your first avatar video', detail: 'Write a script in Avatar Studio and generate it.', count: 'avatarVideos' },
   listicle: { id: 'first-listicle', title: 'Make your first top list', detail: 'In Avatar Studio, choose Top list, add your items and make the video.', count: 'listicles' }
@@ -91,6 +91,8 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
   const needsAvatar = goals.has('ai-reactions') || goals.has('avatar-videos')
   const needsCamera = goals.has('camera-reactions') || goals.has('article') || goals.has('edit-recording')
   const posting = general || goals.has('posting')
+  // Posting is only required for members who picked "Post and schedule": Zernio is a separate paid service.
+  const postingOptional = !goals.has('posting')
   const platforms = profile.platforms
   const missing = platforms.filter((platform) => !facts.connectedPlatforms.includes(platform))
   const postingDone = facts.zernioKey && (platforms.length ? missing.length === 0 : facts.postingAccounts > 0)
@@ -100,7 +102,8 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
       id: 'openrouter', title: 'Add your OpenRouter key', detail: 'One key covers transcription, picking the best moments and writing.', done: facts.openrouter,
       why: 'CreatorClips uses AI models through OpenRouter to transcribe, find the best moments and write titles and takes.',
       how: ['Sign in at openrouter.ai and add credit to your account.', 'Create an API key there.', 'Paste it in Settings → API keys. It’s stored encrypted on this computer.'],
-      cost: 'You pay OpenRouter for what each run uses. You can set a spending limit in Settings → Spending.'
+      // Never a made-up dollar amount: point at the app's own estimates and records.
+      cost: 'You pay OpenRouter for what each run uses. Not sure how much credit to add? Every paid run shows its estimated cost before it starts, and Settings → Spending lists what each run cost, so you can see how far your credit goes. You can set a monthly limit there too.'
     },
     {
       id: 'tools', title: 'Pass the system check', done: facts.toolsOk === true,
@@ -118,7 +121,7 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
     cost: 'Free.'
   })
   if (posting) items.push({
-    id: 'posting', done: postingDone,
+    id: 'posting', done: postingDone, optional: postingOptional,
     title: platforms.length ? `Connect ${listNames(platforms.map((platform) => ZERNIO_PLATFORM_NAMES[platform]))}` : 'Connect a posting account',
     detail: !facts.zernioKey ? 'Add your Zernio key, then connect the accounts you post to.'
       : postingDone ? 'You can post and schedule from CreatorClips.'
@@ -130,13 +133,14 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
   })
   items.push(
     {
-      id: 'brand', title: 'Set up your brand', detail: 'Your niche, voice and offer, plus your color, caption style and handle.', done: facts.brandIdentities > 0,
+      // Optional, as the guided setup says: videos are made without a brand or a call to action.
+      id: 'brand', title: 'Set up your brand', detail: 'Your niche, voice and offer, plus your color, caption style and handle.', done: facts.brandIdentities > 0, optional: true,
       why: 'Titles, hook text and takes are written in your voice, and your look is filled in for you.',
       how: ['Add a brand: who you help, what you believe, your offer and your proof.', 'Under Look, add your color, hook and caption style, handle or logo, and comment keyword.', `Choose the brand on ${avatarStudio ? 'Clip, Remix or Avatar Studio' : 'Clip or Remix'} to use it.`],
       cost: 'Free.'
     },
     {
-      id: 'cta', title: 'Add a call-to-action clip', detail: 'A short video or image added to the end of your videos.', done: facts.ctas > 0,
+      id: 'cta', title: 'Add a call-to-action clip', detail: 'A short video or image added to the end of your videos.', done: facts.ctas > 0, optional: true,
       why: 'Every video can end by telling viewers what to do next, like follow you or comment a keyword.',
       how: ['Choose a short video or image file.', 'Pick it as your brand’s call to action, or on any run.'],
       cost: 'Free.'

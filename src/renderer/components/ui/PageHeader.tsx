@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { BookOpen } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { usePageTool } from './page-tool'
 
@@ -30,10 +31,19 @@ export function PageHeader({ title, description, actions, eyebrow, leading, clas
       <div className="min-w-0 flex-1">
         {leading && <div className="mb-2">{leading}</div>}
         {page?.label && (
-          <p className="tool-chip mb-2.5">
-            <span aria-hidden className="tool-chip-dot">{Icon && <Icon className="h-3 w-3" strokeWidth={2.6} />}</span>
-            {page.label}
-          </p>
+          <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="tool-chip">
+              <span aria-hidden className="tool-chip-dot">{Icon && <Icon className="h-3 w-3" strokeWidth={2.6} />}</span>
+              {page.label}
+            </p>
+            {/* Make pages: this page's guide in Guides. */}
+            {page.openGuide && (
+              <button type="button" onClick={page.openGuide} aria-label={`How it works: the ${page.label} guide`}
+                className="inline-flex items-center gap-1 rounded-md text-xs text-ink-muted underline decoration-white/20 underline-offset-2 transition-colors hover:text-ink hover:decoration-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+                <BookOpen aria-hidden className="h-3.5 w-3.5" />How it works
+              </button>
+            )}
+          </div>
         )}
         {customEyebrow && <p className="eyebrow mb-1">{customEyebrow}</p>}
         {!page?.label && eyebrow && !customEyebrow && <p className="eyebrow mb-1">{eyebrow}</p>}
