@@ -9,12 +9,16 @@ import signal
 from bridge_runner import reserve_stdout_for_protocol, emit
 
 logger = logging.getLogger('editor_runner')
-ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras')
+ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras', 'suggest-hooks', 'prepare', 'fix-layout')
+# Main reads one result line of at most 16 KiB.
+MAX_RESULT_CHARS = 15000
+# One request (graphics and scenes for a long reel: up to 60 of each; sound events and the member's own sounds).
+MAX_REQUEST = 131072
 # Keep in sync with EDITOR_ERROR_CODES in manual_editor.py and editorErrorCodes
 # in src/shared/clip-editor.ts. Only these codes cross the bridge.
 ERROR_CODES = frozenset({'duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
-    'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'engine_unavailable',
-    'cancelled'})
+    'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'hooks_unavailable',
+    'engine_unavailable', 'transcript_missing', 'source_changed', 'download_failed', 'translation_failed', 'cancelled'})
 
 
 def failure_code(error):
@@ -29,6 +33,41 @@ def failure_code(error):
     if isinstance(error, ImportError):
         return 'engine_unavailable'
     return None
+
+
+def result_message(result):
+    """The success line: hook ideas shrink (details first, then the weakest ideas) to fit the protocol limit."""
+    message = {'ok': True}
+    if not isinstance(result, dict):
+        return message
+    message.update({key: result[key] for key in ('cost_usd', 'cost_incomplete', 'model') if key in result})
+    if isinstance(result.get('stage_scenes'), list):
+        # "Fix layout": the clip's stage scenes (at most 60 short records: well under the limit).
+        message['stage_scenes'] = result['stage_scenes'][:60]
+        return message
+    hooks = [dict(idea) for idea in result.get('hooks', [])]
+    message['hooks'] = hooks
+    if len(json.dumps(message)) > MAX_RESULT_CHARS:
+        for idea in hooks:
+            idea.update(elements={'qualifier': None, 'main_statement': None, 'twist': None}, why='')
+    while hooks and len(json.dumps(message)) > MAX_RESULT_CHARS:
+        hooks.pop()
+    return message
+
+
+def failure_message(error, code):
+    """The failure line, with what paid calls cost before the failure (a translated export whose render failed)."""
+    message = {'ok': False, 'error': code}
+    usage = getattr(error, 'usage', None)
+    if isinstance(usage, dict):
+        cost = usage.get('cost_usd')
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            message['cost_usd'] = cost
+        if usage.get('cost_incomplete') is True:
+            message['cost_incomplete'] = True
+        if isinstance(usage.get('model'), str):
+            message['model'] = usage['model'][:120]
+    return message
 
 
 def log_failure(action, code, error):
@@ -54,8 +93,8 @@ def main():
     try:
         from clip_engine.logging_safety import install_safe_logging
         install_safe_logging()
-        raw = sys.stdin.read(16385)
-        if len(raw) > 16384:
+        raw = sys.stdin.read(MAX_REQUEST + 1)
+        if len(raw) > MAX_REQUEST:
             raise ValueError('Request too large')
         config = json.loads(raw)
         action = config.get('action')
@@ -69,9 +108,8 @@ def main():
             task = asyncio.current_task()
             if os.name != 'nt':
                 asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
-            await run_editor(config, progress=lambda value: emit({'type': 'progress', **value}))
-        asyncio.run(work())
-        emit({'ok': True})
+            return await run_editor(config, progress=lambda value: emit({'type': 'progress', **value}))
+        emit(result_message(asyncio.run(work())))
         return 0
     except (Exception, asyncio.CancelledError) as error:
         code = failure_code(error)
@@ -79,7 +117,7 @@ def main():
             log_failure(action if action in ACTIONS else 'request', code, error)
         except Exception:
             pass  # Logging must never hide the protocol result.
-        emit({'ok': False, 'error': code})
+        emit(failure_message(error, code))
         return 1
 
 

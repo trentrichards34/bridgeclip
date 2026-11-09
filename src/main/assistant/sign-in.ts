@@ -3,7 +3,7 @@ import type { AssistantCliProviderId, AssistantSignInState } from '../../shared/
 import { cliEnvironment, resolveCli, spawnCli, type CliRun } from './cli-process'
 
 // Sign-in runs the provider's own command, which opens the browser and stores
-// the credentials where that CLI always keeps them. BridgeClip only relays the
+// the credentials where that CLI always keeps them. CreatorClips only relays the
 // sign-in link and, for Claude, the code the browser may show.
 
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000

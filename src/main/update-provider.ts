@@ -1,9 +1,15 @@
 import type { AppUpdater } from 'electron-updater'
 import { GitHubProvider } from 'electron-updater/out/providers/GitHubProvider'
 import { parseUpdateInfo, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider'
+import { RELEASE_IDENTITY } from '../shared/brand'
 
-/** Where releases are published (electron-builder.yml `publish`). */
-export const UPDATE_REPOSITORY = { owner: 'bridge-mind', repo: 'bridgeclip' } as const
+/**
+ * Where releases are published: the public, installers-only repository
+ * compiled into this build (electron-builder.yml `publish` names the same one).
+ * Public, so members' apps read it without a GitHub token.
+ */
+const [owner, repo] = RELEASE_IDENTITY.releasesRepository.split('/')
+export const UPDATE_REPOSITORY = { owner, repo } as const
 
 /** How many recent releases to look through for one that ships this platform. */
 const RELEASE_SCAN_LIMIT = 30
@@ -54,7 +60,7 @@ export function newestReleaseWith(releases: unknown, channelFile: string): strin
  * code-signature checks, stays with electron-updater.
  */
 export class PlatformGitHubProvider extends GitHubProvider {
-  /** Installed as `{ provider: 'custom', updateProvider }`; always reads BridgeClip's releases. */
+  /** Installed as `{ provider: 'custom', updateProvider }`; always reads CreatorClips's releases. */
   constructor(_options: unknown, updater: AppUpdater, runtimeOptions: ProviderRuntimeOptions) {
     super({ provider: 'github', ...UPDATE_REPOSITORY }, updater, runtimeOptions)
   }

@@ -26,7 +26,15 @@ from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
-from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
+from clip_engine.services.broll_library import load_catalog, parse_ai_settings, prepare_library_broll
+from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
+from clip_engine.services.hook_preview import pick_teaser
+from clip_engine.services.auto_graphics import fit_to_clip, on_stage, stage_scenes_for, write_graphics_plan
+from clip_engine.services.spoken_cta import clear_scenes, create_cta, with_cta
+from clip_engine.services.stage_scenes import auto_look
+from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
+from clip_engine.services.caption_translation import CaptionTranslator, language_name
+from clip_engine.services.transcript_reuse import load_saved_transcript, reusable_transcript, source_fingerprint
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
 from clip_engine.services.editorial_evidence import discovery_feedback, overlaps
 from clip_engine.services.jev_service import JevService, MODEL as JEV_MODEL
@@ -34,12 +42,19 @@ from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRe
 from clip_engine.services.editorial_context import analyze_reactions, empty_report, repair_context_boundaries
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
+from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
+from clip_engine.services.brand_mark import create_post_caption
+from clip_engine.services.look_extras import look_extras
+from clip_engine.services.audio_finish import finish_in_place, parse_audio, save_run_audio
 from clip_engine.services.intelligence_planner import (
+    MAX_BRAND_IDENTITY_CHARS,
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
     ClipPlanSegment,
     IntelligencePlannerService,
+    clean_exclusions,
 )
+from clip_engine.services.screen_relevance import MODES as SCREEN_FOCUS_MODES
 from clip_engine.services.memory_monitor import (
     force_gc,
     log_memory_usage,
@@ -87,6 +102,45 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+def spoken_language_code(language: Optional[str]) -> Optional[str]:
+    """A transcript's detected language as a two-letter code ("en", "en-US" -> "en"), or None when it isn't one."""
+    if not isinstance(language, str):
+        return None
+    match = re.fullmatch(r"([a-z]{2})(?:[-_][a-z0-9]{2,8})?", language.strip().lower())
+    return match.group(1) if match else None
+
+
+def headline_off(request) -> bool:
+    """The member's own hook text is off on these clips ("No hook text" or no title), so a hook headline may be drawn."""
+    look = request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}
+    return request.aspect_ratio == '9:16' and (not request.include_title or (request.title_style == 'headline' and look.get('look') == 'none'))
+
+
+def stages_on(request) -> bool:
+    """Stage layouts apply: asked for, with motion graphics, on vertical clips without a gameplay background."""
+    return bool(request.stage_layouts and request.motion_graphics and request.aspect_ratio == '9:16' and not request.background_video_path)
+
+
+def stage_brand(request) -> Optional[str]:
+    """The member's brand color for Stage layouts (their hook's brand color), or None."""
+    look = request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}
+    color = look.get('color')
+    if (look.get('look') == 'brand' or look.get('textBg') == 'brand') and isinstance(color, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', color):
+        return color.upper()
+    return None
+
+
+def graphics_options(request) -> dict:
+    # Chapter headers come with motion graphics: a talk with an explicit structure gets a title per section.
+    # The member's register (teaching | story | minimal; else detected from the words) and the one look's tone.
+    register = getattr(request, 'graphics_register', None)
+    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request), 'chapters': True,
+            **({'register': register} if register in ('teaching', 'story', 'minimal') else {}),
+            **({'logos': request.graphics_logos} if isinstance(getattr(request, 'graphics_logos', None), list) and request.graphics_logos else {}),
+            # One look per video: a white hook box means dark ink on light cards; anything else light ink on dark.
+            'tone': 'light' if (request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}).get('look') == 'white' else 'dark'}
+
+
 @dataclass
 class ClippingJobRequest:
     """Request to process a video for AI clipping."""
@@ -107,6 +161,11 @@ class ClippingJobRequest:
     caption_style: Optional[CaptionStyle] = None
     # Title card over the top of each rendered clip.
     include_title: bool = True
+    # "headline": a story headline in a bar above the video; "card": the short
+    # title in a rounded card over the video.
+    title_style: str = "card"
+    # The headline's look (bar color or floating text, and font); see HeadlineLook.
+    headline_look: Optional[dict] = None
     callback_url: Optional[str] = None
     start_time_seconds: Optional[float] = None
     end_time_seconds: Optional[float] = None
@@ -117,15 +176,105 @@ class ClippingJobRequest:
     # The user's description of the moments to clip; None picks the best moments.
     clip_request: Optional[str] = None
     layout_style: str = LayoutStyle.AUTO
+    # Screen share + webcam clips (Smart framing): "smart" mixes presenter-only and split
+    # screen clip by clip; "split" and "presenter" use one style (see screen_relevance).
+    screen_focus: str = 'smart'
+    # Gameplay split (9:16): looping background video under the speaker.
+    background_video_path: Optional[str] = None
+    # B-roll mode: stock footage (Pexels) over the speaker; keep the speaker
+    # on screen for the opening hook.
+    broll_enabled: bool = False
+    broll_keep_hook: bool = True
+    # Where the b-roll comes from (broll_library.py): None or 'stock' is Pexels; 'library', 'ai' and
+    # 'library_ai' use the member's library catalog and/or AI shots (saved to broll_ai_dir for the library).
+    broll_source: Optional[str] = None
+    broll_catalog_path: Optional[str] = None
+    broll_ai: Optional[dict] = None
+    broll_ai_dir: Optional[str] = None
+    # Hook preview: open each clip with its strongest line, then play it.
+    hook_preview: bool = False
+    # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
+    # main draws them over the finished clips after the run.
+    motion_graphics: bool = False
+    # Stage layouts (with motion graphics on, 9:16): the big pattern cards are stage size and each clip switches to
+    # the stage scene around them (stage_scenes), rendered with the clip.
+    stage_layouts: bool = False
+    # "Say what it's for": the member's purpose line, and a reference picture (sent only when the planner accepts images).
+    purpose: Optional[str] = None
+    reference_image_path: Optional[str] = None
+    # Voice cleanup and background music on every clip (see audio_finish.parse_audio), or None for neither.
+    audio: Optional[dict] = None
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
     video_speed: float = 1.0
     workflow: str = 'automatic'
     caption_preset: str = 'pop'
+    # Paid Creators framework grading: keep clips graded at or above this bar
+    # ("a", "b", "c") or grade everything and keep all ("all"); "off" skips it.
+    quality_bar: str = 'b'
+    # Caption language code (see caption_translation.CAPTION_LANGUAGES); None keeps the spoken language.
+    caption_language: Optional[str] = None
+    # "More clips from this video": the earlier run's saved transcript (used only
+    # when it matches this video), a kept local copy of its source to use instead
+    # of downloading, that copy's display metadata, and the earlier clips' ranges.
+    reuse_transcript_path: Optional[str] = None
+    reuse_source_path: Optional[str] = None
+    reuse_source_meta: Optional[dict] = None
+    reuse_expected_duration_seconds: Optional[float] = None
+    # The earlier run looked at only part of the video (for transcripts that don't record their range).
+    reuse_transcript_partial: bool = False
+    exclude_ranges_ms: Optional[list] = None
+    # Headlines this video's clips got on earlier runs ([{start_ms, end_ms, headline}], see headline_memory): a clip
+    # that covers the same moment keeps its headline when it still fits what is said in it.
+    kept_headlines: Optional[list] = None
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        if self.screen_focus not in SCREEN_FOCUS_MODES:
+            raise ValueError("Invalid screen share framing")
+        if language_name(self.caption_language) is None:
+            self.caption_language = None
+        self.exclude_ranges_ms = [list(span) for span in clean_exclusions(self.exclude_ranges_ms)] or None
+        from clip_engine.services.headline_memory import clean_kept_headlines
+        self.kept_headlines = clean_kept_headlines(self.kept_headlines) or None
+        self._post_init_brand()
+
+    # The member's brand identity (niche, voice, offer, proof): advisory context for titles,
+    # hook text and descriptions. Never a source of facts the video doesn't support.
+    brand_identity: str = ''
+    brand_name: str = ''
+    # Comment-keyword call to action (Automatic): ends each clip's post caption, shown at the end of the video.
+    cta_keyword: str = ''
+    cta_offer: str = ''
+    # Whose voice headlines are in: 'clipper' (third person, someone else's video) or 'creator' (their own video).
+    headline_voice: str = 'clipper'
+    # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
+    brand_mark: Optional[dict] = None
+    # Look extras (see look_extras): motion effects picked on Create, and the brand color they use.
+    look_extras: Optional[list] = None
+    look_extras_color: Optional[str] = None
+    # How dense the automatic graphics are: 'teaching' | 'story' | 'minimal' (None: detected from the words).
+    graphics_register: Optional[str] = None
+    # My logos: [{image, name, aliases}] (image: a name in the run's .graphics/images/).
+    graphics_logos: Optional[list] = None
+
+    def _post_init_brand(self):
+        from clip_engine.services.look_extras import parse_color, parse_look_extras
+        self.look_extras = list(parse_look_extras(self.look_extras))
+        self.look_extras_color = parse_color(self.look_extras_color) if self.look_extras else None
+        if self.headline_voice not in ('creator', 'clipper'):
+            raise ValueError("Invalid headline voice")
+        self.brand_identity = (self.brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS]
+        self.brand_name = ' '.join((self.brand_name or '').split())[:120]
+        self.cta_keyword = (self.cta_keyword or '').strip().upper()
+        if self.cta_keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", self.cta_keyword):
+            raise ValueError("Invalid call-to-action keyword")
+        self.cta_offer = ' '.join((self.cta_offer or '').split())[:80]
+        if self.workflow == 'review':
+            # The editor's export has its own end card; the keyword tag and mark are Automatic-only for now.
+            self.cta_keyword, self.cta_offer, self.brand_mark = '', '', None
+            self.look_extras, self.look_extras_color = [], None
         # Blank means no request, so the run and its no-match error agree with the planner.
         self.clip_request = (self.clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         if self.job_id is None:
@@ -220,8 +369,12 @@ class AIClippingPipeline:
         clip_trace_paths: dict[int, str] = {}
         clip_durations_ms: dict[int, int] = {}
         layout_vision_cost = 0.0
+        broll_cost = 0.0
+        broll_counts = {'library': 0, 'ai': 0}
+        broll_catalog: Optional[list] = None
         peak_rss_mb = 0.0
         transcription_status = "available"
+        transcript_reused = False
         visual_frames = []
         saved_local_output: Optional[JobOutput] = None
         current_stage = "setup"
@@ -267,11 +420,20 @@ class AIClippingPipeline:
             self.video_downloader.progress_callback = lambda detail, percent, done, total: loop.call_soon_threadsafe(
                 lambda: self._update_progress(job_id, JobStatus.DOWNLOADING, 5 + (percent or 0) * .06, detail,
                     stage_percent=percent, completed=done, total=total, unit='bytes'))
+            # More clips: a kept copy of the earlier run's source is used in place.
+            reuse_source = request.reuse_source_path if request.reuse_source_path and os.path.isfile(request.reuse_source_path) else None
             try:
                 download_result = await self.video_downloader.download_video(
-                    url=request.video_url, output_dir=work_dir)
+                    url=reuse_source or request.video_url, output_dir=work_dir)
             finally:
                 self.video_downloader.progress_callback = None
+            if reuse_source:
+                meta = request.reuse_source_meta or {}
+                for field_name, key in (('title', 'title'), ('uploader', 'channel'), ('description', 'description')):
+                    if isinstance(meta.get(key), str) and meta[key].strip():
+                        setattr(download_result.metadata, field_name, meta[key][:20000])
+            # A local file (or kept copy) is the same bytes; a link downloaded again may not be.
+            same_bytes = bool(reuse_source) or os.path.isfile(request.video_url)
             stage_timings["download"] = time.perf_counter() - stage_start
             logger.info(f"Downloaded: {download_result.metadata.title}")
 
@@ -312,31 +474,48 @@ class AIClippingPipeline:
                 "Transcribing the full source for context..." if jev_enabled else "Transcribing audio...",
             )
             stage_start = time.perf_counter()
-            previous_transcription_progress = getattr(self.transcription_service, "progress_callback", None)
-            self.transcription_service.progress_callback = lambda message: self._update_progress(
-                job_id, JobStatus.TRANSCRIBING, 15, message,
-            )
-            self.transcription_service.detail_callback = lambda done, total: self._update_progress(
-                job_id, JobStatus.TRANSCRIBING, 15 + 10 * done / total, f'Transcribing audio, part {done + 1} of {total}…',
-                stage_id='transcription', stage_percent=100 * done / total, completed=done, total=total, unit='chunks')
-            try:
-                transcription_result = await self.transcription_service.transcribe(
-                    video_path=download_result.video_path,
-                    work_dir=work_dir,
-                    keyterms=transcription_terms(request.keyterms, source_context) if source_context else request.keyterms,
-                    start_seconds=None if jev_enabled else request.start_time_seconds,
-                    end_seconds=None if jev_enabled else effective_end_time,
-                )
-            except NoAudioTrackError:
-                logger.info("Source has no audio track; trying visual-only planning")
-                transcription_result = TranscriptionResult(segments=[], full_text="", provider="no_audio")
-                transcription_status = "no_speech"
+            saved_transcript = None
+            if request.reuse_transcript_path:
+                saved_transcript = reusable_transcript(
+                    load_saved_transcript(request.reuse_transcript_path), download_result.video_path, video_duration,
+                    request.reuse_expected_duration_seconds, compare_bytes=same_bytes,
+                    window=(None, None) if jev_enabled else (request.start_time_seconds, effective_end_time),
+                    earlier_partial=request.reuse_transcript_partial)
+                if not saved_transcript:
+                    self._update_progress(job_id, JobStatus.TRANSCRIBING, 15,
+                                          "The saved transcript doesn't match this video or range, so it is transcribed again...")
+            if saved_transcript:
+                # More clips from this video: no transcription is paid again.
+                self._update_progress(job_id, JobStatus.TRANSCRIBING, 25, "Using the saved transcript (no transcription charge)...")
+                transcription_result = saved_transcript['result']
+                transcription_status = saved_transcript['status']
+                transcript_reused = True
             else:
-                if not transcription_result.segments:
+                previous_transcription_progress = getattr(self.transcription_service, "progress_callback", None)
+                self.transcription_service.progress_callback = lambda message: self._update_progress(
+                    job_id, JobStatus.TRANSCRIBING, 15, message,
+                )
+                self.transcription_service.detail_callback = lambda done, total: self._update_progress(
+                    job_id, JobStatus.TRANSCRIBING, 15 + 10 * done / total, f'Transcribing audio, part {done + 1} of {total}…',
+                    stage_id='transcription', stage_percent=100 * done / total, completed=done, total=total, unit='chunks')
+                try:
+                    transcription_result = await self.transcription_service.transcribe(
+                        video_path=download_result.video_path,
+                        work_dir=work_dir,
+                        keyterms=transcription_terms(request.keyterms, source_context) if source_context else request.keyterms,
+                        start_seconds=None if jev_enabled else request.start_time_seconds,
+                        end_seconds=None if jev_enabled else effective_end_time,
+                    )
+                except NoAudioTrackError:
+                    logger.info("Source has no audio track; trying visual-only planning")
+                    transcription_result = TranscriptionResult(segments=[], full_text="", provider="no_audio")
                     transcription_status = "no_speech"
-            finally:
-                self.transcription_service.progress_callback = previous_transcription_progress
-                self.transcription_service.detail_callback = None
+                else:
+                    if not transcription_result.segments:
+                        transcription_status = "no_speech"
+                finally:
+                    self.transcription_service.progress_callback = previous_transcription_progress
+                    self.transcription_service.detail_callback = None
             stage_timings["transcription"] = time.perf_counter() - stage_start
             logger.info(f"Transcription complete: {len(transcription_result.segments)} segments")
 
@@ -360,6 +539,11 @@ class AIClippingPipeline:
                 "language": transcription_result.language,
                 "status": transcription_status,
                 "captions_available": bool(transcription_result.segments),
+                # Lets "More clips from this video" reuse this transcript for the same video.
+                "source_duration_seconds": video_duration,
+                "source_fingerprint": source_fingerprint(download_result.video_path),
+                "transcribed_range": (saved_transcript or {}).get('range') if transcript_reused
+                    else None if jev_enabled else [request.start_time_seconds, effective_end_time],
             }
 
             if self.local_mode:
@@ -415,14 +599,81 @@ class AIClippingPipeline:
                 aspect_ratio=request.aspect_ratio,
                 jev_enabled=jev_enabled,
                 clip_request=request.clip_request,
+                **({'exclude_ranges_ms': request.exclude_ranges_ms} if request.exclude_ranges_ms else {}),
+                **({'output_language': language_name(request.caption_language)} if request.caption_language else {}),
+                brand_identity=request.brand_identity or None,
+                brand_name=request.brand_name or None,
+                headline_voice=request.headline_voice,
+                **({'motion_graphics': True, 'graphics_options': graphics_options(request)}
+                   if request.motion_graphics and request.workflow != 'review' else {}),
+                **({'purpose': request.purpose} if request.purpose else {}),
+                **({'reference_image': request.reference_image_path} if request.reference_image_path else {}),
             )
-            clip_plan = await self.intelligence_planner.plan_clips(**planning_args)
+            excluded_spans = request.exclude_ranges_ms or []
+            def is_new(segment) -> bool:
+                return not any(overlaps([segment.start_time_ms, segment.end_time_ms], span) for span in excluded_spans)
+            longform_plan = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
+                request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds)[0])
+            grading = (request.quality_bar in ('a', 'b', 'c', 'all') and not longform_plan
+                       and bool(self.settings.openrouter_api_key))
+            # Strict bars plan extra candidates so grading can keep only the strongest.
+            oversample = 1.0 if not grading or request.quality_bar == 'all' or request.clip_request else 1.75
+            clip_plan = await self.intelligence_planner.plan_clips(**planning_args, oversample=oversample)
             edit_audit['planner'] = getattr(self.intelligence_planner, 'audit', {'requests': []})
             stage_timings["planning"] = time.perf_counter() - stage_start
             logger.info(f"Planned {len(clip_plan.segments)} clips")
+            planned_count = len(clip_plan.segments)
+            if excluded_spans:
+                # Also enforced here for mocked or custom planners.
+                clip_plan.segments = [segment for segment in clip_plan.segments if is_new(segment)]
+                clip_plan.total_clips = len(clip_plan.segments)
+                logger.info(f"Kept {len(clip_plan.segments)} of {planned_count} planned clips that repeat no earlier clip")
             if not clip_plan.segments:
                 edit_audit['outcome'] = 'no_candidates'
+                if excluded_spans and planned_count:
+                    raise NoNewMomentsError()
                 raise NoRequestedMomentsError() if request.clip_request else NoClipCandidatesError()
+            framework_state = {'cost': 0.0, 'cost_incomplete': False, 'candidates': 0, 'graded': 0, 'kept': 0}
+            keep_all_grades = request.quality_bar == 'all' or bool(request.clip_request)
+
+            async def grade_segments(segments, target, fill_to=0):
+                """Grade and filter candidates; any grading failure leaves them as planned."""
+                grader = FrameworkGrader(self.settings)
+                try:
+                    grades = await grader.grade(transcription_result.segments, segments)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # Grading is an optional quality pass.
+                    logger.warning(f"Framework grading unavailable: {type(error).__name__}")
+                    grades = {}
+                finally:
+                    await grader.close()
+                framework_state['cost'] += grader.cost_usd
+                framework_state['cost_incomplete'] |= grader.cost_incomplete
+                kept, _ = select_by_grade(segments, grades, request.quality_bar, target, keep_all=keep_all_grades, fill_to=fill_to)
+                for index, segment in enumerate(segments):
+                    if index in grades:
+                        segment.framework = {**grades[index].to_dict(), 'graded_interval': [segment.start_time_ms, segment.end_time_ms], 'graded_title': segment.summary or ''}
+                framework_state['candidates'] += len(segments)
+                framework_state['graded'] += len(grades)
+                return kept
+
+            if grading:
+                self._update_progress(job_id, JobStatus.PLANNING, 33,
+                    f"Grading {len(clip_plan.segments)} candidates against the content frameworks...",
+                    stage_id="planning", stage_percent=None)
+                planned = list(clip_plan.segments)
+                # Review projects get the target count; the automatic accept loop enforces its own limit
+                # and can fall back to later passing clips when editorial review rejects one.
+                review_target = (getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0) if request.workflow == 'review' else 0
+                clip_target = getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0
+                kept = await grade_segments(planned, review_target, fill_to=clip_target)
+                edit_audit['framework'] = {'bar': request.quality_bar,
+                    'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], 'kept': seg in kept, **(seg.framework or {})} for seg in planned]}
+                logger.info(f"Framework grading kept {len(kept)} of {len(planned)} candidates (bar {request.quality_bar})")
+                clip_plan.segments = kept
+                clip_plan.total_clips = len(kept)
+                save_edit_audit()
             reviewer = CoherenceReviewer(coherence_service, self.settings, transcription_result.segments, round(video_duration * 1000))
             editorial_vision = EditorialVision(self.settings, download_result.video_path, work_dir, round(video_duration * 1000))
             reviewer.source_context = context_brief
@@ -430,6 +681,10 @@ class AIClippingPipeline:
             if request.workflow == 'review':
                 if not self.local_mode:
                     raise ValueError('Review projects require local mode')
+                # Voice cleanup and music go on as each clip is exported from the editor.
+                review_audio = parse_audio(request.audio)
+                if review_audio is not None:
+                    await asyncio.to_thread(save_run_audio, self._get_local_output_dir(job_id), review_audio)
                 from clip_engine.services.manual_editor import prepare_project
                 project = await prepare_project(request, clip_plan.segments, transcription_result.segments,
                     download_result, self.rendering_service, reviewer, self._get_local_output_dir(job_id),
@@ -438,7 +693,7 @@ class AIClippingPipeline:
                         stage_id=stage, stage_percent=percent))
                 edit_audit['outcome'] = 'ready_for_review'
                 save_edit_audit()
-                costs = source_context_cost + coherence_service.estimated_cost_usd
+                costs = source_context_cost + coherence_service.estimated_cost_usd + framework_state['cost']
                 for api in (transcription_result.api_costs, clip_plan.api_costs):
                     costs += getattr(api, 'estimated_cost_usd', 0) if api else 0
                 output = JobOutput(job_id=job_id, source_video_url=request.video_url,
@@ -517,7 +772,10 @@ class AIClippingPipeline:
                     # Also enforce exclusions at the pipeline boundary, including mocked/custom planners.
                     pending = [c for c in extra.segments[:8]
                         if any(overlaps([c.start_time_ms, c.end_time_ms], span) for span in feedback['search_intervals'])
-                        and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])]
+                        and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])
+                        and is_new(c)]
+                    if grading and pending:
+                        pending = await grade_segments(pending, 0)
                     edit_audit['discovery']['status'] = 'completed'
                     if extra.api_costs:
                         if clip_plan.api_costs:
@@ -537,6 +795,28 @@ class AIClippingPipeline:
                     break
             clip_plan.segments = accepted
             clip_plan.total_clips = len(accepted)
+            if grading and accepted:
+                # Editorial review can move boundaries or retitle a clip; grade what will actually render.
+                changed = [seg for seg in accepted if seg.framework and (seg.framework.get('graded_interval') != [seg.start_time_ms, seg.end_time_ms]
+                           or seg.framework.get('graded_title') != (seg.summary or ''))]
+                if changed:
+                    grader = FrameworkGrader(self.settings)
+                    try:
+                        regrades = await grader.grade(transcription_result.segments, changed)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        regrades = {}
+                    finally:
+                        await grader.close()
+                    framework_state['cost'] += grader.cost_usd
+                    framework_state['cost_incomplete'] |= grader.cost_incomplete
+                    for index, seg in enumerate(changed):
+                        if index in regrades:
+                            seg.framework = {**regrades[index].to_dict(), 'graded_interval': [seg.start_time_ms, seg.end_time_ms], 'graded_title': seg.summary or ''}
+                framework_state['kept'] = len(accepted)
+                edit_audit.setdefault('framework', {}).update({'candidates': framework_state['candidates'], 'graded': framework_state['graded'],
+                    'kept': len(accepted), 'cost_usd': framework_state['cost']})
             if not accepted:
                 edit_audit['outcome'] = 'no_approved_clips'
                 save_edit_audit()
@@ -570,6 +850,10 @@ class AIClippingPipeline:
             current_stage = "rendering"
             clips_dir = os.path.join(work_dir, "clips")
             os.makedirs(clips_dir, exist_ok=True)
+            # Voice cleanup and music: checked again here, and kept with the run (the editor makes clips again with them).
+            audio_plan = parse_audio(request.audio)
+            if audio_plan is not None:
+                await asyncio.to_thread(save_run_audio, self._get_local_output_dir(job_id), audio_plan)
 
             total_clips = len(clip_plan.segments)
             self._update_progress(
@@ -579,6 +863,10 @@ class AIClippingPipeline:
             )
 
             render_semaphore = asyncio.Semaphore(self.settings.max_concurrent_renders)
+            # Caption language: one translation call per clip; the speech stays as recorded.
+            translator = (CaptionTranslator(self.settings)
+                          if request.caption_language and transcription_status == "available" else None)
+            clip_caption_languages: dict[int, str] = {}
             longform = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
                 request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds,
             )[0])
@@ -619,7 +907,7 @@ class AIClippingPipeline:
                     )
 
             async def render_clip_locked(i: int, segment: ClipPlanSegment) -> tuple[int, str, ClipPlanSegment]:
-                nonlocal layout_vision_cost
+                nonlocal layout_vision_cost, broll_cost, broll_catalog
                 async with render_semaphore:
                     clip_start = time.perf_counter()
                     output_path = os.path.join(clips_dir, f"clip_{i:02d}.mp4")
@@ -629,9 +917,80 @@ class AIClippingPipeline:
                         segment.start_time_ms,
                         segment.end_time_ms,
                     )
+                    # The same moment as on an earlier run of this video keeps its headline (when it still fits).
+                    if request.kept_headlines and segment.headline:
+                        from clip_engine.services.headline_memory import kept_headline
+                        said = " ".join(seg.text for seg in clip_transcript)
+                        again = kept_headline(segment.start_time_ms, segment.end_time_ms, request.kept_headlines, said)
+                        if again:
+                            segment.headline = again
 
+                    caption_translations: dict[str, str] = {}
+                    if translator is not None and clip_transcript:
+                        render_progress(i, 'Translating captions', None)
+                        caption_translations = await translator.translate(clip_transcript, request.caption_language)
+                        if caption_translations:
+                            clip_caption_languages[i] = request.caption_language
+
+                    broll_shots: list[tuple[int, int, str]] = []
+                    if request.broll_enabled and not request.background_video_path:
+                        render_progress(i, 'Finding B-roll', None)
+                        try:
+                            if request.broll_source in ('library', 'ai', 'library_ai'):
+                                # The member's library (read once per run) and/or AI shots for the gaps.
+                                if broll_catalog is None:
+                                    broll_catalog = load_catalog(request.broll_catalog_path) if request.broll_catalog_path else []
+                                made = await prepare_library_broll(
+                                    clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                    os.path.join(work_dir, 'broll', f'clip-{i:02d}'),
+                                    portrait=request.aspect_ratio == '9:16', source=request.broll_source, catalog=broll_catalog,
+                                    ai=parse_ai_settings(request.broll_ai) if request.broll_ai else None, ai_dir=request.broll_ai_dir,
+                                    keep_hook=request.broll_keep_hook,
+                                )
+                                broll_cost += made.cost_usd
+                                broll_counts['library'] += made.library_used
+                                broll_counts['ai'] += made.ai_made
+                                broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in made.shots if shot.path]
+                            else:
+                                shots = await prepare_broll(
+                                    clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                    # The job's private work folder: cleaned up with the job, never
+                                    # next to a local source video (local files are used in place).
+                                    os.path.join(work_dir, 'broll'),
+                                    portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
+                                )
+                                broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
+                        except PexelsKeyRejected:
+                            raise
+                        except Exception as exc:
+                            logger.warning(f"B-roll unavailable for clip {i + 1}; rendering the speaker only: {exc}")
+
+                    # Stage layouts: the stage scenes around the clip's stage-size cards, worked out before the render
+                    # (on the uncut clip; the render moves them onto its cut).
+                    source_scenes: list[dict] = []
+                    # The hook hands over to the first chapter header (source ms), when the talk has chapters.
+                    hook_end: Optional[int] = None
+                    graphics_on = request.motion_graphics and request.workflow != 'review' and not longform
+                    if graphics_on:
+                        try:
+                            planned_cards = fit_to_clip(segment.graphics or [], transcription_result.segments,
+                                                        [(segment.start_time_ms, segment.end_time_ms)], request.video_speed,
+                                                        graphics_options(request))
+                            hook_end = min((g['at_ms'] for g in planned_cards if g['template'] == 'chapter'), default=None)
+                            if stages_on(request):
+                                # The brand grid and the arch card with a brand color; the light backdrop otherwise.
+                                backdrop, card = auto_look(stage_brand(request))
+                                source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms, backdrop, card)
+                                # The speaker's face stays on screen for the call to action they say (its graphic sits below).
+                                said_cta = create_cta(transcription_result.segments, [(segment.start_time_ms, segment.end_time_ms)])
+                                if said_cta:
+                                    source_scenes = clear_scenes(source_scenes, (said_cta['at_ms'], said_cta['at_ms'] + said_cta['duration_ms']))
+                        except Exception as exc:
+                            logger.warning(f"Stage layouts skipped for clip {i + 1}: {exc}")
                     render_request = RenderRequest(
                         progress_callback=lambda detail, percent=None: render_progress(i, detail, percent),
+                        source_scenes=source_scenes,
+                        scene_brand_color=stage_brand(request) if source_scenes else None,
                         video_path=download_result.video_path,
                         output_path=output_path,
                         start_time_ms=segment.start_time_ms,
@@ -644,11 +1003,24 @@ class AIClippingPipeline:
                         caption_style=request.caption_style,
                         title_text=segment.summary,
                         include_title=request.include_title,
+                        title_style=request.title_style,
+                        headline_look=request.headline_look,
+                        headline_text=segment.headline,
+                        headline_hide_source_ms=hook_end,
                         emphasis_words=segment.emphasis_words,
+                        caption_translations=caption_translations,
+                        caption_language=request.caption_language if caption_translations else None,
+                        # Closed captions for uploads (YouTube), in the caption language.
+                        write_subtitles=True,
                         banner_platform=request.banner_platform,
                         banner_channel_url=request.banner_channel_url,
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
+                        screen_focus_mode=request.screen_focus,
+                        screen_focus=segment.screen_focus,
+                        screen_focus_reason=segment.screen_focus_reason,
+                        background_video_path=request.background_video_path,
+                        broll_shots=broll_shots,
                         debug_capture=request.debug_capture,
                         pacing=request.pacing,
                         video_speed=request.video_speed,
@@ -661,9 +1033,41 @@ class AIClippingPipeline:
                         # Jev reviews exact source intervals; otherwise keep the
                         # usual audio padding around each clip.
                         apply_padding=not jev_enabled,
+                        brand_mark=request.brand_mark,
+                        cta_keyword=request.cta_keyword if not longform else '',
+                        look_extras=look_extras(request.look_extras, request.look_extras_color,
+                                                request.cta_keyword if not longform else ''),
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
+                    body_ms = render_result.duration_ms
+                    if request.hook_preview and not longform:
+                        render_progress(i, 'Adding the hook preview', None)
+                        teaser = await pick_teaser(clip_transcript, segment.start_time_ms, segment.end_time_ms)
+                        if teaser:
+                            render_result = await self.rendering_service.prepend_teaser(render_request, render_result, *teaser)
+                    audio_done = None
+                    if audio_plan is not None:
+                        render_progress(i, 'Cleaning up the sound' if audio_plan.voice_cleanup else 'Adding the music', None)
+                        audio_done = await asyncio.to_thread(finish_in_place, render_result.output_path, audio_plan,
+                                                             os.path.join(work_dir, 'audio'))
+                    graphics = []
+                    if graphics_on:
+                        # The planner's card moments that survive the finished cut, with words actually said.
+                        try:
+                            graphics = fit_to_clip(segment.graphics or [], transcription_result.segments,
+                                                   getattr(render_result, "kept_source_ms", []) or [], request.video_speed,
+                                                   graphics_options(request))
+                            # The call to action the speaker says gets its graphic (even when the planner left it out).
+                            graphics = with_cta(graphics, create_cta(transcription_result.segments, getattr(render_result, "kept_source_ms", []) or [],
+                                                                     request.cta_keyword or '', bool(request.cta_keyword), {g['id'] for g in graphics}))
+                        except Exception as exc:
+                            logger.warning(f"Motion graphics skipped for clip {i + 1}: {exc}")
+                    drawn_scenes = list(getattr(render_result, "stage_scenes", None) or []) if graphics else []
+                    for g in graphics:
+                        # A stage card only where the clip was drawn with the stage; elsewhere it's a card.
+                        if g.get('size') == 'stage' and not on_stage(g, drawn_scenes):
+                            g['size'] = 'card'
                     if getattr(render_result, "framing_trace_path", None):
                         clip_trace_paths[i] = render_result.framing_trace_path
                     segment.layout_type = render_result.layout_type
@@ -687,7 +1091,24 @@ class AIClippingPipeline:
                         "shots": render_result.layout_shots,
                         "pacing_removed_ms": render_result.removed_ms,
                         "render_fallback": render_result.render_fallback,
+                        # The editor rebuilds this clip's cut and framing from these.
+                        "window_start_ms": getattr(render_result, "window_start_ms", 0),
+                        "kept_source_ms": getattr(render_result, "kept_source_ms", []),
+                        # Screen share clips: presenter, screen or mixed, and why (None for other clips).
+                        "screen_focus": getattr(render_result, "screen_focus", None),
+                        # Motion graphics: Auto (source time, editor graphics), drawn by main after the run; the
+                        # hook preview's length shifts them in the finished file.
+                        **({"graphics": graphics, "teaser_ms": max(0, render_result.duration_ms - body_ms)} if graphics else {}),
+                        # Stage layouts as drawn (source time; the editor's Scenes row).
+                        **({"stage_scenes": [{k: v for k, v in s.items() if k != 'backdrop' or v != 'light'} for s in drawn_scenes]}
+                           if drawn_scenes else {}),
+                        # Voice cleanup and music as applied ({"voice_cleanup", "music"}; both off when they failed).
+                        **({"audio": audio_done} if audio_done is not None else {}),
                     })
+                    focus = getattr(render_result, "screen_focus", None)
+                    if focus:
+                        logger.info(f"Clip {i + 1} screen focus: {focus.get('decision')} ({focus.get('source')}"
+                                    + (f": {focus.get('reason')}" if focus.get('reason') else "") + ")")
                     logger.info(
                         f"Rendered clip {i + 1} ({render_result.layout_type}): "
                         f"{render_result.file_size_bytes / 1024 / 1024:.1f} MB"
@@ -700,8 +1121,16 @@ class AIClippingPipeline:
                 for i, segment in enumerate(clip_plan.segments)
             ]
             stage_start = time.perf_counter()
-            render_results = await asyncio.gather(*render_tasks, return_exceptions=True)
+            try:
+                render_results = await asyncio.gather(*render_tasks, return_exceptions=True)
+            finally:
+                if translator is not None:
+                    await translator.close()
             stage_timings["rendering"] = time.perf_counter() - stage_start
+            spoken = spoken_language_code(transcription_result.language)
+            for original_index, _, segment in [r for r in render_results if not isinstance(r, BaseException)]:
+                segment.caption_language = clip_caption_languages.get(original_index)
+                segment.spoken_language = spoken
 
             # One bad clip must not sink the whole job: skip failures, and
             # only fail if nothing rendered.
@@ -771,7 +1200,8 @@ class AIClippingPipeline:
                     loop.call_soon_threadsafe(lambda: self._update_progress(job_id, JobStatus.UPLOADING,
                         90 + 5 * done / total, f'Saving clip {done} of {total}', total_clips, total_clips,
                         stage_percent=100 * done / total, completed=done, total=total, unit='clips'))
-                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress)
+                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress,
+                                                       (request.cta_keyword, request.cta_offer, not request.caption_language))
                 if request.debug_capture:
                     output_dir = self._get_local_output_dir(job_id)
                     preview_status = "available"
@@ -796,6 +1226,8 @@ class AIClippingPipeline:
                                 self._save_local_json(job_id, f"clip_{index:02d}.framing", trace, compact=True)
                             except (OSError, ValueError):
                                 logger.warning("Framing decisions could not be saved")
+                if request.workflow != 'review':
+                    await asyncio.to_thread(self._keep_source_copy, download_result, self._get_local_output_dir(job_id))
                 stage_timings["local_save"] = time.perf_counter() - stage_start
                 logger.info(f"All {len(clip_artifacts)} clips saved locally")
                 # Commit a usable manifest before optional metrics and cost
@@ -857,11 +1289,15 @@ class AIClippingPipeline:
                         virality_score=segment.virality_score,
                         layout_type=segment.layout_type,
                         summary=segment.summary,
+                        headline=segment.headline,
                         tags=segment.tags or [],
                         render_fallback=segment.render_fallback,
                         description=segment.description,
+                        post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer,
+                                                         include_cta=not request.caption_language),
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
+                        framework=segment.framework,
                     )
 
                 upload_tasks = [
@@ -916,6 +1352,17 @@ class AIClippingPipeline:
                 }
                 total_cost += pc.estimated_cost_usd
 
+            if broll_cost:
+                # Library b-roll planning and AI shots (OpenRouter's reported cost, or list price where it reported none).
+                api_costs["broll"] = {
+                    "provider": "openrouter",
+                    "model": self.settings.broll_model,
+                    "estimated_cost_usd": round(broll_cost, 6),
+                    "library_shots": broll_counts['library'],
+                    "ai_shots": broll_counts['ai'],
+                }
+                total_cost += broll_cost
+
             if layout_vision_cost:
                 api_costs["layout_vision"] = {
                     "provider": "openrouter",
@@ -941,6 +1388,13 @@ class AIClippingPipeline:
                 api_costs['editorial_vision'] = {'provider': 'openrouter', 'model': self.settings.layout_vision_model,
                     'estimated_cost_usd': editorial_vision.cost_usd, 'attempts': editorial_vision.requests}
                 total_cost += editorial_vision.cost_usd
+            if translator is not None and translator.usage.requests:
+                api_costs['caption_translation'] = translator.usage.as_api_costs(translator.model)
+                total_cost += translator.usage.cost_usd
+            if framework_state['candidates']:
+                api_costs['framework_grading'] = {'provider': 'openrouter', 'model': GRADER_MODEL,
+                    'estimated_cost_usd': round(framework_state['cost'], 6), 'cost_incomplete': framework_state['cost_incomplete']}
+                total_cost += framework_state['cost']
             api_costs["total_estimated_cost_usd"] = round(total_cost, 6)
             api_costs["cost_incomplete"] = any(section.get("cost_incomplete", False) for section in api_costs.values() if isinstance(section, dict))
 
@@ -960,13 +1414,33 @@ class AIClippingPipeline:
                     "transcription_model": self.settings.transcription_model,
                     "aspect_ratio": request.aspect_ratio,
                     "layout_style": request.layout_style,
+                    "screen_focus": request.screen_focus,
                     "layout_vision_enabled": self.settings.layout_vision_enabled,
                     "pacing": request.pacing,
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
+                    "title_style": request.title_style,
+                    "headline_look": request.headline_look,
+                    "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
+                    "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook, "source": request.broll_source or "stock"},
+                    "hook_preview": request.hook_preview,
+                    "motion_graphics": request.motion_graphics,
+                    "stage_layouts": stages_on(request),
+                    "voice_cleanup": bool((request.audio or {}).get("voice_cleanup")),
+                    "music": ((request.audio or {}).get("music") or {}).get("track") or ("own" if (request.audio or {}).get("music") else None),
                     "clip_request": request.clip_request,
+                    "quality_bar": request.quality_bar,
+                    "caption_language": request.caption_language,
+                    # Read back by More clips and the editor when the run's create-request.json is missing.
+                    "headline_voice": request.headline_voice,
+                    "more_clips": bool(request.reuse_transcript_path),
+                    "framework_grading": {"enabled": grading, "candidates": framework_state['candidates'],
+                                          "graded": framework_state['graded'], "kept": framework_state['kept']},
                 },
                 "transcription_status": transcription_status,
+                "transcript_reused": transcript_reused,
+                "excluded_moment_count": len(request.exclude_ranges_ms or []),
+                "caption_translation_failures": translator.usage.failures if translator is not None else 0,
                 "planning_source": "visual" if visual_frames else "transcript",
                 "visual_frame_count": len(visual_frames),
                 "captions_status": (
@@ -1015,6 +1489,13 @@ class AIClippingPipeline:
 
             if self.local_mode:
                 self._save_local_json(job_id, "job_output", asdict(job_output))
+                if any(entry.get("graphics") for entry in clip_layouts):
+                    # What main needs to draw the cards (the clips as editor candidates). Never fails the run.
+                    try:
+                        await asyncio.to_thread(write_graphics_plan, self._get_local_output_dir(job_id), asdict(job_output), request,
+                                                transcription_result.segments, download_result.metadata, video_duration)
+                    except Exception as exc:
+                        logger.warning(f"Motion graphics plan could not be saved: {exc}")
             else:
                 await self.s3_upload_service.upload_job_output(job_output)
 
@@ -1038,6 +1519,7 @@ class AIClippingPipeline:
                         "layout_type": clip.layout_type,
                         "render_fallback": clip.render_fallback,
                         "summary": clip.summary,
+                        "headline": clip.headline,
                         "tags": clip.tags or [],
                         "description": clip.description,
                         "chapters": clip.chapters,
@@ -1127,6 +1609,37 @@ class AIClippingPipeline:
             self._current_owner_user_id = None
 
 
+    @staticmethod
+    def _keep_source_copy(download_result, output_dir: str) -> bool:
+        """Keep a downloaded source next to an Automatic run's clips (editor-source.mp4).
+
+        Opening the run in the editor later then needs no download. Local files
+        are not copied (the editor uses the original while it exists), and a
+        kept copy from an earlier run is never moved. Best effort: a failure
+        leaves the run as it would have been without it.
+        """
+        if getattr(download_result, 'source_type', 'local') == 'local':
+            return False
+        destination = os.path.join(output_dir, 'editor-source.mp4')
+        temporary = os.path.join(output_dir, '.editor-source.partial.mp4')
+        try:
+            if os.path.lexists(destination):
+                return False
+            if os.stat(download_result.video_path).st_dev == os.stat(output_dir).st_dev:
+                os.rename(download_result.video_path, temporary)
+            else:
+                shutil.copyfile(download_result.video_path, temporary)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, destination)
+            return True
+        except OSError as error:
+            logger.warning("Source video could not be kept with the run (%s)", type(error).__name__)
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            return False
+
     def _get_local_output_dir(self, job_id: str) -> str:
         """Get the local output directory for a job, creating it if needed."""
         output_dir = os.path.join(self.settings.local_output_dir, job_id)
@@ -1163,6 +1676,8 @@ class AIClippingPipeline:
         rendered_clips: list[tuple[str, ClipPlanSegment]],
         durations_ms: Optional[dict[int, int]] = None,
         progress=None,
+        # (keyword, offer, include_cta): the English line is left out of captions in another language.
+        cta: tuple = ('', '', True),
     ) -> list[ClipArtifact]:
         """Copy rendered clips to the local output directory."""
         output_dir = self._get_local_output_dir(job_id)
@@ -1187,10 +1702,13 @@ class AIClippingPipeline:
             logger.info(f"Saved clip_{i:02d}.mp4 ({file_size / 1024 / 1024:.1f} MB): {dest}")
 
             subtitle_url = None
+            captions_srt = None
             if segment.subtitle_path and os.path.isfile(segment.subtitle_path):
                 srt_dest = os.path.join(output_dir, f"clip_{i:02d}.srt")
                 shutil.copy2(segment.subtitle_path, srt_dest)
                 subtitle_url = f"file://{os.path.abspath(srt_dest)}"
+                # Closed captions file for uploads, in the clip's caption language.
+                captions_srt = os.path.abspath(srt_dest)
             if segment.description or segment.output_chapters:
                 self._write_upload_notes(os.path.join(output_dir, f"clip_{i:02d}.youtube.txt"), segment)
 
@@ -1203,12 +1721,18 @@ class AIClippingPipeline:
                 virality_score=segment.virality_score,
                 layout_type=segment.layout_type,
                 summary=segment.summary,
+                headline=segment.headline,
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,
+                post_caption=create_post_caption(segment, cta[0], cta[1], include_cta=cta[2] if len(cta) > 2 else True),
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
+                captions_srt=captions_srt,
+                caption_language=getattr(segment, 'caption_language', None),
+                spoken_language=getattr(segment, 'spoken_language', None),
                 editorial=editorial_summary(segment.editorial),
+                framework=segment.framework,
             ))
 
             if progress: progress(i + 1, len(rendered_clips))

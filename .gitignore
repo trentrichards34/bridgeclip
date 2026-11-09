@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# Generated per release build by scripts/release/builder-config.cjs
+release-*.json
 .env
 .env.local
 .env.*
@@ -22,3 +24,7 @@ engine/.venv/
 
 __pycache__/
 *.py[cod]
+
+# Links to shared installs in helper worktrees (never commit them).
+node_modules
+engine/.venv

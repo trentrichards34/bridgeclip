@@ -33,13 +33,16 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from statistics import median
 from typing import Any, Optional
 
 import httpx
 
 from clip_engine.config import LayoutStyle, get_settings
+from clip_engine.services.screen_relevance import (
+    MIXED, PRESENTER, SCREEN, ScreenFocus, resolve_screen_focus, speech_screen_signals,
+)
 from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, media_process, MediaProcessError, validate_video_dimensions
 from clip_engine.services.openrouter import (
     OpenRouterError,
@@ -218,6 +221,9 @@ class FrameInfo:
     hist: Any  # np.ndarray
     scores: list[float] = field(default_factory=list)
     content_box: Optional[Box] = None
+    # Small grayscale copy of the frame (SCREEN_THUMB_SIZE), for spotting
+    # changes on a shared screen (screen_change_times).
+    thumb: Any = None
 
 
 @dataclass
@@ -252,6 +258,13 @@ class ShotLayout:
     manual_from_crops: list[tuple[float, float, float, float]] = field(default_factory=list)
     manual_transition_start_ms: int = 0
     manual_transition_ms: int = 0
+    # Manual split: the top panel's share of the output height (None: even).
+    manual_split: Optional[float] = None
+    # Manual crops are always cut to cover their panel (under a hook bar the
+    # panels are shorter than the editor's full-frame ones).
+    manual_cover: bool = False
+    # Camera + screen "bubble": the face's crop (normalized x, y, w, h), drawn round over the content box's lower corner.
+    manual_bubble: Optional[tuple[float, float, float, float]] = None
 
     def summary(self) -> dict:
         return {
@@ -280,6 +293,9 @@ class ClipLayoutPlan:
     face_samples: list[tuple[int, list[Box]]] = field(default_factory=list)
     trace: Optional[dict] = None
     camera_scan: Optional[dict] = None
+    # Screen share + webcam clips: the clip's screen focus decision (ScreenFocus.to_dict()
+    # plus "person_fits": whether the webcam could fill the frame). None for other clips.
+    screen_focus: Optional[dict] = None
 
     @property
     def dominant_layout(self) -> str:
@@ -1145,6 +1161,359 @@ def apply_style(shot: ShotLayout, style: str, src_w: int, src_h: int) -> ShotLay
     return shot
 
 
+# ------------------------------------------------------------------
+# Screen share + webcam: person main, cutting to a split when the screen matters
+# ------------------------------------------------------------------
+
+# Grayscale thumbnail kept per analyzed frame for screen-change detection.
+SCREEN_THUMB_SIZE = (96, 54)
+# Frames compared for screen changes are at least this far apart (~4 fps).
+SCREEN_SAMPLE_MS = 240
+# Pairs further apart than this (missing samples) are not compared.
+SCREEN_MAX_PAIR_GAP_MS = 1000
+# A pixel changed when its gray level moved this much; the screen changed when
+# this share of its pixels did (a slide, page, scroll or window, not a cursor).
+SCREEN_DIFF_LEVEL = 20
+SCREEN_CHANGE_SHARE = 0.015
+# The webcam box, grown by this share of its size, is left out of the screen.
+SCREEN_CAM_MARGIN = 0.2
+# Split timing: start slightly before the change, hold it at least this long
+# (extended while changes continue), join splits closer than the cut gap, and
+# never leave a shot shorter than the cut gap (so at most one cut per ~2 s).
+SPLIT_LEAD_MS = 300
+SPLIT_HOLD_MS = 3000
+SPLIT_MIN_CUT_GAP_MS = 2000
+# A screen that is changing for this share of a shot keeps the split throughout.
+SPLIT_CONSTANT_SHARE = 0.7
+# Telling a real page/slide change from continuous motion (scrolling, a video
+# playing on the screen). Changes closer than the burst gap belong to one
+# burst; a burst lasting the motion time or longer is motion. A shorter burst
+# is a persistent change when the screen then holds still for the settle time
+# (and was still for the quiet time before it), and differs from before it.
+SCREEN_BURST_GAP_MS = 600
+SCREEN_MOTION_MS = 1500
+SCREEN_SETTLE_MS = 1500
+SCREEN_QUIET_BEFORE_MS = 1000
+# "mixed" clips: a split holds at least 3 s, the presenter at least 2.5 s, and
+# the presenter is never shown for less than 4 s between two splits.
+MIXED_MIN_SPLIT_MS = 3000
+MIXED_MIN_PERSON_MS = 2500
+MIXED_MERGE_GAP_MS = 4000
+# "screen" clips: the presenter fills the frame only where the screen is still
+# (no change, no motion, no cue) for at least this long.
+SCREEN_PERSON_MIN_MS = 8000
+# Person-main framing fills the 9:16 frame from inside the webcam box; above
+# this enlargement (output height / webcam crop height) the split is used.
+# 4.0 (chosen by the owner: "a bit softer" over always-split): a webcam about
+# 44% of a 1080p recording's height or more fills the frame; smaller ones split.
+PERSON_MAIN_MAX_UPSCALE = 4.0
+PERSON_MAIN_OUT = (1080, 1920)
+# Speech that points at the screen ("as you can see..."). Kept specific: everyday phrases ("here's",
+# "you can see", "click") come up in plain talk and would cut to the screen for nothing.
+SCREEN_CUE_PHRASES = (
+    "look at this", "as you can see", "on the screen", "on screen", "this slide", "next slide", "right here",
+    "over here", "let me show you", "watch this", "scroll", "this page", "this tab",
+)
+
+
+def _norm_word(word: str) -> str:
+    return "".join(ch for ch in word.lower().replace("’", "'") if ch.isalnum() or ch == "'")
+
+
+def screen_cue_times(segments, window_start_ms: int, window_ms: int) -> list[int]:
+    """Window times of words that point at the screen ("look at this", "click"...).
+
+    `segments` are transcript segments with word timings in source ms.
+    """
+    words = [(_norm_word(w.word), w.start_time_ms) for s in segments or [] for w in (getattr(s, "words", None) or [])
+             if window_start_ms <= w.start_time_ms < window_start_ms + window_ms]
+    words = [(w, t) for w, t in words if w]
+    phrases = [tuple(_norm_word(p) for p in phrase.split()) for phrase in SCREEN_CUE_PHRASES]
+    times = set()
+    for i in range(len(words)):
+        for phrase in phrases:
+            if tuple(w for w, _ in words[i:i + len(phrase)]) == phrase:
+                times.add(words[i][1] - window_start_ms)
+    return sorted(times)
+
+
+def _screen_mask(screen: Optional[Box], cam: Optional[Box]):
+    """Boolean thumbnail mask of the screen area, without the webcam (and a margin)."""
+    tw, th = SCREEN_THUMB_SIZE
+    mask = np.zeros((th, tw), bool)
+    screen = (screen or Box(0, 0, 1, 1)).clamp()
+    mask[int(screen.y * th):math.ceil((screen.y + screen.h) * th), int(screen.x * tw):math.ceil((screen.x + screen.w) * tw)] = True
+    if cam is not None:
+        mx, my = cam.w * SCREEN_CAM_MARGIN, cam.h * SCREEN_CAM_MARGIN
+        x0, x1 = max(0, int((cam.x - mx) * tw)), min(tw, math.ceil((cam.x + cam.w + mx) * tw))
+        y0, y1 = max(0, int((cam.y - my) * th)), min(th, math.ceil((cam.y + cam.h + my) * th))
+        mask[y0:y1, x0:x1] = False
+    return mask
+
+
+def _sampled_changes(
+    frames: list[FrameInfo], screen: Optional[Box], cam: Optional[Box], start_ms: int, end_ms: int,
+) -> tuple[list[FrameInfo], list[tuple[int, bool]], Any]:
+    """Thumbnails sampled at ~4 fps in the window, and (time, changed) for each compared pair."""
+    if np is None:
+        return [], [], None
+    mask = _screen_mask(screen, cam)
+    if mask.sum() < 20:
+        return [], [], None
+    picked: list[FrameInfo] = []
+    for frame in sorted((f for f in frames if start_ms <= f.t_ms < end_ms and f.thumb is not None), key=lambda f: f.t_ms):
+        if frame.thumb.shape != mask.shape:
+            continue
+        if not picked or frame.t_ms - picked[-1].t_ms >= SCREEN_SAMPLE_MS:
+            picked.append(frame)
+    pairs = []
+    for a, b in zip(picked, picked[1:]):
+        if b.t_ms - a.t_ms > SCREEN_MAX_PAIR_GAP_MS:
+            continue
+        pairs.append((b.t_ms, _screen_differs(a.thumb, b.thumb, mask)))
+    return picked, pairs, mask
+
+
+def _screen_differs(a, b, mask) -> bool:
+    diff = np.abs(a.astype(np.int16) - b.astype(np.int16))[mask]
+    return float((diff >= SCREEN_DIFF_LEVEL).mean()) >= SCREEN_CHANGE_SHARE
+
+
+def screen_change_times(
+    frames: list[FrameInfo], screen: Optional[Box], cam: Optional[Box], start_ms: int, end_ms: int,
+) -> list[int]:
+    """Times in [start_ms, end_ms) where the shared screen visibly changed.
+
+    Cheap frame differencing of the frames' grayscale thumbnails, sampled at
+    ~4 fps, inside the screen box and outside the webcam. Every change counts,
+    scrolling and a video playing on the screen included (see screen_activity).
+    """
+    return [t for t, changed in _sampled_changes(frames, screen, cam, start_ms, end_ms)[1] if changed]
+
+
+def screen_activity(
+    frames: list[FrameInfo], screen: Optional[Box], cam: Optional[Box], start_ms: int, end_ms: int,
+) -> dict:
+    """The screen's changes, split into persistent changes and continuous motion.
+
+    Returns {"changes": every change time, "persistent": times of real page /
+    slide changes, "motion": [start, end] spans of continuous motion}. A
+    persistent change is a short burst of change after which the screen holds
+    still for SCREEN_SETTLE_MS (and that was still for SCREEN_QUIET_BEFORE_MS
+    before it, unless it opens the window), ending on a picture that differs
+    from the one before it. Bursts lasting SCREEN_MOTION_MS or longer (scrolling,
+    a video playing on the screen) are motion, never a persistent change.
+    """
+    picked, pairs, mask = _sampled_changes(frames, screen, cam, start_ms, end_ms)
+    changes = [t for t, changed in pairs if changed]
+    result = {"changes": changes, "persistent": [], "motion": []}
+    if not changes:
+        return result
+    by_time = {frame.t_ms: frame for frame in picked}
+    times = [frame.t_ms for frame in picked]
+    bursts: list[list[int]] = []
+    for t in changes:
+        if bursts and t - bursts[-1][1] <= SCREEN_BURST_GAP_MS:
+            bursts[-1][1] = t
+        else:
+            bursts.append([t, t])
+    last_seen = times[-1]
+    # The last picture the screen held still on: a change must differ from it
+    # (a popup that opens and closes again is no change).
+    stable = times[0]
+    for i, (first, last) in enumerate(bursts):
+        # The burst began between the sample before its first change and that change.
+        before = max((t for t in times if t < first), default=first)
+        settled_until = bursts[i + 1][0] if i + 1 < len(bursts) else last_seen
+        settled = settled_until - last >= SCREEN_SETTLE_MS
+        # The settled picture: the last sample before the next burst (or the window's last).
+        after = max(t for t in times if t < settled_until) if i + 1 < len(bursts) else last_seen
+        if last - before >= SCREEN_MOTION_MS:
+            result["motion"].append([before, last])
+        else:
+            quiet_before = first - bursts[i - 1][1] if i else None
+            if (settled and (quiet_before is None or quiet_before >= SCREEN_QUIET_BEFORE_MS)
+                    and _screen_differs(by_time[stable].thumb, by_time[after].thumb, mask)):
+                result["persistent"].append(first)
+        if settled:
+            stable = after
+    return result
+
+
+def plan_screen_focus(
+    start_ms: int, end_ms: int, events: list[int], *, hold_ms: int = SPLIT_HOLD_MS,
+    min_split_ms: int = SPLIT_MIN_CUT_GAP_MS, min_person_ms: int = SPLIT_MIN_CUT_GAP_MS,
+    merge_gap_ms: Optional[int] = None, constant_share: float = SPLIT_CONSTANT_SHARE,
+) -> list[tuple[int, int, bool]]:
+    """(start, end, split) segments covering [start_ms, end_ms).
+
+    Person main by default; a split from just before each event (a screen
+    change or cue) for at least `hold_ms`, extended while events continue.
+    Splits are at least `min_split_ms` long and the person at least
+    `min_person_ms` (at the shot edges) or `merge_gap_ms` (between two splits;
+    default `min_person_ms`): shorter person gaps join the split, so the
+    framing never flip-flops. A screen that matters for `constant_share` of
+    the shot stays on the split. Pure and deterministic.
+    """
+    merge_gap = min_person_ms if merge_gap_ms is None else merge_gap_ms
+    length = end_ms - start_ms
+    events = sorted(t for t in events if start_ms <= t < end_ms)
+    if length <= 0:
+        return []
+    if not events:
+        return [(start_ms, end_ms, False)]
+    if length < min_split_ms + min_person_ms:
+        return [(start_ms, end_ms, True)]
+    spans: list[list[int]] = []
+    for t in events:
+        a, b = max(start_ms, t - SPLIT_LEAD_MS), min(end_ms, t + hold_ms)
+        if spans and a - spans[-1][1] < merge_gap:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    if sum(b - a for a, b in spans) >= constant_share * length:
+        return [(start_ms, end_ms, True)]
+    # Clipped splits at the shot edges keep their minimum length.
+    for span in spans:
+        if span[1] - span[0] < min_split_ms:
+            if span[0] == start_ms:
+                span[1] = start_ms + min_split_ms
+            else:
+                span[0] = max(start_ms, span[1] - min_split_ms)
+    # Short person gaps (at the shot edges, or between splits) join the split.
+    merged: list[list[int]] = []
+    for a, b in spans:
+        if a - start_ms < min_person_ms:
+            a = start_ms
+        if merged and a - merged[-1][1] < merge_gap:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    if end_ms - merged[-1][1] < min_person_ms:
+        merged[-1][1] = end_ms
+    if sum(b - a for a, b in merged) >= constant_share * length:
+        return [(start_ms, end_ms, True)]
+    segments: list[tuple[int, int, bool]] = []
+    cursor = start_ms
+    for a, b in merged:
+        if a > cursor:
+            segments.append((cursor, a, False))
+        segments.append((a, b, True))
+        cursor = b
+    if cursor < end_ms:
+        segments.append((cursor, end_ms, False))
+    return segments
+
+
+def person_main_fits(shot: ShotLayout, src_w: int, src_h: int) -> bool:
+    """Whether the webcam can fill the 9:16 frame within PERSON_MAIN_MAX_UPSCALE."""
+    if shot.cam_box is None:
+        return False
+    cam = shot.cam_box.clamp()
+    out_w, out_h = PERSON_MAIN_OUT
+    cam_w, cam_h = cam.w * src_w, cam.h * src_h
+    if cam_w < 2 or cam_h < 2:
+        return False
+    crop_h = cam_h if cam_w / cam_h > out_w / out_h else cam_w * out_h / out_w
+    if out_h / crop_h > PERSON_MAIN_MAX_UPSCALE:
+        return False
+    face = shot.cam_face
+    # The face must fit across the crop with room to spare.
+    return face is None or crop_h * out_w / out_h >= face.w * src_w * 1.4
+
+
+def person_main_shot(shot: ShotLayout, start_ms: int, end_ms: int, frames: Optional[list[FrameInfo]] = None,
+                     src_w: int = 0, src_h: int = 0) -> ShotLayout:
+    """The webcam filling the frame: a talking head cropped inside the webcam box.
+
+    With the analysis frames, the crop follows the face inside the webcam (the same calm virtual camera a
+    talking head gets), so a person who leans or shifts stays framed; otherwise it holds on the face."""
+    cam = shot.cam_box.clamp()
+    face = shot.cam_face if shot.cam_face is not None and cam.contains(shot.cam_face.cx, shot.cam_face.cy) else None
+    focus = face or cam
+    path = [(0, focus.cx, focus.cy)]
+    if frames and src_w and src_h:
+        samples = []
+        for frame in frames:
+            if start_ms <= frame.t_ms < end_ms:
+                inside = [box for box in frame.faces if cam.contains(box.cx, box.cy)]
+                if inside:
+                    samples.append((frame.t_ms - start_ms, max(inside, key=lambda box: box.w * box.h)))
+        if len(samples) >= 2:
+            path = smooth_focus_path(samples, end_ms - start_ms, inset_crop_width(cam, src_w, src_h)) or path
+    return ShotLayout(
+        start_ms, end_ms, LayoutType.TALKING_HEAD, source=shot.source,
+        detected_layout=shot.detected_layout or LayoutType.SCREEN_CAM,
+        focus_path=path, people=[face] if face else [],
+        screen_box=shot.screen_box, screen_focus=shot.screen_focus,
+        cam_box=shot.cam_box, cam_face=shot.cam_face, crop_bounds=cam, cam_box_refined=shot.cam_box_refined,
+    )
+
+
+def plan_for_decision(decision: str, start_ms: int, end_ms: int, activity: dict, cues: list[int]) -> list[tuple[int, int, bool]]:
+    """(start, end, split) segments for one screen + webcam shot under a clip's decision.
+
+    presenter: the person throughout. screen: the split throughout, except
+    still stretches (no change, motion or cue) of SCREEN_PERSON_MIN_MS or more;
+    a screen that never changes stays on the split. mixed: the person, cutting
+    to the split only on persistent changes and cues (not on scrolling or a
+    video playing on the screen), with minimum holds and no flip-flopping.
+    """
+    if decision == PRESENTER:
+        return [(start_ms, end_ms, False)] if end_ms > start_ms else []
+    if decision == SCREEN:
+        if not activity["changes"]:
+            return [(start_ms, end_ms, True)] if end_ms > start_ms else []
+        return plan_screen_focus(start_ms, end_ms, [start_ms, *activity["changes"], *cues], min_split_ms=MIXED_MIN_SPLIT_MS,
+                                 min_person_ms=SCREEN_PERSON_MIN_MS)
+    return plan_screen_focus(start_ms, end_ms, [*activity["persistent"], *cues], min_split_ms=MIXED_MIN_SPLIT_MS,
+                             min_person_ms=MIXED_MIN_PERSON_MS, merge_gap_ms=MIXED_MERGE_GAP_MS)
+
+
+def focus_for_window(segments, window_start_ms: int, window_ms: int, mode: Optional[str] = None,
+                     planned: Optional[str] = None, planned_reason: Optional[str] = None) -> tuple[list[int], ScreenFocus]:
+    """The window's screen cues (window time) and the clip's screen focus decision."""
+    cues = screen_cue_times(segments, window_start_ms, window_ms)
+    refs, words = speech_screen_signals(segments, window_start_ms, window_ms)
+    return cues, resolve_screen_focus(mode, planned, planned_reason, len(cues), refs, words, window_ms)
+
+
+def apply_screen_focus(
+    shots: list[ShotLayout], frames: list[FrameInfo], cues_ms: list[int], src_w: int, src_h: int,
+    trace: Optional[dict] = None, focus: Optional[ScreenFocus] = None,
+) -> list[ShotLayout]:
+    """Screen + webcam shots framed by the clip's screen focus decision (default: mixed).
+
+    The person fills the frame from inside the webcam; the 50/50 split shows
+    the screen. A webcam too small to fill the frame keeps the split.
+    """
+    decision = focus.decision if focus is not None else MIXED
+    result: list[ShotLayout] = []
+    for shot in shots:
+        if (shot.layout != LayoutType.SCREEN_CAM or shot.cam_box is None or shot.content_box is not None
+                or shot.manual_crops or not person_main_fits(shot, src_w, src_h)):
+            result.append(shot)
+            continue
+        activity = screen_activity(frames, shot.screen_box, shot.cam_box, shot.start_ms, shot.end_ms)
+        cues = [t for t in cues_ms if shot.start_ms <= t < shot.end_ms]
+        segments = plan_for_decision(decision, shot.start_ms, shot.end_ms, activity, cues)
+        if trace is not None:
+            trace.setdefault("screen_focus", []).append({
+                "start_ms": shot.start_ms, "end_ms": shot.end_ms, "decision": decision, "changes": activity["changes"],
+                "persistent": activity["persistent"], "motion": activity["motion"], "cues": cues,
+                "segments": [[a, b, "split" if split else "person"] for a, b, split in segments]})
+        for a, b, split in segments:
+            if split:
+                result.append(replace(shot, start_ms=a, end_ms=b,
+                                      detected_layout=shot.detected_layout or LayoutType.SCREEN_CAM))
+            else:
+                result.append(person_main_shot(shot, a, b, frames, src_w, src_h))
+            if trace is not None and a != shot.start_ms:
+                trace["boundaries"].append({"t_ms": a, "kind": "screen_focus", "accepted": True,
+                                            "to_layout": LayoutType.SCREEN_CAM if split else LayoutType.TALKING_HEAD})
+    return result
+
+
 def evenly(items: list, count: int) -> list:
     """`count` items spread evenly over the list (its first and last included)."""
     if count <= 0:
@@ -1393,6 +1762,8 @@ class LayoutAnalyzer:
         capture: bool = False,
         progress=None,
         precise: Optional[bool] = None,
+        screen_cues_ms: Optional[list[int]] = None,
+        screen_focus: Optional[ScreenFocus] = None,
     ) -> Optional[ClipLayoutPlan]:
         """Plan the framing for the render window [start_ms, start_ms + duration_ms).
 
@@ -1401,6 +1772,11 @@ class LayoutAnalyzer:
         `precise` (default: same as `vision`) scans every frame for camera
         changes in the same decode as face sampling, to place cuts on exact
         frames. Pacing-only plans do not need it.
+        `screen_cues_ms` (window time) are moments the speech points at the
+        screen; with automatic framing, screen + webcam shots cut from the
+        person to the split there and where the screen changes.
+        `screen_focus` is the clip's screen relevance decision (see
+        screen_relevance and apply_screen_focus); None frames it as "mixed".
         """
         if style == LayoutStyle.FIT:
             return ClipLayoutPlan(
@@ -1546,15 +1922,29 @@ class LayoutAnalyzer:
 
         shots = bridge_face_dropouts(shots, scene_cuts, trace["boundaries"] if trace is not None else None)
         shots = self._merge_adjacent([apply_style(shot, style, src_w, src_h) for shot in shots])
+        focus_record = None
+        if style == LayoutStyle.AUTO:
+            screen_shots = [s for s in shots if s.layout == LayoutType.SCREEN_CAM and s.cam_box is not None
+                            and s.content_box is None and not s.manual_crops]
+            if screen_shots:
+                focus = screen_focus or ScreenFocus(MIXED, "", "default")
+                focus_record = {**focus.to_dict(), "person_fits": any(person_main_fits(s, src_w, src_h) for s in screen_shots)}
+            shots = apply_screen_focus(shots, frames, screen_cues_ms or [], src_w, src_h, trace, screen_focus)
+            if trace is not None and focus_record:
+                trace["screen_focus_decision"] = focus_record
         plan = ClipLayoutPlan(
             shots=shots, source_width=src_w, source_height=src_h, vision_cost_usd=vision_cost,
             face_samples=[(f.t_ms, f.faces) for f in frames],
-            trace=trace, camera_scan=scan,
+            trace=trace, camera_scan=scan, screen_focus=focus_record,
         )
         logger.info(
             "Layout plan: " + ", ".join(
                 f"{s.layout}[{s.start_ms / 1000:.1f}-{s.end_ms / 1000:.1f}s,{s.source}]" for s in shots
             ) + (f" (vision ${vision_cost:.4f})" if vision_cost else "")
+            + (f"; screen focus {focus_record['decision']} ({focus_record['source']}"
+               + (f": {focus_record['reason']}" if focus_record['reason'] else "")
+               + ("" if focus_record['person_fits'] else "; webcam too small to fill the frame") + ")"
+               if focus_record else "")
         )
         return plan
 
@@ -1733,8 +2123,9 @@ class LayoutAnalyzer:
         hsv = cv2.cvtColor(cv2.resize(image, (160, 90)), cv2.COLOR_BGR2HSV)
         hist = cv2.calcHist([hsv], [0, 1], None, [24, 16], [0, 180, 0, 256])
         cv2.normalize(hist, hist)
+        thumb = cv2.resize(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), SCREEN_THUMB_SIZE, interpolation=cv2.INTER_AREA)
         return FrameInfo(t_ms=t_ms, faces=boxes, hist=hist, scores=scores,
-                        content_box=detect_content_box(image))
+                        content_box=detect_content_box(image), thumb=thumb)
 
     def _precise_frames(self, video_path, start_ms, duration_ms, src_w, src_h, progress=None):
         """Sample faces, scan every frame for camera changes, and examine the
@@ -2023,8 +2414,8 @@ class LayoutAnalyzer:
                 timeout=httpx.Timeout(120.0, connect=20.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
-                    "X-Title": "BridgeClip AI Clipping Agent",
+                    "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
+                    "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )
         return self._http_client

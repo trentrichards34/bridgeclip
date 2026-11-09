@@ -2,10 +2,10 @@ import { SourcePreview } from './SourcePicker'
 import { JobDiagnostics } from './JobDiagnostics'
 import { StageBreakdown } from './StageBreakdown'
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Clapperboard, Clock3, Gauge, Github, RotateCcw, ScrollText, TextSearch } from 'lucide-react'
+import { AlertTriangle, Clapperboard, Clock3, Gauge, RotateCcw, ScrollText, TextSearch } from 'lucide-react'
 import { formatTimecode, sourceLabel } from '../lib/utils'
 import { getApi } from '../lib/ipc'
-import { ISSUES_URL } from '../config/brand'
+import { ReportButtons } from './SupportReport'
 import type { Job } from '../store/use-job-store'
 import { Page } from './ui/Page'
 import { JobTimeline } from './JobTimeline'
@@ -25,7 +25,7 @@ export const STAGE_LABELS: Record<string, string> = {
   uploading: 'Saving clips',
   completed: 'Done',
   failed: 'Failed',
-  cancelled: 'Cancelled'
+  cancelled: 'Canceled'
 }
 
 function useElapsed(since: string, running: boolean): number {
@@ -67,7 +67,7 @@ export function JobProgress({ job, onCancel, leading }: JobProgressProps): React
       <section className="glass overflow-hidden rounded-3xl p-5 sm:p-6">
         <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div><p className="eyebrow text-accent">{queued ? 'Waiting in the queue' : 'In progress'}</p>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight text-ink">{job.request.workflow === 'review' ? 'Preparing your editor' : 'Creating your clips'}</h1></div>
+            <h1 className="mt-1.5 font-display text-2xl font-semibold tracking-[-0.02em] text-ink">{job.request.workflow === 'review' ? 'Preparing your editor' : 'Creating your clips'}</h1></div>
           <InfoChip icon={<Clock3 />}>{formatTimecode(elapsed)} {queued ? 'waiting' : 'elapsed'}</InfoChip>
         </header>
         <div className="mb-6"><SourcePreview key={source} source={source} readOnly /></div>
@@ -86,7 +86,7 @@ export function JobProgress({ job, onCancel, leading }: JobProgressProps): React
             ? 'Starts automatically when a running job finishes.'
             : 'Keep creating. This job continues in the background.'}
         </p>
-        <Button onClick={onCancel}>{queued ? 'Remove from queue' : 'Cancel'}</Button>
+        <Button variant="danger" onClick={onCancel}>{queued ? 'Remove from queue' : 'Cancel'}</Button>
       </div>
     </Page>
   )
@@ -101,7 +101,7 @@ export function JobFailure({ job, onRetry, leading }: { job: Job; onRetry: () =>
       <IconTile tone="danger" size="lg">
         <AlertTriangle />
       </IconTile>
-      <h1 className="mt-3 text-xl font-semibold tracking-[-0.02em] text-ink">Clipping failed</h1>
+      <h1 className="mt-3 font-display text-[28px] font-semibold leading-tight tracking-[-0.02em] text-ink">Clipping failed</h1>
       <p className="mt-1 truncate text-sm text-ink-muted" title={job.request.videoUrl}>
         {sourceLabel(job.request.videoUrl)}
       </p>
@@ -133,9 +133,7 @@ export function JobFailure({ job, onRetry, leading }: { job: Job; onRetry: () =>
         <Button icon={<ScrollText className="h-4 w-4" />} onClick={() => getApi().diagnostics.openLogFolder()}>
           Show logs
         </Button>
-        <Button variant="ghost" icon={<Github className="h-4 w-4" />} onClick={() => getApi().shell.openPath(ISSUES_URL)}>
-          Report an issue
-        </Button>
+        <ReportButtons jobId={job.id} />
       </div>
     </Page>
   )

@@ -10,6 +10,7 @@ import { loadSettings, vocabularyTerms } from './settings-store'
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 import { readResponseText } from './http-response'
+import { reportOpenRouterUsage } from './openrouter-media'
 
 const execFileAsync = promisify(execFile)
 type Platform = (typeof AUTOMATION_PLATFORMS)[number]
@@ -37,6 +38,9 @@ function endpoint(name: 'BRIDGECLIP_E2E_TRANSCRIPTION_URL' | 'BRIDGECLIP_E2E_OPE
   return app.isPackaged ? production : process.env[name] || production
 }
 
+const TRANSCRIBE_MODEL = 'microsoft/mai-transcribe-2'
+
+/** The JSON body of a successful call. Its reported cost goes to the spend ledger as soon as it's read (even when the content is then rejected). */
 async function providerResponse(response: Response, operation: 'transcription' | 'metadata', maxBytes = 100_000): Promise<Record<string, unknown>> {
   if (!response.ok) {
     const status = response.status
@@ -49,7 +53,10 @@ async function providerResponse(response: Response, operation: 'transcription' |
   const raw = await readResponseText(response, maxBytes, 'OpenRouter returned too much metadata.')
   try {
     const parsed: unknown = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      reportOpenRouterUsage(operation === 'transcription' ? TRANSCRIBE_MODEL : MODEL, parsed)
+      return parsed as Record<string, unknown>
+    }
   } catch { /* Safe fixed error below. */ }
   throw new Error('OpenRouter returned an invalid response. Try again.')
 }
@@ -81,7 +88,7 @@ export async function transcribeAutomationClip(path: string): Promise<string> {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'microsoft/mai-transcribe-2', input_audio: { data: bytes.toString('base64'), format: 'wav' },
+          model: TRANSCRIBE_MODEL, input_audio: { data: bytes.toString('base64'), format: 'wav' },
           response_format: 'verbose_json',
           ...(phrases.length ? { provider: { options: { azure: { phraseList: { phrases } } } } } : {})
         }),
@@ -296,7 +303,7 @@ export async function generateAutomationMetadata(transcript: string, title: stri
   for (let attempt = 0; attempt < 2; attempt++) {
     let response: Record<string, unknown>
     try { response = await providerResponse(await fetch(endpoint('BRIDGECLIP_E2E_OPENROUTER_URL', 'https://openrouter.ai/api/v1/chat/completions'), {
-      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/bridge-mind/bridgeclip', 'X-Title': 'BridgeClip' },
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/creatorclips-releases', 'X-Title': 'CreatorClips' },
       redirect: 'error',
       signal: AbortSignal.timeout(120_000),
       body: JSON.stringify({ model: MODEL, temperature: 0.2, messages: [

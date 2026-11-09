@@ -36,7 +36,7 @@ def test_failed_smart_render_falls_back_to_letterbox(monkeypatch, tmp_path):
     async def no_audio(_path):
         return False
 
-    async def two_shot_plan(video, start, window_ms, w, h, style):
+    async def two_shot_plan(video, start, window_ms, w, h, style, **_):
         return ClipLayoutPlan(
             shots=[ShotLayout(0, window_ms, LayoutType.TWO_SHOT,
                               people=[Box(0.2, 0.3, 0.1, 0.2), Box(0.7, 0.3, 0.1, 0.2)])],
@@ -246,3 +246,56 @@ def test_local_clips_link_on_same_volume_and_copy_across_volumes(monkeypatch, tm
     assert copied.read_bytes() == b"copied clip"
     assert os.stat(source).st_ino != os.stat(copied).st_ino
 
+
+
+def test_screen_focus_reaches_the_render_and_is_recorded_per_clip(monkeypatch, tmp_path):
+    """The member's choice and each clip's planner decision reach the render; job_output records the result."""
+    monkeypatch.setattr(RenderingService, "_verify_ffmpeg", lambda self: None)
+    settings = pipeline_module.get_settings()
+    monkeypatch.setattr(settings, "local_mode", True)
+    monkeypatch.setattr(settings, "local_output_dir", str(tmp_path / "out"))
+    monkeypatch.setattr(settings.__class__, "temp_directory", property(lambda self: str(tmp_path / "work")))
+    pipeline = AIClippingPipeline()
+    pipeline.local_mode = True
+
+    async def download(url, output_dir):
+        meta = SimpleNamespace(title="Test", duration_seconds=300.0, width=1920, height=1080)
+        return SimpleNamespace(video_path=str(tmp_path / "source.mp4"), metadata=meta, file_size_bytes=1)
+
+    async def transcribe(video_path, work_dir, keyterms=None, **_range):
+        words = [TranscriptWord("hi", 0, 500)]
+        return TranscriptionResult(segments=[TranscriptSegment(0, 500, "hi", words=words)], full_text="hi")
+
+    async def plan(**kwargs):
+        return ClipPlanResponse(segments=[
+            ClipPlanSegment(0, 30_000, 0.9, screen_focus="presenter", screen_focus_reason="A story about quitting ads"),
+            ClipPlanSegment(60_000, 90_000, 0.8)], total_clips=2)
+
+    requests = []
+    async def render(request):
+        requests.append(request)
+        open(request.output_path, "wb").write(b"mp4")
+        focus = {"decision": request.screen_focus or "mixed", "reason": request.screen_focus_reason or "", "source": "planner",
+                 "mode": request.screen_focus_mode, "person_fits": True} if request.start_time_ms == 0 else None
+        return RenderResult(output_path=request.output_path, file_size_bytes=3, duration_ms=30_000, layout_type="talking_head",
+                            screen_focus=focus)
+
+    monkeypatch.setattr(pipeline.video_downloader, "download_video", download)
+    monkeypatch.setattr(pipeline.transcription_service, "transcribe", transcribe)
+    monkeypatch.setattr(pipeline.intelligence_planner, "plan_clips", plan)
+    monkeypatch.setattr(pipeline.rendering_service, "render_clip", render)
+
+    with pytest.raises(ValueError, match="screen share framing"):
+        ClippingJobRequest(video_url="local.mp4", screen_focus="mixed")
+    result = asyncio.run(pipeline.process_video(ClippingJobRequest(video_url="local.mp4", job_id="job1", screen_focus="smart")))
+    assert result.status == JobStatus.COMPLETED, result.error
+    first, second = sorted(requests, key=lambda r: r.start_time_ms)
+    assert (first.screen_focus_mode, first.screen_focus, first.screen_focus_reason) == ("smart", "presenter", "A story about quitting ads")
+    assert (second.screen_focus, second.screen_focus_reason) == (None, None)
+    layouts = {c["clip_index"]: c for c in result.output.metrics["clip_layouts"]}
+    assert layouts[0]["screen_focus"] == {"decision": "presenter", "reason": "A story about quitting ads", "source": "planner",
+                                          "mode": "smart", "person_fits": True}
+    assert layouts[1]["screen_focus"] is None
+    assert result.output.metrics["requested_settings"]["screen_focus"] == "smart"
+    saved = json.loads((tmp_path / "out" / "job1" / "job_output.json").read_text())
+    assert saved["metrics"]["clip_layouts"][0]["screen_focus"]["decision"] == "presenter"

@@ -1,0 +1,31 @@
+{
+  "name": "mk-line-graph",
+  "title": "Line graph",
+  "source": "CreatorClips' own unit, remade from HyperFrames registry/blocks/mk-line-graph (Apache-2.0)",
+  "variables": [
+    {
+      "id": "data",
+      "type": "string",
+      "label": "Numbers (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "labels",
+      "type": "string",
+      "label": "X labels (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "unit",
+      "type": "string",
+      "label": "Unit after each value",
+      "default": ""
+    },
+    {
+      "id": "cues",
+      "type": "string",
+      "label": "Comma seconds: when each number is said",
+      "default": ""
+    }
+  ]
+}

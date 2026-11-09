@@ -1,0 +1,25 @@
+{
+  "name": "animated-bar-chart",
+  "title": "Bar card",
+  "source": "CreatorClips' own unit, remade from HyperFrames registry/components/animated-bar-chart (Apache-2.0)",
+  "variables": [
+    {
+      "id": "value",
+      "type": "string",
+      "label": "The big number",
+      "default": ""
+    },
+    {
+      "id": "data",
+      "type": "string",
+      "label": "Bar numbers (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "title",
+      "type": "string",
+      "label": "Title",
+      "default": ""
+    }
+  ]
+}

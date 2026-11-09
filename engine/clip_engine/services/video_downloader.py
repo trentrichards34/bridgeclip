@@ -112,7 +112,155 @@ UA_LIST = [
 
 
 # Source types for videos
-VideoSourceType = Literal["youtube", "twitch", "s3", "direct_url", "local"]
+VideoSourceType = Literal["youtube", "twitch", "social", "s3", "direct_url", "local"]
+
+# Video sites read with yt-dlp (like YouTube): a link to their page, not to a video file.
+SOCIAL_HOSTS = ("instagram.com", "tiktok.com", "x.com", "twitter.com", "facebook.com", "fb.watch", "vimeo.com")
+# Only these sites' own extractors run for social links: a post that links to another site (YouTube, a
+# web page) is refused instead of followed, so the member's login never goes anywhere else.
+SOCIAL_EXTRACTORS = ["instagram", "instagramios", "facebook", "facebook:reel", "facebookpluginsvideo", "tiktok", r"vm\.tiktok",
+                     "twitter", "twitter:card", "twitter:shortener", "twitter:amplify", "vimeo"]
+LOGIN_BROWSERS = ("chrome", "safari", "firefox", "edge", "brave")
+# What these sites say when a video needs a login (yt-dlp's wording varies by site and version).
+# Narrow on purpose: a proxy's "407 Proxy Authentication Required" or a plain "operation not permitted" is not a login wall.
+LOGIN_MARKERS = ("login required", "log in", "logged-in", "rate-limit reached", "use --cookies", "cookies-from-browser",
+                 "empty media response", "this content isn't available", "requires authentication")
+NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found")
+# A kind of link the site's own extractors don't read (only the generic one would, and it is not allowed).
+UNSUPPORTED_MARKERS = ("unsupported url", "no suitable infoextractor", "no suitable extractor")
+# Share links (fb.watch/…, facebook.com/share/v|r/…, instagram.com/share/…) redirect to the post: followed only within these sites.
+SHARE_HOSTS = ("facebook.com", "fb.watch", "instagram.com")
+SHARE_USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0 Safari/537.36")
+
+
+def social_video_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == name or host.endswith("." + name) for name in SOCIAL_HOSTS)
+
+
+def login_browser_opts(url: str) -> dict:
+    """Social links: only the site's own extractors, and the member's chosen browser login (never for YouTube or other sites)."""
+    if not social_video_url(url):
+        return {}
+    opts: dict = {"allowed_extractors": SOCIAL_EXTRACTORS}
+    browser = str(getattr(get_settings(), "download_login_browser", "") or "").strip().lower()
+    if browser in LOGIN_BROWSERS:
+        opts["cookiesfrombrowser"] = (browser,)
+    return opts
+
+
+def social_site(url: str) -> str:
+    site = next((name.split(".")[0] for name in SOCIAL_HOSTS if (urlparse(url).hostname or "").lower().endswith(name)), "the site")
+    return {"instagram": "Instagram", "tiktok": "TikTok", "x": "X", "twitter": "X", "facebook": "Facebook", "fb": "Facebook",
+            "threads": "Threads", "vimeo": "Vimeo"}.get(site, site)
+
+
+def _entry_is_video(entry: dict) -> bool:
+    """A post entry with a video (not a photo): video formats, a length, or a link to resolve."""
+    if entry.get("_type") in ("url", "url_transparent"):
+        return True
+    if str(entry.get("vcodec") or "none") != "none" or finite_number(entry.get("duration"), 0) > 0:
+        return True
+    return any(isinstance(f, dict) and str(f.get("vcodec") or "none") != "none" for f in entry.get("formats") or [])
+
+
+def first_social_video(url: str, info: dict) -> tuple[dict, int]:
+    """A social post with several items (carousel, multi-video post): its first video and that item's 1-based number.
+    Raises a no_video VideoDownloadError when none of the items is a video."""
+    entries = info.get("entries") or []
+    for number, entry in enumerate(entries, start=1):
+        if number > 50:
+            break
+        if isinstance(entry, dict) and _entry_is_video(entry):
+            merged = {**entry, "_type": "video"}
+            for key in ("title", "uploader", "channel", "channel_id", "upload_date", "description", "thumbnail", "extractor"):
+                if not merged.get(key) and info.get(key):
+                    merged[key] = info[key]
+            return merged, number
+    raise VideoDownloadError(f"Social post has no video: this {social_site(url)} post is a carousel of photos without a video",
+                             reason="no_video")
+
+
+def unsupported_link(site: str) -> "VideoDownloadError":
+    return VideoDownloadError(f"Social link not supported: this kind of {site} link isn't supported. Open the post and copy its link "
+                              "from the browser's address bar.", reason="unsupported_link")
+
+
+def _host_in(url: str, names: tuple[str, ...]) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == name or host.endswith("." + name) for name in names)
+
+
+def instagram_story(url: str) -> bool:
+    return _host_in(url, ("instagram.com",)) and urlparse(url).path.lower().startswith("/stories/")
+
+
+def social_share_url(url: str) -> bool:
+    """fb.watch/…, facebook.com/share/…, instagram.com/share/…: links that only redirect to the post."""
+    if _host_in(url, ("fb.watch",)):
+        return True
+    return _host_in(url, ("facebook.com", "instagram.com")) and urlparse(url).path.lower().startswith("/share/")
+
+
+def canonical_social_url(url: str) -> str:
+    """The post's link without tracking parameters (a /watch link keeps its video id)."""
+    from urllib.parse import parse_qs, urlencode, urlunparse
+    parts = urlparse(url)
+    keep = {key: values[:1] for key, values in parse_qs(parts.query).items() if key in ("v", "story_fbid", "id")}
+    return urlunparse(("https", parts.hostname or "", parts.path, "", urlencode(keep, doseq=True), ""))
+
+
+async def resolve_social_share(url: str, transport=None) -> str:
+    """Follow a share link's redirects (only within Facebook and Instagram, https only, at most 6) to the post's own link.
+    Raises VideoDownloadError(unsupported_link) when it doesn't lead to a post."""
+    import httpx
+    from urllib.parse import parse_qs
+    site = social_site(url)
+    current = url
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False, transport=transport,
+                                 headers={"User-Agent": SHARE_USER_AGENT}) as client:
+        for _ in range(6):
+            if urlparse(current).scheme != "https" or not _host_in(current, SHARE_HOSTS):
+                raise unsupported_link(site)
+            if not social_share_url(current):
+                return canonical_social_url(current)
+            try:
+                destination = await asyncio.to_thread(resolve_public_destination, current)
+                response = await client.get(destination.url, headers={"Host": destination.host_header},
+                                            extensions={"sni_hostname": destination.hostname})
+            except (ValueError, httpx.HTTPError):
+                raise unsupported_link(site) from None
+            location = response.headers.get("location") if response.status_code in (301, 302, 303, 307, 308) else None
+            if not location:
+                raise unsupported_link(site)
+            following = urljoin(current, location)
+            # A login page in between carries the post in its "next" parameter.
+            if urlparse(following).path.rstrip("/").endswith("/login") or "/login/" in urlparse(following).path:
+                following = (parse_qs(urlparse(following).query).get("next") or [""])[0]
+            current = following
+    raise unsupported_link(site)
+
+
+def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadError"]:
+    """A plain-language error for a social link that can't be downloaded, or None."""
+    if not social_video_url(url):
+        return None
+    text = str(error).lower()
+    site = social_site(url)
+    if any(marker in text for marker in NO_VIDEO_MARKERS):
+        return VideoDownloadError(f"Social post has no video: this {site} post is a photo or a carousel without a video", reason="no_video")
+    if any(marker in text for marker in UNSUPPORTED_MARKERS):
+        return unsupported_link(site)
+    # Reading the browser's cookies: only cookie-related wording counts (a bare EPERM elsewhere is something else).
+    cookie = "cookie" in text or "keychain" in text or "dpapi" in text
+    if (("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text
+            or (cookie and ("operation not permitted" in text or "could not copy" in text or "decrypt" in text))
+            or "cookie database" in text):
+        return VideoDownloadError(f"Social login unreadable: CreatorClips could not read your browser's {site} login", reason="login_unreadable")
+    if any(marker in text for marker in LOGIN_MARKERS):
+        return VideoDownloadError(f"Social login required: {site} only shares this video with a logged-in viewer", reason="login_required")
+    return None
 
 
 @dataclass
@@ -133,6 +281,8 @@ class VideoMetadata:
     source_type: VideoSourceType = "youtube"
     channel: Optional[str] = None
     channel_id: Optional[str] = None
+    # A social post with several videos (an Instagram carousel, an X post): which one to download (1-based).
+    playlist_item: Optional[int] = None
 
 
 @dataclass
@@ -143,6 +293,17 @@ class DownloadResult:
     metadata: VideoMetadata
     file_size_bytes: int
     source_type: VideoSourceType
+
+
+def displayed_sideways(stream: dict) -> bool:
+    """The stream carries a quarter-turn rotation (display matrix or the older rotate tag)."""
+    rotation = next((d.get("rotation") for d in stream.get("side_data_list") or [] if isinstance(d, dict) and "rotation" in d), None)
+    if rotation is None:
+        rotation = (stream.get("tags") or {}).get("rotate")
+    try:
+        return round(float(rotation or 0)) % 180 == 90
+    except (TypeError, ValueError):
+        return False
 
 
 class VideoDownloaderService:
@@ -306,6 +467,9 @@ class VideoDownloaderService:
         host = (parsed.hostname or "").lower()
         if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}:
             return "youtube"
+        # Instagram, TikTok, X, Facebook and similar: a page with a video, read with yt-dlp.
+        if social_video_url(url_or_key):
+            return "social"
         
         # Direct video URL
         return "direct_url"
@@ -361,6 +525,19 @@ class VideoDownloaderService:
                 result = await self._download_from_youtube(twitch_vod_url(url), output_path, output_dir, max_duration_seconds, source_type="twitch")
             elif source_type == "youtube":
                 result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds)
+            elif source_type == "social":
+                if instagram_story(url):
+                    raise VideoDownloadError("Social link not supported: Instagram stories aren't supported. Use the link of a Reel "
+                                             "or a post, or save the story and choose it as a file.", reason="unsupported_link")
+                if social_share_url(url):
+                    url = await resolve_social_share(url)
+                try:
+                    result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds, source_type="social")
+                except Exception as error:
+                    plain = social_failure(url, error)
+                    if plain is not None:
+                        raise plain from error
+                    raise
             else:
                 result = await self._download_direct_url(url, output_path)
 
@@ -425,7 +602,10 @@ class VideoDownloaderService:
         )
 
         max_duration = min(max_duration_seconds or self.settings.max_download_duration_seconds, self.settings.max_download_duration_seconds)
-        if metadata.duration_seconds <= 0:
+        # Instagram and other social sites often leave the length out of a post's details (live posts are
+        # already refused above). Their videos are short, so download and measure the file instead: the size
+        # limit and deadline still apply, and download_video checks the measured length against the limit.
+        if metadata.duration_seconds <= 0 and source_type != "social":
             raise VideoDownloadError("Video duration is unavailable; live and upcoming streams are not supported")
         if metadata.duration_seconds > max_duration:
             raise VideoDownloadError(
@@ -489,6 +669,11 @@ class VideoDownloaderService:
                             ydl_opts["skip_unavailable_fragments"] = False
                             ydl_opts["match_filter"] = lambda info, *, incomplete=False: self._validate_twitch_info(info, max_duration, incomplete)
                         ydl_opts["format"] = format_selector
+                        ydl_opts.update(login_browser_opts(url))
+                        if metadata.playlist_item:
+                            # Only that one item of the post (the first video of a carousel).
+                            ydl_opts["noplaylist"] = False
+                            ydl_opts["playlist_items"] = str(metadata.playlist_item)
                         ydl_opts["progress_hooks"] = [check_progress]
                         ydl_opts["postprocessor_hooks"] = [check_progress]
 
@@ -514,7 +699,7 @@ class VideoDownloaderService:
                             raise
 
                         # Bot detection will affect every format selector.
-                        if "Sign in to confirm" in error_str or "bot" in error_str.lower():
+                        if "Sign in to confirm" in error_str or ("bot" in error_str.lower() and not social_video_url(url)):
                             logger.warning("Bot detection triggered")
                             raise
 
@@ -870,6 +1055,10 @@ class VideoDownloaderService:
             duration = float(format_info.get("duration", 0))
             width = int(video_stream.get("width", 0))
             height = int(video_stream.get("height", 0))
+            if displayed_sideways(video_stream):
+                # A phone video filmed upright is stored sideways with a rotation flag; FFmpeg turns its frames
+                # upright when it decodes them, so the picture's size is the other way round.
+                width, height = height, width
             if not math.isfinite(duration) or duration <= 0 or width <= 0 or height <= 0:
                 raise VideoDownloadError("Invalid video metadata")
 
@@ -942,6 +1131,7 @@ class VideoDownloaderService:
                 "quiet": True,
                 "no_warnings": True,
             })
+            opts.update(login_browser_opts(url))
 
             if twitch_url:
                 opts["allowed_extractors"] = ["twitch:vod"]
@@ -956,7 +1146,7 @@ class VideoDownloaderService:
                 raise VideoDownloadError("Twitch VOD unavailable", reason="twitch_unavailable") from e
             error_str = str(e)
             # Provide user-friendly error for YouTube bot detection
-            if "Sign in to confirm" in error_str or "bot" in error_str.lower():
+            if "Sign in to confirm" in error_str or ("bot" in error_str.lower() and not social_video_url(url)):
                 logger.error("YouTube bot detection triggered for metadata")
                 raise VideoDownloadError(
                     "YouTube is temporarily blocking this request. Please try again in a few moments, "
@@ -964,6 +1154,10 @@ class VideoDownloaderService:
                 )
             raise VideoDownloadError(f"Failed to get video info: {e}")
 
+        # A carousel or a post with several videos comes back as a playlist: the first video is the one.
+        playlist_item = None
+        if isinstance(info, dict) and info.get("_type") in ("playlist", "multi_video") and social_video_url(url) and not twitch_url:
+            info, playlist_item = first_social_video(url, info)
         # ydl.download() would otherwise fetch every entry of a playlist or
         # channel into the same output path, one after another.
         if not isinstance(info, dict) or info.get("_type", "video") != "video":
@@ -992,6 +1186,7 @@ class VideoDownloaderService:
             upload_date=info.get("upload_date"),
             description=info.get("description"),
             thumbnail_url=info.get("thumbnail"),
+            playlist_item=playlist_item,
         )
 
 class VideoDownloadError(Exception):

@@ -26,10 +26,10 @@ export function Field({ label, hint, aside, htmlFor, children, className }: Fiel
   )
 }
 
-/** Recessed glass well shared by text inputs, selects and text areas. */
+/** Recessed well shared by text inputs, selects and text areas. */
 export const WELL =
   'glass-well transition-[border-color,box-shadow,background-color] duration-200 ease-out hover:border-white/[0.14] ' +
-  'focus-within:border-accent/70 focus-within:bg-black/30 focus-within:shadow-[inset_0_1px_2px_rgb(0_0_0/0.35),0_0_0_4px_rgb(var(--accent)/0.16)]'
+  'focus-within:border-accent/70 focus-within:shadow-[0_0_0_3px_rgb(var(--accent)/0.16)]'
 
 interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   leading?: ReactNode
@@ -46,7 +46,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
     <div
       className={cn(
         'group/input relative flex items-center',
-        inputSize === 'lg' ? 'rounded-xl' : 'rounded-lg',
+        inputSize === 'lg' ? 'rounded-xl' : 'rounded-[10px]',
         WELL,
         props.disabled && 'opacity-50',
         className
@@ -80,9 +80,9 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     <textarea
       ref={ref}
       className={cn(
-        'block w-full resize-y rounded-lg px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none',
+        'block w-full resize-y rounded-xl px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none',
         'glass-well transition-[border-color,box-shadow] duration-200 ease-out hover:border-white/[0.14]',
-        'focus:border-accent/70 focus:shadow-[inset_0_1px_2px_rgb(0_0_0/0.35),0_0_0_4px_rgb(var(--accent)/0.16)]',
+        'focus:border-accent/70 focus:shadow-[0_0_0_3px_rgb(var(--accent)/0.16)]',
         className
       )}
       {...props}

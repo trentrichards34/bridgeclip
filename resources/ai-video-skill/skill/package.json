@@ -1,0 +1,15 @@
+{
+  "name": "ai-video-skill",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Video Editing Skill: Claude writes, voices, animates and renders 1080x1920 reels.",
+  "scripts": {
+    "doctor": "node tools/doctor.mjs",
+    "browser": "playwright install chromium-headless-shell"
+  },
+  "dependencies": {
+    "playwright": "1.63.0",
+    "three": "0.186.1"
+  }
+}

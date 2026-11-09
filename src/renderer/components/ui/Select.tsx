@@ -18,7 +18,7 @@ export const MENU_SURFACE = 'glass-thick rounded-xl p-1 text-sm text-ink'
 export function menuOptionClass(active: boolean, disabled = false): string {
   return cn(
     'flex w-full cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors duration-100',
-    disabled ? 'text-ink-muted opacity-50' : active ? 'bg-white/[0.08] text-ink' : 'text-ink-muted'
+    disabled ? 'text-ink-muted opacity-50' : active ? 'bg-white/[0.07] text-ink' : 'text-ink-muted'
   )
 }
 
@@ -315,10 +315,10 @@ export function Select({
         onKeyDown={onTriggerKeyDown}
         data-open={open || undefined}
         className={cn(
-          'relative flex w-full min-w-0 items-center rounded-lg pl-2.5 pr-8 text-left',
+          'relative flex w-full min-w-0 items-center rounded-[10px] pl-2.5 pr-8 text-left',
           size === 'sm' ? 'h-7 text-xs' : 'h-8 text-sm',
           WELL,
-          'data-[open]:border-accent/70 data-[open]:bg-black/30',
+          'data-[open]:border-accent/70',
           disabled && 'cursor-not-allowed opacity-60',
           className
         )}

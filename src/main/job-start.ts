@@ -5,18 +5,25 @@ import { getBridgeRunnerPath, getEnginePath, preflightCheck, resolvePythonPath, 
 import { createRunRecord, finishRunRecord } from './run-history'
 import { enqueueJob } from './job-manager'
 import { logger } from './logger'
-import { assertMediaPath, isWebUrl } from './security'
+import { assertMediaPath, authorizeMedia, isWebUrl } from './security'
+import { MAX_CREATE_SOURCES } from '../shared/create-sources'
+import { moreClipsInfo as readMoreClipsInfo, moreClipsRequest, parseMoreClipsChoices, resolveReuse, withoutMissingBrand, writeCreateRequest, type MoreClipsInfo } from './more-clips'
+import { join } from 'path'
 import { assertPublicWebUrl } from './network-policy'
 import { validateJobConfig } from './validation'
 import { resolveAdvancedModels } from './openrouter-models'
 import { supportsCaptionFilter } from './tools'
+import { brandForJob } from './brands'
+import { referenceForRun, referencePath } from './reference-image'
+import { resolveMusic } from './music'
+import { plannerModelFor } from '../shared/purpose'
 import type { JobSnapshot } from '../shared/jobs'
 
 /** A passing engine check is reused briefly, so queuing several videos stays quick. */
 const ENGINE_CHECK_TTL_MS = 5 * 60 * 1000
 let lastEngineCheck: { key: string; at: number } | null = null
 
-export type StartJobResult = { jobId: string; queued: boolean; job: JobSnapshot } | { error: string }
+export type StartJobResult = { jobId: string; queued: boolean; job: JobSnapshot; note?: string } | { error: string }
 
 /**
  * Validate a clipping request, check the engine and keys, create its run
@@ -30,10 +37,23 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     if (config.clippingMode === 'advanced') {
       config.plannerCapabilities = await resolveAdvancedModels(config.plannerModel!, config.transcriptionModel!)
     }
+    // More clips: the earlier run's transcript and source are found here, never taken from the renderer.
+    if (config.reuseFrom) config.reuse = await resolveReuse(config.reuseFrom, config.videoUrl)
     if (isWebUrl(config.videoUrl)) await assertPublicWebUrl(config.videoUrl)
-    else assertMediaPath(config.videoUrl, loadSettings().outputDirectory)
+    else if (config.reuse?.source === 'kept') { /* The copy kept in the earlier run is used. */ }
+    else {
+      // The earlier run's own source file may be used again without the file picker.
+      if (config.reuse?.source === 'original') authorizeMedia(config.videoUrl)
+      assertMediaPath(config.videoUrl, loadSettings().outputDirectory)
+    }
     if (config.bannerChannelUrl) await assertPublicWebUrl(config.bannerChannelUrl)
-  } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
+    // A deleted brand is reported now, not when the run reaches a slot.
+    if (config.brandIdentityId) brandForJob(config.brandIdentityId, false)
+    // A reference picture that's gone is reported now, too.
+    if (config.referenceImage) referencePath(config.referenceImage)
+    // And music of their own that was removed (a saved style can still point to it).
+    if (config.music && config.musicTrack) resolveMusic(config.musicTrack)
+  } catch (error) { return { error: String((error as Error | null)?.message || 'Invalid job options').slice(0, 300) } }
   const settings = loadSettings()
 
   if (!settings.openrouterApiKey) {
@@ -64,7 +84,7 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     const pythonValidation = await validatePython(pythonPath, enginePath)
     if (!pythonValidation.ok) {
       lastEngineCheck = null
-      return { error: 'The clipping engine is incomplete or incompatible. Open Settings → System check, then repair the BridgeClip installation before starting.' }
+      return { error: 'The clipping engine is incomplete or incompatible. Open Settings → System check, then repair the CreatorClips installation before starting.' }
     }
     lastEngineCheck = { key: engineKey, at: Date.now() }
   }
@@ -82,7 +102,68 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     try { finishRunRecord(settings.outputDirectory, jobId, 'failed', 'Could not start this run.') } catch { /* Output folder may be unavailable. */ }
     return { error: 'Could not create the clipping run. Check the output folder and retry.' }
   }
+  // Its settings, so "More clips from this video" can start from them later.
+  try { writeCreateRequest(join(settings.outputDirectory, jobId), config, config.reuse?.excludeRangesMs ?? []) }
+  catch { logger.warn('job.start.requestNotSaved', { jobId }) }
+  // The reference picture: kept in the run folder, and sent to the planner only when its model can look at images.
+  let note: string | undefined
+  if (config.referenceImage) {
+    try {
+      const reference = await referenceForRun(config.referenceImage, join(settings.outputDirectory, jobId), plannerModelFor(config.clippingMode, config.plannerModel))
+      if (reference.send) config.referenceImagePath = reference.send
+      note = reference.note ?? undefined
+    } catch (error) {
+      logger.warn('job.start.referenceNotSaved', { jobId })
+      note = `${(error as Error)?.message || 'Your reference image could not be used.'} The run goes ahead without it.`
+    }
+  }
   // Starts now when a slot is free; otherwise waits its turn in the queue.
   const job = enqueueJob(jobId, config, settings.outputDirectory)
-  return { jobId, queued: job.status === 'queued', job }
+  return { jobId, queued: job.status === 'queued', job, ...(note ? { note } : {}) }
+}
+
+function brandExists(id: string): boolean {
+  try { brandForJob(id, false); return true } catch { return false }
+}
+
+/** What More clips would reuse, for the dialog; a brand deleted since the earlier run is dropped, with a note. */
+export async function moreClipsInfo(outputDir: unknown): Promise<MoreClipsInfo> {
+  const info = await readMoreClipsInfo(outputDir)
+  const { request, note } = withoutMissingBrand(info.request, brandExists)
+  return { ...info, request, ...(note ? { note } : {}) }
+}
+
+export type StartManyResult = { started: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[]; failed: { videoUrl: string; error: string }[] } | { error: string }
+
+/**
+ * Several videos with the same settings: one job each, queued in order (up to
+ * MAX_PARALLEL_JOBS run at once). A video that can't start doesn't stop the rest.
+ */
+export async function startClipJobRequests(requests: unknown): Promise<StartManyResult> {
+  if (!Array.isArray(requests) || requests.length === 0) return { error: 'Add a video to clip.' }
+  if (requests.length > MAX_CREATE_SOURCES) return { error: `Add up to ${MAX_CREATE_SOURCES} videos at a time.` }
+  const sources = requests.map((request) => (request && typeof request === 'object' ? (request as { videoUrl?: unknown }).videoUrl : undefined))
+  if (sources.some((source) => typeof source !== 'string') || new Set(sources).size !== sources.length) return { error: 'Each video can be added once.' }
+  const started: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[] = []
+  const failed: { videoUrl: string; error: string }[] = []
+  for (const request of requests) {
+    const videoUrl = (request as { videoUrl: string }).videoUrl
+    const result = await startClipJobRequest(request)
+    if ('error' in result) failed.push({ videoUrl, error: result.error })
+    else started.push({ ...result, videoUrl })
+  }
+  return { started, failed }
+}
+
+/** "More clips from this video" for a finished Library run, with the member's choices. */
+export async function startMoreClips(outputDir: unknown, choices: unknown): Promise<StartJobResult> {
+  let request
+  let note: string | undefined
+  try {
+    const info = await moreClipsInfo(outputDir)
+    note = info.note
+    request = moreClipsRequest(info, parseMoreClipsChoices(choices))
+  } catch (error) { return { error: String((error as Error | null)?.message || 'Could not start more clips.').slice(0, 300) } }
+  const result = await startClipJobRequest(request)
+  return note && !('error' in result) ? { ...result, note } : result
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DragDropContext, Draggable, Droppable, type DraggableProvided, type DropResult } from '@hello-pangea/dnd'
-import { Check, FolderOpen, GripVertical, Info, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, Workflow, X } from 'lucide-react'
-import { canReorderContent, reorderQueuedContent, hasAutomationWarnings, hasContentWarnings, hasEnhancedMetadata } from '../../shared/automations'
+import { CalendarClock, CalendarX, Check, FolderOpen, GripVertical, Info, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, Workflow, X } from 'lucide-react'
+import { canReorderContent, reorderQueuedContent, hasAutomationWarnings, hasContentWarnings, hasEnhancedMetadata, isScheduledAhead, upcomingPlan, AHEAD_HORIZON_MS, AHEAD_SLOT_COUNT, type UpcomingPost } from '../../shared/automations'
+import { upcomingSlots } from '../../shared/schedule-math'
 import { MAX_ENHANCEMENT_GUIDANCE, AUTOMATION_PLATFORMS, needsTikTokReview, nextAutomationContent, type Automation, type AutomationContent, type AutomationContentStatus, type AutomationUpdate, type AutomationSourceGroup } from '../../shared/automations'
 import { isPostableAccount, isValidProfileName } from '../../shared/zernio'
 import { AutomationTikTokReviewDialog } from '../components/AutomationTikTokReviewDialog'
@@ -32,10 +33,12 @@ import { cn, errorMessage, formatRelativeDate, isMac } from '../lib/utils'
 import type { Page as PageName } from '../components/Sidebar'
 
 function draftFor(automation: Automation): AutomationUpdate {
-  return { name: automation.name, enabled: automation.enabled, profileId: automation.profileId, metadataMode: automation.metadataMode, accounts: automation.accounts, times: automation.times, timezone: automation.timezone, youtubeVisibility: automation.youtubeVisibility, youtubeMadeForKids: automation.youtubeMadeForKids }
+  return { name: automation.name, enabled: automation.enabled, profileId: automation.profileId, metadataMode: automation.metadataMode, accounts: automation.accounts, times: automation.times, timezone: automation.timezone, youtubeVisibility: automation.youtubeVisibility, youtubeMadeForKids: automation.youtubeMadeForKids, scheduleAhead: automation.scheduleAhead === true }
 }
 
 const SELECTED_STORAGE_KEY = 'bridgeclip.automations.selectedId'
+/** The Posts calendar opens an automation by setting this before navigating here. */
+export const AUTOMATION_SELECTED_KEY = SELECTED_STORAGE_KEY
 
 function rememberSelection(id: string | null): void {
   try {
@@ -86,6 +89,12 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
   const { accounts, profiles, hydrate, load: loadAccounts, loading: accountsLoading, setProfile, createProfile } = useAccountsStore()
   const [automations, setAutomations] = useState<Automation[]>([])
   const [loaded, setLoaded] = useState(false)
+  // Upcoming slots and "scheduled with Zernio" depend on the time.
+  const [clock, setClock] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     try { return sessionStorage.getItem(SELECTED_STORAGE_KEY) } catch { return null }
   })
@@ -178,7 +187,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
     setBusy('group-sources'); setError(null); setSourceGroups(null)
     try {
       const groups = await getApi().automations.enhancementGroups(selected.id)
-      if (groups.some((group) => !group.sourceType)) throw new Error('Restart BridgeClip to use source enhancement prompts.')
+      if (groups.some((group) => !group.sourceType)) throw new Error('Restart CreatorClips to use source enhancement prompts.')
       setSourceGroups(groups); setSourceGroupKey(groups[0]?.key ?? '')
     } catch (cause) { setError(errorMessage(cause, 'Could not group clips by source.')) }
     finally { setBusy(null) }
@@ -258,6 +267,11 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
     if (!updated) return
     if (updated.lastError) setError(updated.lastError)
     else setNotice('Retry finished. Check the clip’s status in the content bank.')
+  }
+
+  const unscheduleContent = async (item: AutomationContent): Promise<void> => {
+    if (!selected || busy) return
+    await mutate('unschedule', () => getApi().automations.unscheduleContent(selected.id, item.id), 'Canceled with Zernio. The clip is back in the queue, and won’t be scheduled again for 30 minutes so you can edit it.')
   }
 
   const remove = (): void => {
@@ -390,8 +404,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
 
   if (!configured) {
     return (
-      <Page width="narrow">
-        <PageHeader title="Automations" description="Post the next clip from a content bank at set times each day." />
+      <Page width="default">
+        <PageHeader eyebrow="Workspace" title="Automations" description="Post the next clip from a content bank at set times each day." />
         <EmptyState
           className="mt-4"
           icon={<Workflow />}
@@ -404,6 +418,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
   }
 
   const nextClip = selected ? nextAutomationContent(selected) : undefined
+  const now = clock
+  const upcoming = selected && selected.enabled ? upcomingPlan(selected, upcomingSlots(selected.times, selected.timezone, now, AHEAD_SLOT_COUNT, 7 * 86_400_000)) : []
   const queued = selected?.content.filter((item) => item.status === 'queued') ?? []
   const counts = {
     all: selected?.content.length ?? 0,
@@ -418,7 +434,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
     { label: 'Queued', items: selected?.content.filter((item) => item.status === 'queued' || item.status === 'posting') ?? [], empty: 'No clips waiting to be submitted.' },
     { label: 'Needs attention', items: selected?.content.filter((item) => item.status === 'needs_review' && !item.warningsAcknowledged) ?? [], empty: '' },
     { label: 'Held clips', items: selected?.content.filter((item) => item.status === 'needs_review' && item.warningsAcknowledged) ?? [], empty: '' },
-    { label: 'Submitted', items: selected?.content.filter((item) => item.status === 'posted') ?? [], empty: 'No clips submitted yet.' }
+    { label: 'Scheduled with Zernio', items: selected?.content.filter((item) => isScheduledAhead(item, now)) ?? [], empty: '' },
+    { label: 'Submitted', items: selected?.content.filter((item) => item.status === 'posted' && !isScheduledAhead(item, now)) ?? [], empty: 'No clips submitted yet.' }
   ]
   const nextSlot = selected ? nextRunLabel(selected.times, selected.timezone) : null
   const savedReady = selected ? !missingSetup(selected) && !(selected.metadataMode === 'ai' && aiKeysMissing) : false
@@ -431,8 +448,9 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
   ].filter((step): step is string => Boolean(step)) : []
 
   return (
-    <Page width="narrow">
+    <Page width="default">
       <PageHeader
+        eyebrow="Workspace"
         title="Automations"
         description="Post the next clip from a content bank at set times each day."
         actions={automations.length > 0 && <>
@@ -451,8 +469,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
       {!loaded && (
         <div className="mt-3 space-y-2">
           <div className="flex gap-1">{[0, 1].map((key) => <Skeleton key={key} className="h-7 w-28 rounded-full" />)}</div>
-          <Skeleton className="h-[260px] rounded-3xl" />
-          <Skeleton className="h-[160px] rounded-3xl" />
+          <Skeleton className="h-[260px] rounded-2xl" />
+          <Skeleton className="h-[160px] rounded-2xl" />
         </div>
       )}
 
@@ -623,7 +641,9 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                   <Row
                     label="Schedule"
                     labelId="automation-schedule"
-                    hint="One clip at each time, daily. Keep BridgeClip open."
+                    hint={draft.scheduleAhead
+                      ? `One clip at each time, daily. The next ${AHEAD_SLOT_COUNT} (up to ${AHEAD_HORIZON_MS / 3_600_000} hours ahead) are scheduled with Zernio, so they post even when CreatorClips is closed.`
+                      : 'One clip at each time, daily. Keep CreatorClips open, or turn on Schedule ahead.'}
                   >
                     <div role="group" aria-labelledby="automation-schedule" className="flex flex-wrap items-center gap-1">
                       {draft.times.map((time) => (
@@ -649,6 +669,10 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                         searchPlaceholder="Search time zones"
                       />
                     </div>
+                    <label className="mt-1.5 flex w-fit items-center gap-2 text-xs text-ink" title="Uploads the next clips early and hands them to Zernio as scheduled posts. Pausing or changing this automation cancels them.">
+                      <Switch checked={draft.scheduleAhead === true} onChange={(on) => setDraft({ ...draft, scheduleAhead: on })} label="Schedule ahead with Zernio" />
+                      Schedule ahead with Zernio
+                    </label>
                   </Row>
 
                   <details>
@@ -717,7 +741,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                 </div>}
                 {bulkProgress && <Callout tone="info" className="mt-3" action={<Button size="sm" onClick={() => { stopBulk.current = true; setBulkProgress('Stopping after the current operation…') }}>Stop after batch</Button>}>{bulkProgress}</Callout>}
                 <DragDropContext key={selected.id} onBeforeCapture={() => { contentInteraction.current = true; refreshVersion.current++ }} onDragEnd={(result) => void moveContent(result)}>
-                  {contentGroups.filter((group) => !['Needs attention', 'Held clips'].includes(group.label) || group.items.length > 0).map((group) => (
+                  {contentGroups.filter((group) => !['Needs attention', 'Held clips', 'Scheduled with Zernio'].includes(group.label) || group.items.length > 0).map((group) => (
                     <section key={group.label} aria-label={group.label} className="border-t border-white/[0.06]">
                       <div className="flex flex-wrap items-center justify-between gap-2 bg-white/[0.02] px-3.5 py-2.5">
                         <h3 className="flex items-center gap-2 text-xs font-semibold text-ink-muted">{group.label}<span className="tabular rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs">{group.items.length}</span></h3>
@@ -726,6 +750,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                         </span>}
                       </div>
                       {group.label === 'Held clips' && <p className="px-3.5 py-2 text-2xs text-ink-subtle">Warnings acknowledged. These clips stay out of the queue until you review and return them.</p>}
+                      {group.label === 'Scheduled with Zernio' && <p className="px-3.5 py-2 text-2xs text-ink-subtle">Zernio posts these at their times, even when CreatorClips is closed. Unschedule one to edit it or to post something else.</p>}
                       {group.items.length === 0 && <p className="px-3.5 py-4 text-xs text-ink-subtle">{group.empty}</p>}
                       <Droppable droppableId={group.label} isDropDisabled={group.label !== 'Queued' || reorderDisabled}>
                         {(listProvided, listSnapshot) => <ul ref={listProvided.innerRef} {...listProvided.droppableProps} className={cn('divide-y divide-white/[0.06] transition-colors', listSnapshot.isDraggingOver && 'bg-accent/[0.035]')}>
@@ -758,6 +783,9 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                                 onCheckPosts={() => onNavigate('posts')}
                                 onViewLibrary={() => void viewLibrary(item)}
                                 onShowInFolder={() => void showInFolder(item)}
+                                onUnschedule={() => void unscheduleContent(item)}
+                                now={now}
+                                timezone={selected.timezone}
                               />}
                             </Draggable>
                           ))}
@@ -768,6 +796,11 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                   ))}
                 </DragDropContext>
               </Panel>
+
+              {upcoming.length > 0 && <Panel padded={false}><UpcomingPosts posts={upcoming} scheduleAhead={selected.scheduleAhead === true} timezone={selected.timezone} now={now} onOpenCalendar={() => {
+                try { sessionStorage.setItem('bridgeclip.posts.view', 'calendar') } catch { /* Posts opens on its list instead. */ }
+                onNavigate('posts')
+              }} /></Panel>}
 
               {dirty && (
                 <div className="glass-thick sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-full py-1.5 pl-4 pr-1.5 animate-fade-in" role="region" aria-label="Unsaved changes">
@@ -793,6 +826,52 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
         onClose={() => { setTiktokReview(null); void mutate('refresh', () => getApi().automations.list()); }} onApproved={(result) => { setAutomations(result); setTiktokReview(null); setNotice('TikTok review saved. This clip is ready for the automation.'); }} />}
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
     </Page>
+  )
+}
+
+/** "today 9:00 AM" / "Tue 9:00 AM" in the automation's time zone. */
+function slotLabel(at: string, timezone: string): string {
+  const date = new Date(at)
+  try {
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    const time = date.toLocaleTimeString('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit' })
+    const today = day.format(Date.now())
+    const tomorrow = day.format(Date.now() + 86_400_000)
+    const which = day.format(date) === today ? 'today' : day.format(date) === tomorrow ? 'tomorrow' : date.toLocaleDateString('en-US', { timeZone: timezone, weekday: 'short' })
+    return `${which} ${time}`
+  } catch { return date.toLocaleString() }
+}
+
+const UPCOMING_STATE: Record<UpcomingPost['state'], { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
+  zernio: { label: 'Scheduled with Zernio · safe to close the app', tone: 'success' },
+  cancelling: { label: 'Canceling with Zernio…', tone: 'warning' },
+  app: { label: 'Waits for CreatorClips · keep the app open', tone: 'neutral' },
+  skipped: { label: 'Skipped · its Zernio post was canceled', tone: 'neutral' },
+  uncertain: { label: 'Held · check this clip before its slot', tone: 'warning' },
+  empty: { label: 'No clip ready', tone: 'warning' }
+}
+
+function UpcomingPosts({ posts, scheduleAhead, timezone, now, onOpenCalendar }: { posts: UpcomingPost[]; scheduleAhead: boolean; timezone: string; now: number; onOpenCalendar: () => void }): React.JSX.Element {
+  return (
+    <section aria-label="Upcoming posts" className="px-3.5 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-ink-muted"><CalendarClock aria-hidden className="h-3.5 w-3.5" />Upcoming posts</h3>
+        <Button size="sm" variant="ghost" onClick={onOpenCalendar}>Open calendar</Button>
+      </div>
+      <ul className="mt-1.5 space-y-1">
+        {posts.map((post) => {
+          const state = UPCOMING_STATE[post.state]
+          const soon = post.state === 'app' && scheduleAhead && Date.parse(post.at) - now <= AHEAD_HORIZON_MS
+          return (
+            <li key={`${post.date}/${post.time}`} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <span className="w-28 shrink-0 font-mono text-2xs tabular text-ink">{slotLabel(post.at, timezone)}</span>
+              <span className="min-w-0 flex-1 truncate text-ink-muted">{post.title ?? '—'}</span>
+              <Badge tone={state.tone}>{soon ? 'Not scheduled with Zernio yet · keep the app open' : state.label}</Badge>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
   )
 }
 
@@ -843,7 +922,7 @@ function AutomationTab({ automation, selected, onSelect }: { automation: Automat
       className={cn(
         'inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors duration-150',
         selected
-          ? 'border-white/[0.16] bg-white/[0.1] font-medium text-ink'
+          ? 'border-tool/50 bg-tool/[0.12] font-medium text-ink shadow-[0_0_0_3px_rgb(var(--tool)/0.08)]'
           : 'border-transparent text-ink-muted hover:bg-white/[0.05] hover:text-ink'
       )}
     >
@@ -874,8 +953,11 @@ function CreateForm({ busy, onCreate, onCancel, autoFocus, size = 'md', classNam
   )
 }
 
-function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReviewTikTok, reviewDisabled, editing, busy, onEdit, onChange, onSave, onReturnToQueue, onRefreshPost, onRemove, onCheckPosts, onViewLibrary, onShowInFolder, onEnhance, enhancementDisabled, enhanced, dragProvided, dragging, onDismissMetadataError, onDismissError, onRetry, retryDisabled }: {
+function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReviewTikTok, reviewDisabled, editing, busy, onEdit, onChange, onSave, onReturnToQueue, onRefreshPost, onRemove, onCheckPosts, onViewLibrary, onShowInFolder, onEnhance, enhancementDisabled, enhanced, dragProvided, dragging, onDismissMetadataError, onDismissError, onRetry, retryDisabled, onUnschedule, now, timezone }: {
   item: AutomationContent
+  onUnschedule: () => void
+  now: number
+  timezone: string
   nextUp: boolean
   tiktokReviewNeeded: boolean
   tiktokSelected: boolean
@@ -907,6 +989,7 @@ function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReview
   const note = item.status === 'queued' && tiktokSelected && !tiktokReviewNeeded && item.tiktokApproval ? 'TikTok approved'
     : item.status === 'posted' && item.tiktokApproval?.options.draft ? 'Sent to TikTok inbox' : null
   const problem = item.warningsAcknowledged ? null : item.error ?? (item.status === 'needs_review' ? 'Confirm whether this clip posted before running it again.' : null)
+  const ahead = isScheduledAhead(item, now) ? item.aheadSlot! : null
   const row = (
     <li ref={dragProvided.innerRef} {...dragProvided.draggableProps}
       className={cn('group/row list-none px-3.5 py-2.5', editing && 'bg-white/[0.025]', dragging && 'rounded-xl bg-raised shadow-pop ring-1 ring-accent/40')}>
@@ -917,6 +1000,7 @@ function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReview
           {item.metadataDraft && <Badge tone="warning">Draft to review</Badge>}
           {item.status === 'posting' && <Badge tone="accent">Submitting…</Badge>}
           {nextUp && <Badge tone="accent" className="h-4 px-1.5 text-[10px]">Next up</Badge>}
+          {ahead && <Badge tone={ahead.cancel ? 'warning' : 'success'}>{ahead.cancel ? 'Canceling with Zernio…' : `Zernio posts it ${slotLabel(ahead.at, timezone)}`}</Badge>}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {item.status === 'queued' && !item.postId && item.error && <Button size="sm" variant="secondary" icon={<RefreshCw className="h-3 w-3" />} disabled={busy || retryDisabled || Boolean(item.metadataDraft)} onClick={onRetry} title="Retry this clip now, using the saved automation settings">Retry clip</Button>}
@@ -948,10 +1032,11 @@ function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReview
           }><Info aria-hidden className="h-4 w-4" /></HoverCard>
           <Button size="sm" variant="ghost" icon={<FolderOpen className="h-3.5 w-3.5" />} disabled={busy} onClick={onViewLibrary} aria-label={`View ${item.title} in Library`} title="Show this clip in Library">View in Library</Button>
           <ActionMenu label={`Actions for ${item.title}`} disabled={busy || item.status === 'posting'} actions={[
-            { label: editing ? 'Close editor' : 'Edit', icon: <Pencil className="h-3.5 w-3.5" />, disabled: Boolean(item.metadataDraft), onSelect: onEdit },
+            ...(ahead && !ahead.cancel ? [{ label: 'Unschedule', icon: <CalendarX className="h-3.5 w-3.5" />, onSelect: onUnschedule }] : []),
+            { label: editing ? 'Close editor' : 'Edit', icon: <Pencil className="h-3.5 w-3.5" />, disabled: Boolean(item.metadataDraft) || Boolean(ahead), onSelect: onEdit },
             { label: isMac ? 'Show in Finder' : 'Show in folder', icon: <FolderOpen className="h-3.5 w-3.5" />, onSelect: onShowInFolder },
             ...(item.status === 'queued' && tiktokSelected && !tiktokReviewNeeded ? [{ label: 'Edit TikTok', disabled: reviewDisabled || Boolean(item.metadataDraft), onSelect: onReviewTikTok }] : []),
-            { label: item.status === 'posted' ? 'Remove from history' : item.postId ? 'Remove clip' : 'Remove from queue', icon: <X className="h-3.5 w-3.5" />, onSelect: onRemove }
+            ...(ahead ? [] : [{ label: item.status === 'posted' ? 'Remove from history' : item.postId ? 'Remove clip' : 'Remove from queue', icon: <X className="h-3.5 w-3.5" />, onSelect: onRemove }])
           ]} />
         </div>
       </div>

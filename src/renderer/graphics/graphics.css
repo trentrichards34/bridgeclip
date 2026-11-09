@@ -1,0 +1,616 @@
+/*
+ * Motion graphic templates (templates.ts): one design system. Clean white
+ * rounded cards with a soft shadow (a thin accent glow on the key ones), bold
+ * sans headlines with an italic serif accent, the brand color as the accent.
+ *
+ * Every size is a multiple of --u (one pixel of a 1080-wide frame, times the
+ * graphic's size scale), so a template looks the same in the editor's small
+ * preview and the full-size render. Fonts are the app's own bundled fonts
+ * (engine/assets/fonts), declared again here for the offscreen page, which
+ * doesn't load the app's stylesheet.
+ */
+@font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-ExtraBold.ttf') format('truetype'); font-weight: 800; }
+@font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-Black.ttf') format('truetype'); font-weight: 900; }
+@font-face { font-family: 'MG Jakarta'; src: url('../../../engine/assets/fonts/PlusJakartaSans.ttf') format('truetype'); font-weight: 200 800; }
+@font-face { font-family: 'MG Anton'; src: url('../../../engine/assets/fonts/Anton-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'MG Fraunces'; src: url('../../../engine/assets/fonts/Fraunces72pt-Black.ttf') format('truetype'); }
+@font-face { font-family: 'MG Caveat Brush'; src: url('../../../engine/assets/fonts/CaveatBrush-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'MG Instrument Serif'; src: url('../../../engine/assets/fonts/InstrumentSerif-Italic.ttf') format('truetype'); font-style: italic; }
+@font-face { font-family: 'MG Instrument Serif'; src: url('../../../engine/assets/fonts/InstrumentSerif-Regular.ttf') format('truetype'); font-style: normal; }
+
+.mg-root {
+  position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none;
+  --ink: #0f172a; --ink-2: #334155; --muted: #64748b; --faint: #94a3b8; --hair: rgba(15, 23, 42, .08); --paper: #ffffff;
+  --sans: 'MG Jakarta', 'MG Montserrat', system-ui, sans-serif;
+  --serif: 'MG Instrument Serif', Georgia, serif;
+  --radius: calc(var(--u) * 44);
+  --shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .06), 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(15, 23, 42, .14), 0 calc(var(--u) * 40) calc(var(--u) * 90) rgba(15, 23, 42, .16);
+  --glow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .5), 0 0 calc(var(--u) * 34) rgba(var(--accent-rgb), .30);
+  --marker: rgba(var(--accent-rgb), .26);
+  --strike: #e5484d;
+  font-family: var(--sans); color: var(--ink);
+  -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; line-height: 1.15;
+  font-kerning: normal; letter-spacing: 0;
+}
+.mg-root * { box-sizing: border-box; }
+.mg-band { position: absolute; left: 0; right: 0; display: flex; justify-content: center; }
+.mg-band.top { align-items: flex-start; }
+.mg-band.middle, .mg-band.stage { align-items: center; }
+.mg-band.bottom { align-items: flex-end; }
+.mg-fit { display: flex; justify-content: center; padding: calc(var(--u) * 12) 0 calc(var(--u) * 20); }
+.mg-fit.left { width: 100%; justify-content: flex-start; padding-left: calc(var(--u) * 60); padding-right: calc(var(--u) * 60); }
+.mg-push { transform-origin: 50% 50%; display: flex; justify-content: center; }
+.mg-display { font-family: var(--display); font-weight: var(--display-weight); text-transform: var(--display-case); letter-spacing: var(--display-tracking); }
+
+/* Words that build one by one, and the italic serif accent with its marker. */
+.mg-w { display: inline-block; white-space: pre; }
+.mg-accent {
+  position: relative; display: inline-block; isolation: isolate; white-space: nowrap;
+  font-family: var(--serif); font-style: italic; font-weight: 400; text-transform: none; letter-spacing: -.005em;
+  padding: 0 .07em;
+}
+.mg-display .mg-accent, .mg-strike-final .mg-accent { font-size: 1.16em; line-height: .9; }
+.mg-accent.tint { color: var(--accent-ink); }
+.mg-mark {
+  position: absolute; z-index: -1; left: -.02em; right: -.02em; top: .5em; bottom: .02em;
+  background: var(--marker); border-radius: .08em; transform-origin: 0 50%;
+}
+.mg-sub { margin-top: calc(var(--u) * 26); font-weight: 600; font-size: calc(var(--u) * 40); line-height: 1.3; color: var(--muted); letter-spacing: -.005em; }
+.mg-kicker { font-weight: 800; font-size: calc(var(--u) * 26); letter-spacing: .16em; text-transform: uppercase; color: var(--accent-ink); }
+.mg-kicker.muted { color: var(--faint); }
+.mg-boxdraw { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.mg-boxdraw path { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+
+/* The card: white, rounded, a soft shadow; .glow adds the thin accent border. */
+.mg-card {
+  position: relative; background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: calc(var(--u) * 54) calc(var(--u) * 64) calc(var(--u) * 58); width: var(--card-w);
+}
+.mg-card.glow, .mg-tile.glow, .mg-window.glow { box-shadow: var(--glow), var(--shadow); }
+.mg-tile { position: relative; background: var(--paper); border-radius: calc(var(--u) * 48); box-shadow: var(--shadow); }
+
+/* Stat counter */
+.mg-stat { text-align: center; padding-top: calc(var(--u) * 50); }
+.mg-stat-value {
+  display: block; font-size: calc(var(--u) * var(--stat-size, 170)); line-height: 1; color: var(--ink); white-space: nowrap;
+  font-variant-numeric: tabular-nums; transform-origin: 50% 60%; letter-spacing: -.035em;
+}
+.mg-stat-short { color: var(--accent-ink); margin-left: .02em; }
+.mg-stat-unit { font-family: var(--serif); font-style: italic; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: .5em; color: var(--accent-ink); margin-left: .12em; }
+.mg-stat-rule { height: calc(var(--u) * 8); width: calc(var(--u) * 120); border-radius: 999px; background: var(--accent); margin: calc(var(--u) * 28) auto calc(var(--u) * 24); transform-origin: 50% 50%; }
+.mg-stat-label { font-weight: 600; font-size: calc(var(--u) * 50); line-height: 1.25; color: var(--ink-2); text-wrap: balance; letter-spacing: -.01em; }
+.mg-stat.no-label .mg-stat-rule { display: none; }
+
+/* Title */
+.mg-title-card { width: auto; max-width: var(--card-w); padding: calc(var(--u) * 44) calc(var(--u) * 56) calc(var(--u) * 50); }
+.mg-title { text-align: center; font-size: calc(var(--u) * var(--title-size, 120)); line-height: 1.04; color: var(--ink); text-wrap: balance; }
+
+/* Numbered list and checklist */
+.mg-list { padding: calc(var(--u) * 50) calc(var(--u) * 58) calc(var(--u) * 56); }
+.mg-list-title { font-size: calc(var(--u) * 64); line-height: 1.08; color: var(--ink); padding-bottom: calc(var(--u) * 30); margin-bottom: calc(var(--u) * 34); border-bottom: calc(var(--u) * 2) solid var(--hair); }
+.mg-list-items { display: flex; flex-direction: column; gap: calc(var(--u) * 26); }
+.mg-list-item { display: flex; align-items: center; gap: calc(var(--u) * 28); }
+.mg-list-num {
+  flex: none; width: calc(var(--u) * 78); height: calc(var(--u) * 78); border-radius: calc(var(--u) * 24); background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font-weight: 800; font-size: calc(var(--u) * 40); letter-spacing: -.02em;
+  box-shadow: 0 calc(var(--u) * 8) calc(var(--u) * 18) rgba(var(--accent-rgb), .3);
+}
+.mg-list-text { font-weight: 700; font-size: calc(var(--u) * 60); line-height: 1.2; color: var(--ink); letter-spacing: -.015em; }
+.mg-check { flex: none; position: relative; width: calc(var(--u) * 76); height: calc(var(--u) * 76); border-radius: 50%; border: calc(var(--u) * 5) solid #cbd5e1; }
+.mg-check-fill { position: absolute; inset: calc(var(--u) * -5); border-radius: 50%; background: var(--accent); transform-origin: 50% 50%; box-shadow: 0 calc(var(--u) * 8) calc(var(--u) * 18) rgba(var(--accent-rgb), .3); }
+.mg-check svg { position: absolute; inset: calc(var(--u) * -5); width: calc(100% + var(--u) * 10); height: calc(100% + var(--u) * 10); overflow: visible; }
+.mg-check path { fill: none; stroke: var(--on-accent); stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Name tag */
+.mg-tag { width: auto; max-width: var(--card-w); display: flex; align-items: stretch; gap: calc(var(--u) * 28); padding: calc(var(--u) * 34) calc(var(--u) * 52) calc(var(--u) * 38) calc(var(--u) * 36); border-radius: calc(var(--u) * 36); }
+.mg-tag-bar { flex: none; width: calc(var(--u) * 10); border-radius: 999px; background: var(--accent); transform-origin: 50% 100%; }
+.mg-tag-text { display: flex; flex-direction: column; gap: calc(var(--u) * 4); min-width: 0; }
+.mg-tag-name { font-size: calc(var(--u) * var(--tag-size, 74)); line-height: 1.08; color: var(--ink); }
+.mg-tag-role { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * var(--role-size, 62)); line-height: 1.1; color: var(--accent-ink); }
+
+/* Logo pop */
+.mg-logo { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 34); }
+.mg-logo-tile { width: var(--logo); height: var(--logo); display: grid; place-items: center; padding: calc(var(--u) * 44); overflow: hidden; border-radius: calc(var(--u) * 72); }
+.mg-logo-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.mg-logo-empty { font-weight: 700; font-size: calc(var(--u) * 34); color: var(--muted); text-align: center; }
+.mg-chip {
+  background: var(--paper); color: var(--ink); font-weight: 800; font-size: calc(var(--u) * 48); letter-spacing: -.015em;
+  padding: calc(var(--u) * 20) calc(var(--u) * 40) calc(var(--u) * 24); border-radius: calc(var(--u) * 28); max-width: var(--card-w); text-align: center; box-shadow: var(--shadow);
+}
+
+/* Before / after */
+.mg-ba { width: var(--card-w); display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--u) * 60); position: relative; align-items: stretch; }
+.mg-ba-card { width: auto; padding: calc(var(--u) * 40) calc(var(--u) * 40) calc(var(--u) * 46); display: flex; flex-direction: column; gap: calc(var(--u) * 20); min-height: calc(var(--u) * 250); border-radius: calc(var(--u) * 38); }
+.mg-ba-text { font-weight: 700; font-size: calc(var(--u) * var(--ba-size, 60)); line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; }
+.mg-ba-card.before .mg-ba-text { font-size: calc(var(--u) * var(--ba-size, 60) * .8); }
+/* Longer sides stack: before above (muted), after below, the arrow on the seam pointing down. */
+.mg-ba.stack { grid-template-columns: 1fr; gap: calc(var(--u) * 34); }
+.mg-ba.stack .mg-ba-card { min-height: 0; padding: calc(var(--u) * 34) calc(var(--u) * 52) calc(var(--u) * 42); }
+.mg-ba.stack .mg-ba-arrow { position: relative; left: auto; top: auto; order: 1; justify-self: center; margin: calc(var(--u) * -60) 0; }
+.mg-ba.stack .mg-ba-card.after { order: 2; }
+.mg-ba .mg-kicker { font-size: calc(var(--u) * 32); }
+.mg-ba-card.before .mg-ba-text { color: var(--muted); }
+.mg-ba-card.after .mg-ba-text { color: var(--ink); }
+.mg-ba-arrow {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 96); height: calc(var(--u) * 96); margin: calc(var(--u) * -48) 0 0 calc(var(--u) * -48);
+  border-radius: 50%; background: var(--accent); display: grid; place-items: center; z-index: 2;
+  box-shadow: 0 0 0 calc(var(--u) * 8) #fff, 0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(15, 23, 42, .18);
+}
+.mg-ba-arrow svg { width: 56%; height: 56%; }
+.mg-ba-arrow path { fill: none; stroke: var(--on-accent); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Quote card */
+.mg-quote { padding: calc(var(--u) * 92) calc(var(--u) * 68) calc(var(--u) * 60); margin-top: calc(var(--u) * 30); }
+.mg-quote-mark {
+  position: absolute; left: calc(var(--u) * 52); top: calc(var(--u) * -62); font-family: var(--serif); font-style: italic;
+  font-size: calc(var(--u) * 260); line-height: 1; color: var(--accent-ink); transform-origin: 30% 60%;
+}
+.mg-quote-text { font-family: var(--serif); font-size: calc(var(--u) * var(--quote-size, 84)); line-height: 1.08; color: var(--ink); letter-spacing: -.005em; text-wrap: pretty; }
+.mg-quote-author {
+  margin-top: calc(var(--u) * 34); display: flex; align-items: center; gap: calc(var(--u) * 18); font-weight: 700;
+  font-size: calc(var(--u) * 30); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.mg-quote-author::before { content: ''; width: calc(var(--u) * 48); height: calc(var(--u) * 6); border-radius: 999px; background: var(--accent); }
+
+/* Arrow or circle */
+.mg-highlight { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mg-highlight path, .mg-highlight ellipse { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+.mg-highlight .mg-halo { stroke: rgba(255, 255, 255, .9); }
+
+/* Statement */
+.mg-statement { text-align: center; padding: calc(var(--u) * 60) calc(var(--u) * 60) calc(var(--u) * 66); }
+.mg-statement-text { font-family: var(--serif); font-size: calc(var(--u) * var(--statement-size, 130)); line-height: 1.02; color: var(--ink); letter-spacing: -.012em; text-wrap: balance; }
+.mg-statement-text .mg-accent { padding: 0 .1em; }
+
+/* Sticky notes */
+.mg-notes { display: flex; justify-content: center; width: var(--card-w); }
+.mg-notes-row { width: 100%; align-items: flex-start; padding: calc(var(--u) * 34) calc(var(--u) * 10) calc(var(--u) * 46); }
+.mg-note {
+  position: relative; flex: 1 1 0; min-width: 0; aspect-ratio: 1 / .94; padding: calc(var(--u) * 54) calc(var(--u) * 34) calc(var(--u) * 40);
+  border-radius: calc(var(--u) * 10) calc(var(--u) * 10) calc(var(--u) * 18) calc(var(--u) * 10); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 3) rgba(15, 23, 42, .08), 0 calc(var(--u) * 18) calc(var(--u) * 34) rgba(15, 23, 42, .18);
+  transform-origin: 50% 0;
+}
+.mg-notes.n2 .mg-note { max-width: calc(var(--u) * 440); }
+.mg-notes.n1 .mg-note { max-width: calc(var(--u) * 640); aspect-ratio: 1 / .7; }
+/* Three notes with long words: two above, one below. */
+.mg-notes.wrap .mg-notes-row { flex-wrap: wrap; row-gap: calc(var(--u) * 30); }
+.mg-notes.wrap .mg-note { flex: 0 0 48%; aspect-ratio: 1 / .62; padding-left: calc(var(--u) * 20); padding-right: calc(var(--u) * 20); }
+.mg-notes.wrap .mg-note + .mg-note { margin-left: 0; }
+.mg-notes.wrap .mg-note:nth-child(2) { margin-left: calc(var(--u) * -14); }
+.mg-note + .mg-note { margin-left: calc(var(--u) * -14); }
+.mg-note.c0 { background: linear-gradient(180deg, #fff3a8, #ffe873); }
+.mg-note.c1 { background: linear-gradient(180deg, #ffd3e2, #ffbcd3); }
+.mg-note.c2 { background: linear-gradient(180deg, #c9f5e2, #aeeed2); }
+.mg-note-text { font-weight: 800; font-size: calc(var(--u) * var(--note-size, 50)); line-height: 1.12; color: #1f2430; text-align: center; letter-spacing: -.02em; text-wrap: balance; }
+.mg-tape {
+  position: absolute; left: 50%; top: calc(var(--u) * -22); width: calc(var(--u) * 150); height: calc(var(--u) * 46); margin-left: calc(var(--u) * -75);
+  background: rgba(255, 255, 255, .62); border: 1px solid rgba(15, 23, 42, .05); transform: rotate(var(--tape-tilt, -3deg));
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .08);
+}
+
+/* Crossed-out list */
+.mg-strike { padding: calc(var(--u) * 50) calc(var(--u) * 64) calc(var(--u) * 56); }
+.mg-strike-row { padding: calc(var(--u) * 8) 0; }
+.mg-strike-text { position: relative; display: inline-block; font-weight: 700; font-size: calc(var(--u) * var(--strike-size, 54)); line-height: 1.2; color: var(--ink); letter-spacing: -.015em; }
+.mg-strike-word { position: relative; display: inline-block; white-space: pre; }
+.mg-strike-line { position: absolute; left: -.08em; right: -.08em; top: 52%; height: calc(var(--u) * 7); margin-top: calc(var(--u) * -3.5); border-radius: 999px; background: var(--strike); transform-origin: 0 50%; }
+.mg-strike-word.joined .mg-strike-line { left: -.36em; }
+.mg-strike-final .mg-accent { margin-left: .14em; }
+.mg-strike-final { margin-top: calc(var(--u) * 30); padding-top: calc(var(--u) * 34); border-top: calc(var(--u) * 2) solid var(--hair); font-size: calc(var(--u) * var(--strike-size, 54) * 1.3); line-height: 1.1; color: var(--ink); }
+
+/* Browser window */
+.mg-window { position: relative; width: var(--card-w); background: var(--paper); border-radius: calc(var(--u) * 34); box-shadow: var(--shadow); overflow: hidden; }
+.mg-window-bar { display: flex; align-items: center; gap: calc(var(--u) * 20); height: calc(var(--u) * 84); padding: 0 calc(var(--u) * 28); background: #f3f5f8; border-bottom: calc(var(--u) * 2) solid var(--hair); }
+.mg-dots { flex: none; display: flex; gap: calc(var(--u) * 12); width: calc(var(--u) * 130); }
+.mg-dots span { width: calc(var(--u) * 22); height: calc(var(--u) * 22); border-radius: 50%; }
+.mg-dots .d0 { background: #ff5f57; } .mg-dots .d1 { background: #febc2e; } .mg-dots .d2 { background: #28c840; }
+.mg-window-spacer { flex: none; width: calc(var(--u) * 130); }
+.mg-url {
+  flex: 1; min-width: 0; height: calc(var(--u) * 52); border-radius: 999px; background: #fff; border: calc(var(--u) * 2) solid var(--hair);
+  display: flex; align-items: center; justify-content: center; gap: calc(var(--u) * 10); padding: 0 calc(var(--u) * 24);
+}
+.mg-url-lock { flex: none; width: calc(var(--u) * 24); height: calc(var(--u) * 24); stroke: var(--faint); stroke-width: 2.4; }
+.mg-url-text { font-weight: 600; font-size: calc(var(--u) * 28); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.005em; }
+.mg-window-view { position: relative; overflow: hidden; }
+.mg-window-scroll { position: relative; }
+.mg-window-scroll img { display: block; width: 100%; height: auto; }
+.mg-window-mark { position: absolute; background: var(--marker); border-radius: calc(var(--u) * 8); box-shadow: inset 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .75); transform-origin: 0 50%; }
+.mg-window-page { padding: calc(var(--u) * 76) calc(var(--u) * 68) calc(var(--u) * 84); }
+.mg-window-title { font-size: calc(var(--u) * var(--page-size, 84)); line-height: 1.06; color: var(--ink); text-wrap: balance; }
+
+/* Icon row */
+.mg-icons { display: flex; justify-content: center; width: var(--card-w); }
+.mg-icons-row { width: 100%; gap: calc(var(--u) * 24); align-items: stretch; padding: calc(var(--u) * 10) 0 calc(var(--u) * 20); }
+.mg-icon-tile { flex: 1 1 0; min-width: 0; max-width: calc(var(--u) * 290); padding: calc(var(--u) * 40) calc(var(--u) * 16) calc(var(--u) * 34); display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 22); }
+.mg-icon-art { width: calc(var(--u) * 124); height: calc(var(--u) * 124); display: grid; place-items: center; border-radius: calc(var(--u) * 30); background: rgba(var(--accent-rgb), .1); }
+.mg-icon-art img { width: 100%; height: 100%; object-fit: contain; border-radius: calc(var(--u) * 24); }
+.mg-icon-svg { width: 62%; height: 62%; stroke: var(--accent-ink); stroke-width: 1.9; }
+.mg-icon-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 92); line-height: 1; color: var(--accent-ink); }
+.mg-icon-label { font-weight: 700; font-size: calc(var(--u) * 36); line-height: 1.15; color: var(--ink); text-align: center; letter-spacing: -.01em; text-wrap: balance; }
+
+/* Headline: a bold line, then the key words in white italic on the accent */
+.mg-headline { display: flex; justify-content: center; }
+.mg-headline-stack { flex-direction: column; align-items: center; gap: calc(var(--u) * 10); max-width: var(--card-w); }
+.mg-hl-line { position: relative; border-radius: calc(var(--u) * 26); text-align: center; }
+.mg-hl-line.one {
+  background: var(--paper); color: var(--ink); text-wrap: balance; box-shadow: var(--shadow); font-size: calc(var(--u) * var(--headline-size, 96)); line-height: 1.04;
+  padding: calc(var(--u) * 16) calc(var(--u) * 38) calc(var(--u) * 22);
+}
+.mg-hl-line.two { padding: calc(var(--u) * 6) calc(var(--u) * 40) calc(var(--u) * 16); }
+.mg-hl-fill { position: absolute; inset: 0; border-radius: calc(var(--u) * 26); background: var(--accent); transform-origin: 0 50%; box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(var(--accent-rgb), .35); }
+.mg-hl-text { position: relative; text-wrap: balance; font-family: var(--serif); font-style: italic; color: var(--on-accent); font-size: calc(var(--u) * var(--headline-size, 96) * 1.2); line-height: 1.05; letter-spacing: -.005em; }
+
+/* Comment prompt */
+.mg-cta { width: auto; max-width: var(--card-w); display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 28); padding: calc(var(--u) * 44) calc(var(--u) * 80) calc(var(--u) * 64); }
+.mg-cta-lead { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 104); line-height: 1; color: var(--ink); }
+.mg-cta-pill {
+  position: relative; border-radius: 999px; background: var(--accent); padding: calc(var(--u) * 18) calc(var(--u) * 84) calc(var(--u) * 24);
+  box-shadow: 0 0 0 calc(var(--u) * 6) rgba(var(--accent-rgb), .18), 0 calc(var(--u) * 16) calc(var(--u) * 40) rgba(var(--accent-rgb), .45);
+}
+.mg-cta-glow { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 calc(var(--u) * 40) calc(var(--u) * 6) rgba(var(--accent-rgb), .55); opacity: 0; }
+.mg-cta-word { position: relative; display: block; color: var(--on-accent); font-size: calc(var(--u) * var(--cta-size, 110)); line-height: 1.02; white-space: nowrap; }
+
+/* Big words (big-words.ts): huge type set in the scene, no card. Each line's size is set by the template. */
+.mg-big { position: absolute; left: 0; right: 0; display: flex; justify-content: center; align-items: flex-start; }
+.mg-big.middle { align-items: center; }
+.mg-big.bottom { align-items: flex-end; }
+.mg-big-drift { display: flex; flex-direction: column; align-items: center; transform-origin: 50% 50%; }
+.mg-big-line {
+  display: block; white-space: nowrap; color: #ffffff; line-height: .9; padding: 0 .04em;
+  text-shadow: 0 .02em .14em rgba(0, 0, 0, .28);
+}
+.mg-big.reveal .mg-big-line { overflow: hidden; padding-top: .1em; padding-bottom: .1em; margin: -.1em 0; }
+.mg-big-inner { display: inline-block; white-space: nowrap; vertical-align: top; }
+.mg-big-w { display: inline-block; white-space: pre; vertical-align: top; transform-origin: 50% 60%; }
+.mg-big-line.serif { font-family: 'MG Instrument Serif', Georgia, serif; font-style: normal; font-weight: 400; letter-spacing: -.02em; line-height: .8; }
+.mg-big-line.serif-italic { font-family: 'MG Instrument Serif', Georgia, serif; font-style: italic; font-weight: 400; letter-spacing: -.015em; line-height: .8; }
+.mg-big-line.sans, .mg-big-line.accent { font-family: 'MG Anton', Impact, sans-serif; text-transform: uppercase; letter-spacing: .005em; line-height: .92; }
+.mg-big-line.accent { color: var(--accent); }
+/* Along a side: the words run up the left edge or down the right one. */
+.mg-big.vertical { align-items: center; }
+.mg-big.vertical .mg-big-drift { position: absolute; top: 0; bottom: 0; flex-direction: row; align-items: center; }
+.mg-big.vertical.left .mg-big-drift { left: calc(var(--u) * 28); }
+.mg-big.vertical.right .mg-big-drift { right: calc(var(--u) * 28); }
+.mg-big.vertical .mg-big-line { writing-mode: vertical-rl; }
+.mg-big.vertical.left .mg-big-line { transform: rotate(180deg); }
+
+/* Type takeover: the key line in huge condensed caps across the frame (the engine puts the head between the lines) */
+.mg-takeover { position: absolute; left: 0; right: 0; display: flex; justify-content: center; align-items: stretch; }
+.mg-takeover-drift { height: 100%; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; transform-origin: 50% 50%; }
+.mg-takeover-line {
+  display: block; white-space: nowrap; color: #ffffff; font-family: 'MG Anton', Impact, sans-serif; text-transform: uppercase;
+  letter-spacing: .005em; line-height: .9; transform-origin: 50% 55%; text-shadow: 0 .02em .12em rgba(0, 0, 0, .35);
+}
+.mg-takeover-w { display: inline-block; white-space: pre; }
+.mg-takeover-w.accent { color: var(--accent-bright); }
+
+/* Orbit: a center tile, a thin ring that draws round, icon nodes on it */
+.mg-orbit { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; }
+.mg-orbit-push { position: relative; }
+.mg-orbit-ring { position: absolute; left: 0; top: 0; overflow: visible; }
+.mg-orbit-ring circle { fill: none; stroke: rgba(var(--accent-rgb), .55); stroke-linecap: round; }
+.mg-orbit-ring .mg-orbit-spoke { stroke: rgba(var(--accent-rgb), .28); stroke-linecap: round; stroke-dasharray: 1; }
+.mg-orbit-hub { position: absolute; display: grid; place-items: center; border-radius: calc(var(--u) * 56); overflow: hidden; }
+.mg-orbit-hub img { width: 100%; height: 100%; object-fit: cover; }
+.mg-orbit-hub-svg { width: 46%; height: 46%; stroke: var(--accent-ink); stroke-width: 1.8; }
+.mg-orbit-hub-text { padding: 0 calc(var(--u) * 18); font-size: calc(var(--u) * 64); line-height: 1.02; text-align: center; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
+.mg-orbit-node { position: absolute; display: flex; flex-direction: column; align-items: center; }
+.mg-orbit-node.above .mg-orbit-label { position: absolute; bottom: 100%; margin: 0 0 calc(var(--u) * 10); }
+.mg-orbit-dot {
+  width: var(--orbit-node); height: var(--orbit-node); border-radius: 50%; display: grid; place-items: center; position: relative;
+  background: var(--paper); box-shadow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .35), var(--shadow);
+}
+.mg-orbit-svg { width: 50%; height: 50%; stroke: var(--accent-ink); stroke-width: 1.9; }
+.mg-orbit-dot.numbered { background: var(--accent); box-shadow: 0 0 0 calc(var(--u) * 5) #fff, var(--shadow); }
+.mg-orbit-letter { font-weight: 800; font-size: calc(var(--orbit-node) * .5); line-height: 1; color: var(--on-accent, #fff); }
+/* A label at the stage's on-phone minimum (fx/fit.ts FX_MIN_TYPE.stage), on a solid white pill, two lines at most. */
+.mg-orbit-label {
+  margin-top: calc(var(--u) * 10); padding: calc(var(--u) * 8) calc(var(--u) * 20); border-radius: calc(var(--u) * 26); background: #fff;
+  font-weight: 750; font-size: calc(var(--u) * 48); line-height: 1.08; color: var(--ink); text-align: center; text-wrap: balance;
+  width: max-content; max-width: calc(var(--u) * 340); box-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 14) rgba(15, 23, 42, .12);
+}
+
+/* Feature tile: frosted pills with an icon and a short label */
+.mg-features { display: flex; justify-content: center; width: var(--card-w); }
+.mg-features-stack { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 26); }
+.mg-feature {
+  display: flex; align-items: center; gap: calc(var(--u) * 26); padding: calc(var(--u) * 20) calc(var(--u) * 46) calc(var(--u) * 20) calc(var(--u) * 20);
+  border-radius: 999px; background: linear-gradient(180deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .62));
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .9), inset 0 calc(var(--u) * -10) calc(var(--u) * 24) rgba(var(--accent-rgb), .10),
+    0 calc(var(--u) * 18) calc(var(--u) * 44) rgba(15, 23, 42, .18), 0 0 calc(var(--u) * 40) rgba(var(--accent-rgb), .18);
+}
+.mg-feature-art {
+  position: relative; flex: none; width: calc(var(--u) * 104); height: calc(var(--u) * 104); border-radius: calc(var(--u) * 30); display: grid; place-items: center;
+  background: linear-gradient(145deg, rgba(var(--accent-rgb), .78), var(--accent)); box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .35);
+}
+.mg-feature-svg { width: 54%; height: 54%; stroke: var(--on-accent); stroke-width: 2; }
+.mg-feature-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 64); line-height: 1; color: var(--on-accent); }
+.mg-feature-dot {
+  position: absolute; right: calc(var(--u) * -8); top: calc(var(--u) * -8); width: calc(var(--u) * 34); height: calc(var(--u) * 34); border-radius: 50%;
+  background: #ff3b30; box-shadow: 0 0 0 calc(var(--u) * 5) #fff, 0 calc(var(--u) * 4) calc(var(--u) * 10) rgba(255, 59, 48, .45);
+}
+.mg-feature-label { font-weight: 800; font-size: calc(var(--u) * var(--feature-size, 52)); line-height: 1.05; color: var(--ink); white-space: nowrap; letter-spacing: -.02em; }
+
+/* Screen recording: a dark window with a soft glow; its middle is see-through (the engine plays the video there) */
+.mg-screen-glow, .mg-screen-window, .mg-screen-video { position: absolute; }
+.mg-screen-glow {
+  box-shadow: 0 0 calc(var(--u) * 60) calc(var(--u) * 6) rgba(var(--accent-rgb), .55), 0 0 calc(var(--u) * 150) calc(var(--u) * 30) rgba(var(--accent-rgb), .32),
+    0 calc(var(--u) * 30) calc(var(--u) * 80) rgba(15, 23, 42, .35);
+  -webkit-mask: none; clip-path: none;
+}
+.mg-screen-window { border-style: solid; border-color: #0d0e13; background: transparent; box-shadow: inset 0 0 0 calc(var(--u) * 1) rgba(255, 255, 255, .05), 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .10); }
+.mg-screen-bar { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: calc(var(--u) * 18); padding: 0 calc(var(--u) * 10); }
+.mg-screen-bar .mg-dots { width: auto; }
+.mg-screen-bar .mg-dots span { width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+.mg-screen-label { flex: 1; min-width: 0; text-align: center; margin-right: calc(var(--u) * 80); font-weight: 700; font-size: calc(var(--u) * 26); color: rgba(255, 255, 255, .78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-screen-video { object-fit: cover; background: #0d0e13; }
+
+/* Chapter headers and diagrams (diagrams.ts): sizes in --fu (one pixel of a 1080-wide frame) or set inline. */
+.dg-chapter { position: absolute; display: flex; align-items: center; justify-content: center; }
+.dg-chapter-line { text-align: center; color: #fff; line-height: 1.08; text-wrap: balance; }
+.dg-chapter-word { display: inline-block; white-space: pre; }
+.dg-chapter.style-serif_caps .dg-chapter-line {
+  font-family: 'MG Instrument Serif', Georgia, serif; font-style: normal; font-weight: 400; font-variant-caps: small-caps; font-synthesis: small-caps;
+  letter-spacing: .015em; text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(0, 0, 0, .7), 0 calc(var(--u) * 4) calc(var(--u) * 16) rgba(0, 0, 0, .55), 0 0 calc(var(--u) * 40) rgba(0, 0, 0, .35);
+}
+.dg-chapter.style-sans .dg-chapter-line {
+  font-family: var(--sans); font-weight: 800; letter-spacing: -.015em; line-height: 1.12;
+  text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 5) rgba(0, 0, 0, .5), 0 calc(var(--u) * 6) calc(var(--u) * 24) rgba(0, 0, 0, .35);
+}
+.dg-chapter.style-sans .label { opacity: .78; }
+.dg-chapter.style-pill .dg-chapter-line {
+  font-family: var(--sans); font-weight: 700; letter-spacing: -.01em; line-height: 1.2;
+  background: rgba(12, 14, 20, .82); border-radius: calc(var(--u) * 999); padding: calc(var(--u) * 18) calc(var(--u) * 40);
+  box-shadow: 0 calc(var(--u) * 10) calc(var(--u) * 30) rgba(0, 0, 0, .3);
+}
+.dg-chapter.style-pill .label { color: var(--accent); }
+.dg-chapter.ink-dark .dg-chapter-line { color: #111; text-shadow: none; }
+.dg-chapter.ink-dark.style-pill .dg-chapter-line { color: #fff; }
+
+.dg-box { position: absolute; transform-origin: 50% 50%; color: #fff; font-family: var(--sans); }
+.dg-panel { position: absolute; border-radius: calc(var(--fu) * 44); box-shadow: 0 calc(var(--fu) * 20) calc(var(--fu) * 60) rgba(8, 20, 50, .35); }
+.dg-panel::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(110% 70% at 50% 0%, rgba(255, 255, 255, .10), transparent 65%); }
+.dg-layer { position: absolute; left: 0; top: 0; overflow: visible; }
+.dg-title {
+  position: absolute; text-align: center; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance;
+  text-shadow: 0 calc(var(--fu) * 3) calc(var(--fu) * 14) rgba(0, 0, 0, .25);
+}
+.dg-tag {
+  position: absolute; transform-origin: 50% 50%; display: flex; align-items: center; justify-content: center;
+  padding: .32em .5em; border: calc(var(--fu) * 3.5) solid #fff; border-radius: calc(var(--fu) * 16);
+  /* Filled (a deep navy) before it lights, so its words read at full strength on any backdrop. */
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), rgba(9, 20, 48, .82));
+  border-color: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), #fff);
+  box-shadow: 0 0 calc(var(--fu) * 30) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 55%), transparent);
+}
+.dg-tag.pill { border-radius: calc(var(--fu) * 999); padding: .36em .8em; }
+.dg-tag-text { width: 100%; text-align: center; font-weight: 700; line-height: 1.16; letter-spacing: -.005em; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
+.dg-tag.lit .dg-tag-text { color: var(--on-accent); }
+.dg-card {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  padding: calc(var(--fu) * 22) calc(var(--fu) * 16); border: calc(var(--fu) * 4.5) solid #fff; border-radius: calc(var(--fu) * 26);
+  transform-origin: 50% 100%;
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), rgba(9, 20, 48, .82));
+  border-color: color-mix(in srgb, var(--accent) calc(max(var(--lit, 0), var(--passed, 0)) * 100%), #fff);
+  box-shadow: 0 0 calc(var(--fu) * 40) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 50%), transparent);
+}
+.dg-card-text { width: 100%; font-weight: 700; line-height: 1.15; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
+.dg-card.lit .dg-card-text { color: var(--on-accent); }
+/* Wrong / right: two filled white cards with dark type; the right one gets a green ring, the wrong one dims and is struck. */
+.dg-compare-card {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  gap: calc(var(--fu) * 20); padding: calc(var(--fu) * 70) calc(var(--fu) * 30) calc(var(--fu) * 40); border-radius: calc(var(--fu) * 34);
+  background: #fff; color: #0F172A; transform-origin: 50% 60%;
+  box-shadow: 0 calc(var(--fu) * 24) calc(var(--fu) * 60) rgba(4, 12, 32, .38), 0 calc(var(--fu) * 4) calc(var(--fu) * 10) rgba(4, 12, 32, .2);
+}
+.dg-compare-card.right.settled { box-shadow: 0 0 0 calc(var(--fu) * 9) #22B573, 0 0 calc(var(--fu) * 60) rgba(34, 181, 115, .55), 0 calc(var(--fu) * 24) calc(var(--fu) * 60) rgba(4, 12, 32, .38); }
+.dg-compare-card.wrong.settled { background: #CBD3E1; color: #475569; }
+.dg-compare-title { position: relative; width: 100%; font-weight: 800; line-height: 1.04; letter-spacing: -.025em; text-wrap: balance; overflow-wrap: normal; word-break: keep-all; }
+.dg-compare-strike {
+  position: absolute; inset: 0; color: transparent; text-decoration: line-through; text-decoration-color: #E5484D;
+  text-decoration-thickness: .13em; text-decoration-skip-ink: none; pointer-events: none;
+}
+.dg-compare-slot { position: absolute; border-radius: calc(var(--fu) * 34); border: calc(var(--fu) * 5) dashed rgba(255, 255, 255, .55); background: rgba(255, 255, 255, .06); }
+.dg-compare-note { font-weight: 650; line-height: 1.2; color: #334155; text-wrap: balance; }
+.dg-compare-vs {
+  position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: #0F172A; color: #fff; font-weight: 800; letter-spacing: .02em; box-shadow: 0 0 0 calc(var(--fu) * 5) #fff; z-index: 1;
+}
+.dg-hub-caption { position: absolute; transform: translateX(-50%); text-align: center; font-weight: 700; letter-spacing: .02em; opacity: .9; }
+
+/*
+ * Looks (graphicVariant: `look-<id>` on the root). The most used templates come in two or three designs so repeats
+ * never look alike: dark glass, full color on the accent gradient, type with no card, photo and index cards, icon rows,
+ * dark pills, badges. Every look keeps a soft shadow (or a strong text shadow) so it reads on busy footage.
+ */
+.mg-root {
+  --glass: linear-gradient(160deg, rgba(30, 34, 48, .94), rgba(11, 13, 21, .92));
+  --glass-edge: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .10), inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .08);
+  --deep-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 8) rgba(0, 0, 0, .18), 0 calc(var(--u) * 24) calc(var(--u) * 60) rgba(0, 0, 0, .34);
+  --brand-fill: linear-gradient(140deg, var(--accent) 0%, var(--accent-deep) 100%);
+  --type-shadow: 0 calc(var(--u) * 3) calc(var(--u) * 6) rgba(0, 0, 0, .45), 0 calc(var(--u) * 8) calc(var(--u) * 34) rgba(0, 0, 0, .40);
+}
+
+/* Statement: dark glass, the key words underlined in the accent */
+.look-glass .mg-statement { padding-top: calc(var(--u) * 78); background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow), 0 0 calc(var(--u) * 60) rgba(var(--accent-rgb), .22); }
+.look-glass .mg-statement::before {
+  content: ''; position: absolute; left: 50%; top: calc(var(--u) * 30); width: calc(var(--u) * 72); height: calc(var(--u) * 7); margin-left: calc(var(--u) * -36);
+  border-radius: 999px; background: var(--accent);
+}
+.look-glass .mg-statement-text { color: #fff; }
+.look-glass .mg-statement .mg-accent { color: var(--accent-bright); }
+.look-glass .mg-statement .mg-mark { top: auto; bottom: -.02em; height: .085em; background: var(--accent); border-radius: 999px; }
+.look-glass .mg-sub { color: rgba(255, 255, 255, .72); }
+
+/* Statement: big bold type on the accent gradient */
+.look-bold .mg-statement {
+  background: radial-gradient(120% 90% at 10% 0%, rgba(255, 255, 255, .22), transparent 55%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .25), var(--deep-shadow), 0 calc(var(--u) * 26) calc(var(--u) * 70) rgba(var(--accent-rgb), .35);
+  padding: calc(var(--u) * 62) calc(var(--u) * 64) calc(var(--u) * 70);
+}
+.look-bold .mg-statement-text {
+  font-family: var(--sans); font-weight: 800; letter-spacing: -.035em; line-height: 1.02; color: var(--on-accent);
+  font-size: calc(var(--u) * var(--statement-size, 130) * .82);
+}
+.look-bold .mg-statement .mg-accent { font-family: var(--serif); font-weight: 400; font-size: 1.14em; color: var(--on-accent); }
+.look-bold .mg-statement .mg-mark { background: rgba(255, 255, 255, .24); top: .55em; }
+.look-bold .mg-sub { color: var(--on-accent); opacity: .82; }
+
+/* Title: each line on a pill in the accent (the key word on white) */
+.look-pill .mg-title-card { background: none; box-shadow: none; padding: calc(var(--u) * 10) calc(var(--u) * 20); }
+.look-pill .mg-title { line-height: 1.42; font-size: calc(var(--u) * var(--title-size, 120) * .8); }
+.look-pill .mg-title-ink {
+  background: var(--brand-fill); color: var(--on-accent); padding: .04em .28em .1em; border-radius: .2em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(var(--accent-rgb), .35), 0 calc(var(--u) * 4) calc(var(--u) * 10) rgba(0, 0, 0, .18);
+}
+.look-pill .mg-title .mg-accent.tint { color: var(--accent-ink); background: #fff; border-radius: .16em; padding: 0 .14em; margin: 0 .02em; }
+
+/* Title: huge white type with a soft shadow, no card */
+.look-shadow .mg-title-card {
+  background: radial-gradient(closest-side, rgba(8, 10, 18, .62), rgba(8, 10, 18, .38) 60%, transparent); box-shadow: none;
+  padding: calc(var(--u) * 46) calc(var(--u) * 60); border-radius: calc(var(--u) * 80);
+}
+.look-shadow .mg-title { color: #fff; text-shadow: var(--type-shadow); font-size: calc(var(--u) * var(--title-size, 120) * 1.08); line-height: .98; }
+.look-shadow .mg-title .mg-accent.tint { color: var(--accent-bright); }
+
+/* Quote: dark, a big quote mark in the accent */
+.look-dark .mg-quote { background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow); }
+.look-dark .mg-quote-text { color: #fff; }
+.look-dark .mg-quote-mark { color: var(--accent-bright); text-shadow: 0 0 calc(var(--u) * 30) rgba(var(--accent-rgb), .5); }
+.look-dark .mg-quote-author { color: rgba(255, 255, 255, .7); }
+
+/* Quote: white serif on the accent */
+.look-accent .mg-quote { background: radial-gradient(120% 80% at 90% 0%, rgba(255, 255, 255, .2), transparent 60%), var(--brand-fill); box-shadow: var(--deep-shadow); }
+.look-accent .mg-quote-text { color: var(--on-accent); }
+.look-accent .mg-quote-mark { color: #fff; opacity: .9; }
+.look-accent .mg-quote-author { color: var(--on-accent); opacity: .85; }
+.look-accent .mg-quote-author::before { background: var(--on-accent); }
+
+/* Sticky notes: photo cards (a white frame, the words on a color "photo") */
+.look-polaroid .mg-note {
+  background: #fff; aspect-ratio: auto; padding: calc(var(--u) * 20) calc(var(--u) * 20) calc(var(--u) * 74); border-radius: calc(var(--u) * 10);
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .1), 0 calc(var(--u) * 22) calc(var(--u) * 44) rgba(15, 23, 42, .26);
+}
+.look-polaroid .mg-photo {
+  width: 100%; aspect-ratio: 1 / 1; border-radius: calc(var(--u) * 4); display: flex; align-items: center; justify-content: center; padding: calc(var(--u) * 26);
+  background: radial-gradient(90% 70% at 25% 15%, rgba(255, 255, 255, .28), transparent 60%), var(--brand-fill);
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(0, 0, 0, .06);
+}
+.look-polaroid .mg-note.c1 .mg-photo { background: radial-gradient(90% 70% at 75% 20%, rgba(255, 255, 255, .22), transparent 60%), linear-gradient(200deg, var(--accent-deep), #12141c); }
+.look-polaroid .mg-note.c2 .mg-photo { background: radial-gradient(90% 70% at 30% 80%, rgba(255, 255, 255, .25), transparent 60%), linear-gradient(160deg, var(--accent-bright), var(--accent)); }
+.look-polaroid .mg-note-text { color: #fff; text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 10) rgba(0, 0, 0, .3); }
+.look-polaroid .mg-tape { top: calc(var(--u) * -18); background: rgba(255, 255, 255, .7); }
+
+/* Sticky notes: lined index cards with a pin */
+.look-index .mg-note {
+  background: repeating-linear-gradient(180deg, #fffdf7 0, #fffdf7 calc(var(--u) * 50), rgba(59, 130, 246, .28) calc(var(--u) * 50), rgba(59, 130, 246, .28) calc(var(--u) * 52.5));
+  border-radius: calc(var(--u) * 8); aspect-ratio: 1 / .78; padding: calc(var(--u) * 74) calc(var(--u) * 34) calc(var(--u) * 40);
+  box-shadow: inset 0 calc(var(--u) * 58) 0 #fffdf7, inset 0 calc(var(--u) * 61) 0 rgba(229, 72, 77, .7), 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .1), 0 calc(var(--u) * 20) calc(var(--u) * 40) rgba(15, 23, 42, .25);
+}
+.look-index .mg-note-text { font-family: 'MG Caveat Brush', cursive; font-weight: 400; color: #1e293b; letter-spacing: 0; line-height: 1.02; font-size: calc(var(--u) * var(--note-size, 50) * 1.4); }
+.look-index .mg-pin {
+  position: absolute; left: 50%; top: calc(var(--u) * 14); width: calc(var(--u) * 40); height: calc(var(--u) * 40); margin-left: calc(var(--u) * -20); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0 12%, var(--accent) 34%, var(--accent-deep) 100%);
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 10) rgba(0, 0, 0, .3);
+}
+
+/* List: icon rows (each point its own glass row, a color chip with an icon or the number) */
+.look-chips .mg-list { background: none; box-shadow: none; padding: 0; }
+.look-chips .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 22) calc(var(--u) * 8); padding: calc(var(--u) * 12) calc(var(--u) * 30) calc(var(--u) * 16);
+  background: var(--glass); color: #fff; border-radius: 999px; font-size: calc(var(--u) * 50); box-shadow: var(--deep-shadow);
+}
+.look-chips .mg-list-items { gap: calc(var(--u) * 18); }
+.look-chips .mg-list-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .97), rgba(255, 255, 255, .9)); border-radius: calc(var(--u) * 40);
+  padding: calc(var(--u) * 18) calc(var(--u) * 40) calc(var(--u) * 18) calc(var(--u) * 18);
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .9), 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(15, 23, 42, .2);
+}
+.look-chips .mg-list-num { width: calc(var(--u) * 92); height: calc(var(--u) * 92); border-radius: calc(var(--u) * 28); font-size: calc(var(--u) * 44); background: var(--brand-fill); }
+.look-chips .mg-list-num.c1 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #f59e0b), color-mix(in srgb, var(--accent-deep) 40%, #c2410c)); color: #fff; }
+.look-chips .mg-list-num.c2 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #10b981), color-mix(in srgb, var(--accent-deep) 40%, #047857)); color: #fff; }
+.look-chips .mg-list-num.c3 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #ec4899), color-mix(in srgb, var(--accent-deep) 40%, #be185d)); color: #fff; }
+.look-chips .mg-list-num.c4 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #8b5cf6), color-mix(in srgb, var(--accent-deep) 40%, #6d28d9)); color: #fff; }
+.mg-list-svg { width: 56%; height: 56%; stroke: currentColor; stroke-width: 2.1; fill: none; }
+
+/* List: dark pills, a number in the accent */
+.look-pills .mg-list { background: none; box-shadow: none; padding: 0; width: auto; max-width: var(--card-w); }
+.look-pills .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 20); padding: calc(var(--u) * 12) calc(var(--u) * 34) calc(var(--u) * 16);
+  background: var(--brand-fill); color: var(--on-accent); border-radius: calc(var(--u) * 24); font-size: calc(var(--u) * 58); box-shadow: var(--deep-shadow);
+}
+.look-pills .mg-list-items { gap: calc(var(--u) * 16); align-items: flex-start; }
+.look-pills .mg-list-item {
+  background: var(--glass); border-radius: 999px; padding: calc(var(--u) * 14) calc(var(--u) * 44) calc(var(--u) * 14) calc(var(--u) * 14);
+  box-shadow: var(--glass-edge), var(--deep-shadow);
+}
+.look-pills .mg-list-item:nth-child(even) { margin-left: calc(var(--u) * 46); }
+.look-pills .mg-list-num { border-radius: 50%; width: calc(var(--u) * 76); height: calc(var(--u) * 76); box-shadow: 0 0 calc(var(--u) * 24) rgba(var(--accent-rgb), .55); }
+.look-pills .mg-list-text { color: #fff; }
+
+/* Checklist: dark card, ticks in the accent */
+.look-dark .mg-list.checks { background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow), 0 0 calc(var(--u) * 60) rgba(var(--accent-rgb), .18); }
+.look-dark .mg-list.checks .mg-list-title { color: #fff; border-bottom-color: rgba(255, 255, 255, .12); }
+.look-dark .mg-list.checks .mg-list-text { color: #fff; }
+.look-dark .mg-list.checks .mg-check { border-color: rgba(255, 255, 255, .28); }
+.look-dark .mg-list.checks .mg-check-fill { box-shadow: 0 0 calc(var(--u) * 26) rgba(var(--accent-rgb), .6); }
+
+/* Checklist: each item its own white row */
+.look-rows .mg-list.checks { background: none; box-shadow: none; padding: 0; }
+.look-rows .mg-list.checks .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 20); padding: calc(var(--u) * 12) calc(var(--u) * 34) calc(var(--u) * 16);
+  background: var(--glass); color: #fff; border-radius: 999px; font-size: calc(var(--u) * 52); box-shadow: var(--deep-shadow);
+}
+.look-rows .mg-list.checks .mg-list-items { gap: calc(var(--u) * 16); }
+.look-rows .mg-list.checks .mg-list-item {
+  background: #fff; border-radius: calc(var(--u) * 34); padding: calc(var(--u) * 22) calc(var(--u) * 40) calc(var(--u) * 22) calc(var(--u) * 24);
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .08), 0 calc(var(--u) * 16) calc(var(--u) * 36) rgba(15, 23, 42, .22);
+}
+
+/* Stat: a big white number on the accent gradient, rings drawn round the corner */
+.look-gradient .mg-stat {
+  overflow: hidden; background: radial-gradient(110% 80% at 0% 0%, rgba(255, 255, 255, .22), transparent 55%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .25), var(--deep-shadow), 0 calc(var(--u) * 28) calc(var(--u) * 70) rgba(var(--accent-rgb), .38);
+}
+.look-gradient .mg-stat-value, .look-gradient .mg-stat-label { color: var(--on-accent); position: relative; }
+.look-gradient .mg-stat-short, .look-gradient .mg-stat-unit { color: var(--on-accent); opacity: .85; }
+.look-gradient .mg-stat-rule { background: var(--on-accent); opacity: .55; position: relative; }
+.mg-stat-rings { position: absolute; right: 0; top: 0; width: 46%; height: auto; overflow: visible; pointer-events: none; }
+.mg-stat-rings circle { fill: none; stroke: rgba(255, 255, 255, .22); stroke-width: 7; }
+
+/* Stat: the number beside an icon badge */
+.look-badge .mg-stat { display: flex; align-items: center; gap: calc(var(--u) * 40); text-align: left; padding: calc(var(--u) * 48) calc(var(--u) * 56) calc(var(--u) * 52); }
+.mg-stat-badge {
+  flex: none; width: calc(var(--u) * 170); height: calc(var(--u) * 170); border-radius: calc(var(--u) * 52); display: grid; place-items: center;
+  background: radial-gradient(90% 80% at 30% 20%, rgba(255, 255, 255, .3), transparent 60%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .3), 0 calc(var(--u) * 16) calc(var(--u) * 36) rgba(var(--accent-rgb), .4);
+}
+.mg-stat-badge-svg { width: 52%; height: 52%; stroke: var(--on-accent); stroke-width: 2; fill: none; }
+.mg-stat-col { flex: 1; min-width: 0; }
+.look-badge .mg-stat-value { transform-origin: 0 60%; }
+.look-badge .mg-stat-rule { margin: calc(var(--u) * 20) 0 calc(var(--u) * 18); width: calc(var(--u) * 90); transform-origin: 0 50%; }
+.look-badge .mg-stat-label { font-size: calc(var(--u) * 44); }
+
+/*
+ * The video's one look on the classic white-card templates (fields.theme, text-fit.ts): 'dark' draws them on dark glass
+ * with light ink (they stand out on a light stage and on footage alike); 'light' gives words with no card dark ink.
+ */
+.mg-root.tone-dark {
+  --ink: #ffffff; --ink-2: rgba(255, 255, 255, .88); --muted: rgba(255, 255, 255, .62); --faint: rgba(255, 255, 255, .5);
+  --hair: rgba(255, 255, 255, .14); --paper: #151822; --accent-ink: var(--accent-bright); --marker: rgba(var(--accent-rgb), .45);
+}
+.tone-dark .mg-card, .tone-dark .mg-hl-line.one, .tone-dark .mg-chip {
+  background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow);
+}
+.tone-dark .mg-card.glow { box-shadow: var(--glass-edge), var(--deep-shadow), 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .55), 0 0 calc(var(--u) * 44) rgba(var(--accent-rgb), .32); }
+.tone-dark .mg-ba-card.before .mg-ba-text { color: rgba(255, 255, 255, .66); }
+.tone-dark .mg-ba-arrow { box-shadow: 0 0 0 calc(var(--u) * 8) #151822, 0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(0, 0, 0, .35); }
+.tone-dark .mg-check { border-color: rgba(255, 255, 255, .3); }
+/* On dark glass the marker is an underline in the accent (a tinted block behind accent-colored words loses them). */
+.tone-dark .mg-mark { top: auto; bottom: -.02em; height: .085em; background: var(--accent); border-radius: 999px; }
+.tone-dark .mg-window-bar { background: #1d212c; }
+.tone-dark .mg-url { background: #11141c; }
+.mg-root.ink-dark .mg-big-line { color: #0f172a; text-shadow: none; }
+.mg-root.ink-dark .mg-big-line.accent { color: var(--accent-ink); }

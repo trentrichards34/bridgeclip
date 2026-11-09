@@ -9,7 +9,9 @@ import {
   YOUTUBE_TITLE_MAX,
   PLATFORM_RULES,
   captionLength,
+  firstCommentError,
   isValidTimeZone,
+  supportsFirstComment,
   type FacebookFormat,
   type PostClipRequest,
   type PostOptions,
@@ -22,6 +24,7 @@ import {
   type TikTokCreatorInfo,
   type TikTokPostOptions
 } from '../../shared/zernio-posts'
+import { COVER_IMAGE_EXTENSIONS, isSubtitleLanguage, type PostCover } from '../../shared/zernio-extras'
 
 export { tiktokOptionsError } from '../../shared/zernio-posts'
 
@@ -101,7 +104,8 @@ function parseOptions(value: unknown, targets: PostClipRequest['targets']): Post
     const tags = yt.tags === undefined ? undefined : Array.isArray(yt.tags) && yt.tags.length <= 20 &&
       yt.tags.every((tag) => typeof tag === 'string' && tag.trim().length > 0 && [...tag].length <= 100 && !/[<>]/.test(tag)) &&
       yt.tags.join(',').length <= 500 ? yt.tags.map((tag: string) => tag.trim()) : invalid('YouTube tags')
-    options.youtube = { title, visibility, madeForKids: yt.madeForKids === true, ...(categoryId ? { categoryId } : {}), ...(tags ? { tags } : {}) }
+    const subtitles = yt.subtitles === undefined ? undefined : isSubtitleLanguage(asRecord(yt.subtitles).language) ? { language: asRecord(yt.subtitles).language as string } : invalid('YouTube captions language')
+    options.youtube = { title, visibility, madeForKids: yt.madeForKids === true, ...(categoryId ? { categoryId } : {}), ...(tags ? { tags } : {}), ...(subtitles ? { subtitles } : {}) }
   }
   if (platforms.has('instagram')) options.instagram = { shareToFeed: bool(asRecord(o.instagram).shareToFeed, true) }
   if (platforms.has('facebook')) {
@@ -116,7 +120,35 @@ function parseOptions(value: unknown, targets: PostClipRequest['targets']): Post
     if (topicTag !== undefined && (typeof topicTag !== 'string' || !topicTag.trim() || [...topicTag.trim()].length > 50 || /[.#&\r\n]/.test(topicTag))) invalid('Threads topic tag')
     options.threads = typeof topicTag === 'string' ? { topicTag: topicTag.trim() } : {}
   }
+  if (o.cover !== undefined) options.cover = parseCover(o.cover)
+  if (o.firstComment !== undefined) {
+    if (typeof o.firstComment !== 'string') invalid('first comment')
+    const problem = firstCommentError(o.firstComment)
+    if (problem) throw new Error(problem)
+    // Only kept when a selected platform can take it; an empty field means none.
+    if (o.firstComment.trim() && targets.some((t) => supportsFirstComment(t.platform))) options.firstComment = o.firstComment.trim()
+  }
   return options
+}
+
+const MAX_COVER_MS = 6 * 3_600_000
+
+/** The cover's shape only; the frame time is checked against the clip, and the image file, when posting. */
+export function parseCover(value: unknown): PostCover {
+  const cover = asRecord(value)
+  if (cover.kind === 'frame') {
+    const atMs = cover.atMs
+    if (typeof atMs !== 'number' || !Number.isInteger(atMs) || atMs < 0 || atMs > MAX_COVER_MS) invalid('cover frame')
+    return { kind: 'frame', atMs }
+  }
+  if (cover.kind === 'image') {
+    const path = cover.path
+    const extension = typeof path === 'string' ? /\.([^./\\]+)$/.exec(path)?.[1]?.toLowerCase() : undefined
+    if (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0') || !extension ||
+        !(COVER_IMAGE_EXTENSIONS as readonly string[]).includes(extension)) invalid('cover image')
+    return { kind: 'image', path }
+  }
+  invalid('cover')
 }
 
 /** Validates an IPC request from the renderer; throws with a readable reason. */
@@ -228,8 +260,23 @@ function tiktokSharedSettings(options: TikTokPostOptions): JsonRecord {
 
 // ---- POST /v1/posts body ----------------------------------------------------
 
+/** A cover ready to send: a frame time (TikTok, Instagram) and/or an uploaded image URL. */
+export interface ResolvedCover {
+  /** Only these targets get the cover; the rest keep the platform's default. */
+  platforms: ZernioPlatform[]
+  /** Set when the member picked a frame. */
+  atMs: number | null
+  /** The member's image, or the picked frame as a JPEG for platforms that take only an image. */
+  imageUrl: string | null
+  /** True when imageUrl is the member's own image (sent to TikTok and Instagram as well). */
+  fromImage: boolean
+}
+
 export interface PostBodyContext {
   publicUrl: string
+  cover?: ResolvedCover | null
+  /** An uploaded subtitle file attached to the YouTube entries as closed captions. */
+  youtubeSubtitles?: { url: string; language: string } | null
   /** Each TikTok account's allowed interactions, from its creator info. Missing means all off. */
   tiktokInteractions?: Record<string, TikTokCreatorInfo['interactions']>
   facebookFormat?: FacebookFormat
@@ -237,10 +284,23 @@ export interface PostBodyContext {
 
 const NO_INTERACTIONS: TikTokCreatorInfo['interactions'] = { comment: false, duet: false, stitch: false }
 
+/** Platforms whose cover goes on the shared media item as an image (MediaItem.thumbnail). */
+const IMAGE_COVER_PLATFORMS: readonly ZernioPlatform[] = ['facebook', 'linkedin', 'youtube']
+
 export function buildCreatePostBody(request: PostClipRequest, context: PostBodyContext): JsonRecord {
   const { options } = request
+  const cover = context.cover ?? null
+  const covers = (platform: ZernioPlatform): boolean => Boolean(cover && cover.platforms.includes(platform))
+  const sharedThumbnail = cover?.imageUrl && cover.platforms.some((p) => IMAGE_COVER_PLATFORMS.includes(p)) ? cover.imageUrl : null
+  const coverSettings = (platform: 'tiktok' | 'instagram'): JsonRecord => {
+    if (!cover || !covers(platform)) return {}
+    if (cover.fromImage && cover.imageUrl) return platform === 'tiktok' ? { videoCoverImageUrl: cover.imageUrl } : { instagramThumbnail: cover.imageUrl }
+    if (cover.atMs !== null) return platform === 'tiktok' ? { videoCoverTimestampMs: cover.atMs } : { thumbOffset: cover.atMs }
+    return {}
+  }
   const platforms = request.targets.map((target) => {
     const data: JsonRecord = {}
+    let customMedia: JsonRecord[] | null = null
     if (target.platform === 'youtube' && options.youtube) {
       data.title = options.youtube.title
       data.visibility = options.youtube.visibility
@@ -248,26 +308,41 @@ export function buildCreatePostBody(request: PostClipRequest, context: PostBodyC
       data.madeForKids = options.youtube.madeForKids
       if (options.youtube.categoryId) data.categoryId = options.youtube.categoryId
     }
+    // YouTube gets its own media entry when it takes captions, or when the
+    // shared cover image is meant for other platforms only (Shorts can't have one).
+    if (target.platform === 'youtube' && (context.youtubeSubtitles || (sharedThumbnail && !covers('youtube')))) {
+      customMedia = [{
+        type: 'video',
+        url: context.publicUrl,
+        ...(sharedThumbnail && covers('youtube') ? { thumbnail: sharedThumbnail } : {}),
+        ...(context.youtubeSubtitles ? { subtitles: [{ url: context.youtubeSubtitles.url, language: context.youtubeSubtitles.language }] } : {})
+      }]
+    }
     if (target.platform === 'instagram' && options.instagram) data.shareToFeed = options.instagram.shareToFeed
+    if (target.platform === 'instagram') Object.assign(data, coverSettings('instagram'))
     if (target.platform === 'facebook' && (context.facebookFormat ?? options.facebook?.format) === 'reel') {
       data.contentType = 'reel'
       if (options.facebook?.title) data.title = options.facebook.title
     }
     if (target.platform === 'threads' && options.threads?.topicTag) data.topic_tag = options.threads.topicTag
+    // Zernio posts it right after publishing; platforms without the option never get the field.
+    if (options.firstComment && supportsFirstComment(target.platform)) data.firstComment = options.firstComment
     if (target.platform === 'tiktok' && options.tiktok) {
       // The whole settings object per entry, so each account keeps its own
       // privacy level and toggles whatever Zernio's root/entry merge does.
       data.tiktokSettings = {
         ...tiktokSharedSettings(options.tiktok),
-        ...tiktokAccountSettings(options.tiktok.accounts[target.accountId] ?? EMPTY_TIKTOK_ACCOUNT, context.tiktokInteractions?.[target.accountId] ?? NO_INTERACTIONS)
+        ...tiktokAccountSettings(options.tiktok.accounts[target.accountId] ?? EMPTY_TIKTOK_ACCOUNT, context.tiktokInteractions?.[target.accountId] ?? NO_INTERACTIONS),
+        ...coverSettings('tiktok')
       }
     }
-    return { platform: target.platform, accountId: target.accountId, ...(target.customContent ? { customContent: target.customContent } : {}), ...(Object.keys(data).length > 0 ? { platformSpecificData: data } : {}) }
+    return { platform: target.platform, accountId: target.accountId, ...(target.customContent ? { customContent: target.customContent } : {}),
+      ...(customMedia ? { customMedia } : {}), ...(Object.keys(data).length > 0 ? { platformSpecificData: data } : {}) }
   })
 
   const body: JsonRecord = {
     content: request.caption,
-    mediaItems: [{ type: 'video', url: context.publicUrl }],
+    mediaItems: [{ type: 'video', url: context.publicUrl, ...(sharedThumbnail ? { thumbnail: sharedThumbnail } : {}) }],
     platforms,
     metadata: { source: 'bridgeclip' }
   }
@@ -302,7 +377,7 @@ const POST_URL_HOSTS: Record<ZernioPlatform, readonly string[]> = {
   threads: ['threads.net', 'threads.com']
 }
 
-/** True for an https link on the platform's own site; the only links BridgeClip opens. */
+/** True for an https link on the platform's own site; the only links CreatorClips opens. */
 export function isPostUrl(value: unknown, platform: string): value is string {
   if (typeof value !== 'string' || value.length > 2048 || !isZernioPlatform(platform)) return false
   try {

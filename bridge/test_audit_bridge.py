@@ -14,6 +14,18 @@ import bridge_runner as bridge
 from network_guard import _public_address
 
 
+def _has_ipv6() -> bool:
+    """Whether this machine can make an IPv6 socket at all (some containers can't: nothing to guard there)."""
+    try:
+        socket.socket(socket.AF_INET6).close()
+        return True
+    except OSError:
+        return False
+
+
+HAS_IPV6 = _has_ipv6()
+
+
 class SocketGuardAuditTests(unittest.TestCase):
     def test_alternate_address_forms_cannot_reach_local_networks(self):
         """Literal, mapped, shorthand, decimal and hex forms all resolve to non-global addresses."""
@@ -24,6 +36,8 @@ class SocketGuardAuditTests(unittest.TestCase):
                               "fe80::1", "fc00::1", "fd12::1", "2002:7f00:1::"),
         }
         for family, hosts in cases.items():
+            if family == socket.AF_INET6 and not HAS_IPV6:
+                continue
             sock = socket.socket(family, socket.SOCK_STREAM)
             try:
                 for host in hosts:
@@ -63,11 +77,11 @@ class SocketGuardAuditTests(unittest.TestCase):
             "    await asyncio.open_connection('localhost', port)\n"
             "def mapped():\n"
             "    s = socket.socket(socket.AF_INET6); s.connect(('::ffff:127.0.0.1', port))\n"
-            "print(' '.join(blocked(fn) for fn in (cex, dgram, lambda: asyncio.run(aio()), mapped)))\n"
+            f"print(' '.join(blocked(fn) for fn in (cex, dgram, lambda: asyncio.run(aio()){', mapped' if HAS_IPV6 else ''})))\n"
         )
         done = subprocess.run([sys.executable, "-c", script], cwd=os.path.dirname(os.path.abspath(bridge.__file__)),
                               capture_output=True, text=True, timeout=30)
-        self.assertEqual(done.stdout.split(), ["blocked"] * 4, done.stderr)
+        self.assertEqual(done.stdout.split(), ["blocked"] * (4 if HAS_IPV6 else 3), done.stderr)
 
 
 class ProtocolAuditTests(unittest.TestCase):

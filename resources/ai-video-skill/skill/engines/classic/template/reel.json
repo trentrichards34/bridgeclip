@@ -1,0 +1,21 @@
+{
+  "style": "classic",
+  "name": "",
+  "cta": { "keyword": "REEL" },
+  "presenter": {
+    "skin": "medium",
+    "hair": "swept",
+    "hairColor": "darkbrown",
+    "beard": "none",
+    "beanie": false,
+    "glasses": false,
+    "glassesStyle": "round",
+    "top": "tee",
+    "topColor": "#4A5260",
+    "innerColor": "#F6F5F1",
+    "accessories": [],
+    "face": "adult"
+  },
+  "captions": { "emphasize": [] },
+  "theme": { "accent": "#FF3B1F" }
+}

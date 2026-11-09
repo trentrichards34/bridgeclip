@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, ArrowUpRight, CalendarClock, Check, Inbox, Loader2, Play, Search, Send, Share2, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, CalendarClock, Check, ImagePlus, Inbox, Loader2, Play, Search, Send, Share2, Sparkles, X } from 'lucide-react'
 import type { MetadataEnhancement } from '../../shared/automations'
 import { LibraryMetadataEditor } from './LibraryMetadataEditor'
 import { getApi } from '../lib/ipc'
@@ -19,7 +19,11 @@ import {
   checkClip,
   defaultCaption,
   defaultFacebookFormat,
+  firstCommentError,
   formatClipDuration,
+  keywordCtaLine,
+  supportsFirstComment,
+  FIRST_COMMENT_MAX,
   scheduleError,
   scheduleWindow,
   sharedCommercialTypes,
@@ -37,6 +41,8 @@ import {
   type YouTubePostOptions,
   type YouTubeVisibility
 } from '../../shared/zernio-posts'
+import { SPREAD_INTERVALS, spreadSchedule, type SpreadInterval } from '../../shared/schedule-math'
+import { COVER_IMAGE_MAX_BYTES, SUBTITLE_LANGUAGES, coverPlatforms, postsAsYouTubeShort, suggestedCoverFrames, type ClipSubtitles, type PostCover } from '../../shared/zernio-extras'
 import { PlatformIcon, platformName } from './PlatformIcon'
 import { Button } from './ui/Button'
 import { Checkbox } from './ui/Checkbox'
@@ -57,6 +63,19 @@ export interface PostableClip {
   title: string
   tags: string[]
   durationMs: number
+  /** Remixes (AI presenter or voice): TikTok's "made with AI" starts on. */
+  aiGenerated?: boolean
+  /** A caption written with the video (Remix); used instead of the title and tags. */
+  postCaption?: string
+}
+
+function startingCaption(clip: PostableClip): string {
+  return clip.postCaption?.trim() ? clip.postCaption.trim() : defaultCaption(clip.title, clip.tags)
+}
+
+/** The caption's "Comment KEYWORD and I'll send you…" line, so the keyword also sits in the comments. */
+function startingFirstComment(clip: PostableClip): string {
+  return keywordCtaLine(startingCaption(clip)) ?? ''
 }
 
 interface PostDialogProps {
@@ -154,22 +173,43 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
   // Per clip.
   const [media, setMedia] = useState<ClipMediaInfo | null>(null)
   const [thumb, setThumb] = useState<string | null>(null)
-  const [caption, setCaption] = useState(() => defaultCaption(clip.title, clip.tags))
+  const [caption, setCaption] = useState(() => startingCaption(clip))
+  const [firstComment, setFirstComment] = useState(() => startingFirstComment(clip))
   const [youtube, setYoutube] = useState<YouTubePostOptions>(() => ({ title: youtubeTitleFor(clip.title) || 'Untitled clip', visibility: 'public', madeForKids: false }))
   const [phase, setPhase] = useState<Phase>('editing')
   const [progress, setProgress] = useState<PostProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<PostClipResult | null>(null)
+  const [coverMode, setCoverMode] = useState<CoverMode>('default')
+  const [coverAtMs, setCoverAtMs] = useState(() => suggestedCoverFrames(clip.durationMs || null)[0].atMs)
+  const [coverImage, setCoverImage] = useState<{ path: string; sizeBytes: number } | null>(null)
+  const [coverError, setCoverError] = useState<string | null>(null)
+  // The cover made with Make my cover (saved next to the video) is the cover, unless the member picks another.
+  useEffect(() => {
+    let live = true
+    getApi().covers.saved(clip.path).then((saved) => {
+      if (!live || !saved) return
+      setCoverImage(saved); setCoverMode('image')
+    }).catch(() => undefined)
+    return () => { live = false }
+  }, [clip.path])
+  const [subtitles, setSubtitles] = useState<ClipSubtitles | null>(null)
+  const [youtubeCaptions, setYoutubeCaptions] = useState(false)
+  /** '' until known: the clip's recorded language, or the member's choice. */
+  const [captionsLanguage, setCaptionsLanguage] = useState('')
 
   // Kept across clips in a batch.
   const [selected, setSelected] = useState<string[]>([])
-  const [tiktok, setTiktok] = useState<TikTokPostOptions>(EMPTY_TIKTOK)
+  const [tiktok, setTiktok] = useState<TikTokPostOptions>(() => clips.some((item) => item.aiGenerated) ? { ...EMPTY_TIKTOK, madeWithAi: true } : EMPTY_TIKTOK)
   const [creatorInfo, setCreatorInfo] = useState<Record<string, CreatorInfoState>>({})
   const [shareToFeed, setShareToFeed] = useState(true)
   const [facebookFormat, setFacebookFormat] = useState<FacebookFormat | null>(null)
   const [mode, setMode] = useState<'now' | 'schedule'>('now')
   const [scheduleValue, setScheduleValue] = useState(defaultScheduleValue)
   const [now, setNow] = useState(() => Date.now())
+  // Several clips: one every interval from the first time, instead of a time each.
+  const [spread, setSpread] = useState(false)
+  const [spreadInterval, setSpreadInterval] = useState<SpreadInterval>('1d')
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const phaseRef = useRef(phase)
@@ -195,6 +235,19 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
       .then((info) => { if (!cancelled) setMedia(info) })
       .catch(() => { if (!cancelled) setMedia({ durationMs: clip.durationMs, width: null, height: null, sizeBytes: 0 }) })
     loadThumbnail(clip.path, clip.durationMs > 0 ? clip.durationMs / 2000 : undefined).then((path) => { if (!cancelled) setThumb(path) })
+    // Captions for YouTube start on when the clip has a subtitle file in a known language;
+    // otherwise the member picks the language before they can be turned on.
+    setSubtitles(null)
+    setYoutubeCaptions(false)
+    setCaptionsLanguage('')
+    getApi().zernio.posts.subtitles(clip.path)
+      .then((info) => {
+        if (cancelled) return
+        setSubtitles(info)
+        setYoutubeCaptions(info.found && Boolean(info.language))
+        setCaptionsLanguage(info.language ?? '')
+      })
+      .catch(() => { if (!cancelled) setSubtitles({ found: false, fileName: null, language: null }) })
     return () => { cancelled = true }
   }, [clip.path, clip.durationMs])
 
@@ -293,7 +346,16 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
     })
   }
 
-  const scheduledAt = mode === 'schedule' ? new Date(scheduleValue).getTime() : NaN
+  const spreadTimes = useMemo(() => spread && clips.length > 1 ? spreadSchedule(scheduleValue, clips.length, spreadInterval, localTimeZone()) : [], [spread, clips.length, scheduleValue, spreadInterval])
+  const spreading = mode === 'schedule' && spreadTimes.length === clips.length && clips.length > 1
+  const scheduledAt = mode === 'schedule' ? (spreading ? spreadTimes[index] : new Date(scheduleValue).getTime()) : NaN
+  const commentPlatforms = platforms.filter(supportsFirstComment)
+  const covers = coverPlatforms(platforms, media ? postsAsYouTubeShort(media) : true)
+  const coverChoice: PostCover | null = covers.supported.length === 0 || coverMode === 'default' ? null
+    : coverMode === 'frame' ? { kind: 'frame', atMs: Math.max(0, Math.round(coverAtMs)) }
+    : coverImage ? { kind: 'image', path: coverImage.path } : null
+  const addCaptions = has('youtube') && Boolean(subtitles?.found) && youtubeCaptions && Boolean(captionsLanguage)
+  const firstCommentProblem = commentPlatforms.length ? firstCommentError(firstComment) : null
   const scheduleProblem = mode === 'schedule' ? scheduleError(scheduledAt, now) : null
   const bounds = scheduleWindow(now)
 
@@ -338,7 +400,9 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
       }
     }
   }
-  if (scheduleProblem) issues.push(scheduleProblem)
+  if (firstCommentProblem) issues.push(firstCommentProblem)
+  if (covers.supported.length > 0 && coverMode === 'image' && !coverImage) issues.push('Choose a cover image, or use the platform default.')
+  if (scheduleProblem) issues.push(spreading ? `Clip ${index + 1}: ${scheduleProblem}` : scheduleProblem)
   const ready = issues.length === 0 && phase === 'editing'
 
   const applyMetadata = (draft: MetadataEnhancement): void => {
@@ -369,10 +433,12 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
         timing: mode === 'now' ? { mode: 'now' } : { mode: 'schedule', scheduledFor: new Date(scheduledAt).toISOString(), timezone: localTimeZone() },
         options: {
           ...(has('tiktok') ? { tiktok } : {}),
-          ...(has('youtube') ? { youtube: { ...youtube, title: youtube.title.trim() } } : {}),
+          ...(has('youtube') ? { youtube: { ...youtube, title: youtube.title.trim(), ...(addCaptions ? { subtitles: { language: captionsLanguage } } : {}) } } : {}),
+          ...(coverChoice ? { cover: coverChoice } : {}),
           ...(has('instagram') ? { instagram: { shareToFeed } } : {}),
           ...(has('facebook') ? { facebook: { format: fbFormat, ...(fbFormat === 'reel' && facebookTitle.trim() ? { title: facebookTitle.trim() } : {}) } } : {}),
-          ...(has('threads') && threadsTopicTag.trim() ? { threads: { topicTag: threadsTopicTag.trim() } } : {})
+          ...(has('threads') && threadsTopicTag.trim() ? { threads: { topicTag: threadsTopicTag.trim() } } : {}),
+          ...(commentPlatforms.length && firstComment.trim() ? { firstComment: firstComment.trim() } : {})
         }
       })
       if (outcome.post) usePostsStore.getState().upsert(outcome.post)
@@ -395,12 +461,15 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
     if (!next) return
     setIndex(index + 1)
     setAttemptId(newAttemptId())
-    setCaption(defaultCaption(next.title, next.tags))
+    setCaption(startingCaption(next))
+    setFirstComment(startingFirstComment(next))
     setYoutube((y) => ({ ...y, title: youtubeTitleFor(next.title) || 'Untitled clip', tags: undefined, categoryId: undefined }))
     setPlatformCaptions({}); setFacebookTitle(''); setThreadsTopicTag(''); setEnhanced(false); setEnhancementOpen(false)
     // TikTok's consent covers one piece of content.
     setTiktok((t) => ({ ...t, consent: false }))
     setFacebookFormat(null)
+    setCoverMode('default'); setCoverImage(null); setCoverError(null)
+    setCoverAtMs(suggestedCoverFrames(next.durationMs || null)[0].atMs)
     setResult(null)
     setError(null)
     setProgress(null)
@@ -529,9 +598,57 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
           <CaptionField caption={platformCaptions[platform]!} onChange={(value) => { setPlatformCaptions((current) => ({ ...current, [platform]: value })); if (platform === 'tiktok') setTiktok((current) => ({ ...current, consent: false })) }} problems={captionProblems.filter((problem) => problem.platform === platform)} />
         </PlatformSection>)}
 
+        {platforms.length > 0 && (
+          <CoverField
+            clipPath={clip.path}
+            durationMs={media?.durationMs ?? (clip.durationMs || null)}
+            vertical={media ? (media.height ?? 0) > (media.width ?? 0) : true}
+            mode={coverMode}
+            onModeChange={(value) => { setCoverMode(value); setCoverError(null) }}
+            atMs={coverAtMs}
+            onAtMsChange={setCoverAtMs}
+            image={coverImage}
+            error={coverError}
+            onPickImage={() => {
+              setCoverError(null)
+              getApi().zernio.posts.pickCoverImage()
+                .then((picked) => { if (picked) setCoverImage(picked) })
+                .catch((err) => setCoverError(errorMessage(err, 'Couldn’t use that image.')))
+            }}
+            supported={covers.supported}
+            unsupported={covers.unsupported}
+          />
+        )}
+
         {has('youtube') && (
           <PlatformSection platform="youtube" notes={clipCheck('youtube')?.notes}>
             <YouTubeFields value={youtube} onChange={setYoutube} problem={youtubeProblem} />
+            {subtitles?.found && (
+              <>
+                <CheckRow
+                  checked={youtubeCaptions && Boolean(captionsLanguage)}
+                  onChange={setYoutubeCaptions}
+                  disabled={!captionsLanguage}
+                  label="Add captions to YouTube (from the clip’s subtitles)"
+                  description={captionsLanguage
+                    ? `Uploads ${subtitles.fileName ?? 'the subtitle file'} as closed captions viewers can turn on.`
+                    : 'The clip’s language isn’t known. Choose the language of its subtitles first.'}
+                />
+                {(youtubeCaptions || !captionsLanguage) && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-ink">Caption language</span>
+                    <Select
+                      aria-label="Caption language"
+                      size="sm"
+                      className="w-40"
+                      value={captionsLanguage}
+                      onChange={setCaptionsLanguage}
+                      options={[...SUBTITLE_LANGUAGES, ...(!captionsLanguage || SUBTITLE_LANGUAGES.some((l) => l.value === captionsLanguage) ? [] : [{ value: captionsLanguage, label: captionsLanguage }])]}
+                    />
+                  </div>
+                )}
+              </>
+            )}
           </PlatformSection>
         )}
 
@@ -579,6 +696,16 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
         )}
 
         {has('threads') && <Field label="Threads topic tag"><TextInput aria-label="Threads topic tag" value={threadsTopicTag} maxLength={50} onChange={(event) => setThreadsTopicTag(event.target.value)} /></Field>}
+        {commentPlatforms.length > 0 && (
+          <FirstCommentField
+            value={firstComment}
+            onChange={setFirstComment}
+            platforms={commentPlatforms}
+            without={platforms.filter((platform) => !supportsFirstComment(platform))}
+            fromCaption={Boolean(keywordCtaLine(caption)) && firstComment === keywordCtaLine(caption)}
+            problem={firstCommentProblem}
+          />
+        )}
         <WhenField
           mode={mode}
           onModeChange={setMode}
@@ -586,7 +713,18 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
           onValueChange={setScheduleValue}
           min={toLocalInput(bounds.min)}
           max={toLocalInput(bounds.max)}
-          problem={scheduleProblem}
+          problem={spreading ? null : scheduleProblem}
+          spread={clips.length > 1 ? {
+            on: spread,
+            onToggle: setSpread,
+            interval: spreadInterval,
+            onIntervalChange: setSpreadInterval,
+            times: spreadTimes,
+            current: index,
+            // The first time is fixed once a clip has gone out with it.
+            locked: index > 0 || phase === 'done',
+            now
+          } : undefined}
         />
         </fieldset>
       </div>
@@ -735,6 +873,136 @@ function ClipPreview({ path, thumb, vertical }: { path: string; thumb: string | 
         </span>
       )}
     </button>
+  )
+}
+
+type CoverMode = 'default' | 'frame' | 'image'
+
+function formatFrameTime(ms: number): string {
+  const tenths = Math.floor(ms / 100)
+  return `${Math.floor(tenths / 600)}:${String(Math.floor(tenths / 10) % 60).padStart(2, '0')}.${tenths % 10}`
+}
+
+function joinNames(names: string[]): string {
+  return names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/**
+ * The cover: the platform's default, a frame of the clip (scrub with a live
+ * preview, or a suggested frame), or an image. Only for platforms Zernio can
+ * set a cover on; the others are named.
+ */
+function CoverField({ clipPath, durationMs, vertical, mode, onModeChange, atMs, onAtMsChange, image, error, onPickImage, supported, unsupported }: {
+  clipPath: string
+  durationMs: number | null
+  vertical: boolean
+  mode: CoverMode
+  onModeChange: (mode: CoverMode) => void
+  atMs: number
+  onAtMsChange: (atMs: number) => void
+  image: { path: string; sizeBytes: number } | null
+  error: string | null
+  onPickImage: () => void
+  supported: ZernioPlatform[]
+  unsupported: { platform: ZernioPlatform; reason: string }[]
+}): React.JSX.Element {
+  const video = useRef<HTMLVideoElement>(null)
+  const suggestions = useMemo(() => suggestedCoverFrames(durationMs), [durationMs])
+  const [thumbs, setThumbs] = useState<Record<number, string | null>>({})
+  useEffect(() => {
+    if (mode !== 'frame') return
+    let cancelled = false
+    for (const frame of suggestions) {
+      loadThumbnail(clipPath, frame.atMs / 1000).then((path) => { if (!cancelled) setThumbs((current) => ({ ...current, [frame.atMs]: path })) })
+    }
+    return () => { cancelled = true }
+  }, [mode, clipPath, suggestions])
+  // The preview follows the scrubber.
+  useEffect(() => {
+    const element = video.current
+    if (element && mode === 'frame' && Math.abs(element.currentTime * 1000 - atMs) > 30) element.currentTime = atMs / 1000
+  }, [atMs, mode])
+  const max = durationMs && durationMs > 0 ? Math.max(0, durationMs - 50) : 0
+  const names = supported.map(platformName)
+
+  return (
+    <Section title="Cover">
+      {supported.length === 0 ? (
+        <p className="text-xs leading-relaxed text-ink-subtle">{unsupported.map((u) => u.reason).join(' ')} The platform picks the cover.</p>
+      ) : (
+        <div className="space-y-3">
+          <Segmented<CoverMode>
+            label="Cover"
+            value={mode}
+            onChange={onModeChange}
+            options={[{ value: 'default', label: 'Platform default' }, { value: 'frame', label: 'Pick a frame' }, { value: 'image', label: 'Upload image' }]}
+          />
+          {mode === 'frame' && (
+            <div className="flex items-start gap-3 animate-fade-in">
+              <video
+                ref={video}
+                src={localFileUrl(clipPath)}
+                muted
+                playsInline
+                preload="auto"
+                aria-label="Cover preview"
+                onLoadedMetadata={(event) => { event.currentTarget.currentTime = atMs / 1000 }}
+                className={cn('shrink-0 rounded-lg bg-black object-cover ring-1 ring-white/[0.12]', vertical ? 'h-[160px] w-[90px]' : 'h-[90px] w-[160px]')}
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0}
+                    max={max}
+                    step={100}
+                    value={Math.min(atMs, max)}
+                    disabled={max === 0}
+                    onChange={(event) => onAtMsChange(Number(event.target.value))}
+                    aria-label="Cover frame time"
+                    aria-valuetext={formatFrameTime(atMs)}
+                    className="min-w-0 flex-1 accent-[rgb(var(--accent))]"
+                  />
+                  <span className="w-12 shrink-0 text-right font-mono text-2xs tabular text-ink-muted">{formatFrameTime(atMs)}</span>
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Suggested frames">
+                  {suggestions.map((frame) => (
+                    <button
+                      key={frame.atMs}
+                      type="button"
+                      onClick={() => onAtMsChange(frame.atMs)}
+                      aria-label={`Use the ${frame.label.toLowerCase()} frame (${formatFrameTime(frame.atMs)})`}
+                      aria-pressed={atMs === frame.atMs}
+                      className={cn('flex items-center gap-2 rounded-xl p-1 pr-2.5 text-left text-xs transition-colors', atMs === frame.atMs ? 'bg-accent/[0.14] text-ink shadow-[inset_0_0_0_1px_rgb(var(--accent)/0.4)]' : 'bg-white/[0.04] text-ink-muted hover:bg-white/[0.08]')}
+                    >
+                      {thumbs[frame.atMs] ? <img src={localFileUrl(thumbs[frame.atMs]!)} alt="" className="h-10 w-10 rounded-lg object-cover" /> : <span aria-hidden className="h-10 w-10 rounded-lg bg-white/[0.06]" />}
+                      <span>{frame.label}<span className="block font-mono text-2xs tabular text-ink-subtle">{formatFrameTime(frame.atMs)}</span></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {mode === 'image' && (
+            <div className="flex items-center gap-3 animate-fade-in">
+              {image && <img src={localFileUrl(image.path)} alt="Cover image" className={cn('shrink-0 rounded-lg object-cover ring-1 ring-white/[0.12]', vertical ? 'h-[107px] w-[60px]' : 'h-[60px] w-[107px]')} />}
+              <div className="min-w-0 flex-1">
+                <Button size="sm" icon={<ImagePlus className="h-3.5 w-3.5" />} onClick={onPickImage}>{image ? 'Choose another image' : 'Choose image'}</Button>
+                <p className="mt-1.5 text-xs text-ink-subtle">
+                  {image ? `${image.path.split(/[\\/]/).pop()} · ${formatBytes(image.sizeBytes)}. ` : ''}JPG or PNG, up to {COVER_IMAGE_MAX_BYTES / (1024 * 1024)} MB. Use the clip’s shape ({vertical ? '9:16' : '16:9'}).
+                </p>
+              </div>
+            </div>
+          )}
+          {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+          <p className="text-xs leading-relaxed text-ink-subtle">
+            {mode === 'default' ? `You can set the cover on ${joinNames(names)}.` : `Used on ${joinNames(names)}.`}
+            {mode === 'image' && supported.includes('tiktok') ? ' TikTok adds the image as the first frame of the video, unless the account is connected through TikTok for Business.' : ''}
+            {unsupported.length > 0 ? ` ${unsupported.map((u) => u.reason).join(' ')}` : ''}
+          </p>
+        </div>
+      )}
+    </Section>
   )
 }
 
@@ -1193,7 +1461,19 @@ function FacebookFields({ media, value, onChange }: { media: ClipMediaInfo; valu
   )
 }
 
-function WhenField({ mode, onModeChange, value, onValueChange, min, max, problem }: {
+interface SpreadControls {
+  on: boolean
+  onToggle: (on: boolean) => void
+  interval: SpreadInterval
+  onIntervalChange: (interval: SpreadInterval) => void
+  /** Each clip's publish time, in order. */
+  times: number[]
+  current: number
+  locked: boolean
+  now: number
+}
+
+function WhenField({ mode, onModeChange, value, onValueChange, min, max, problem, spread }: {
   mode: 'now' | 'schedule'
   onModeChange: (mode: 'now' | 'schedule') => void
   value: string
@@ -1201,9 +1481,11 @@ function WhenField({ mode, onModeChange, value, onValueChange, min, max, problem
   min: string
   max: string
   problem: string | null
+  spread?: SpreadControls
 }): React.JSX.Element {
   const id = useId()
   const at = new Date(value).getTime()
+  const spreading = Boolean(spread?.on && spread.times.length)
   return (
     <Section title="When">
       <Segmented<'now' | 'schedule'> label="When to post" value={mode} onChange={onModeChange} options={[{ value: 'now', label: 'Post now' }, { value: 'schedule', label: 'Schedule' }]} />
@@ -1217,8 +1499,9 @@ function WhenField({ mode, onModeChange, value, onValueChange, min, max, problem
               min={min}
               max={max}
               onChange={(e) => onValueChange(e.target.value)}
-              aria-label="Publish date and time"
+              aria-label={spreading ? 'First clip date and time' : 'Publish date and time'}
               aria-invalid={Boolean(problem)}
+              disabled={spreading && spread?.locked}
               className={cn('h-9 rounded-full px-3 font-mono text-xs tabular text-ink [color-scheme:dark] focus:outline-none', WELL)}
             />
             <span className="text-xs text-ink-muted">
@@ -1226,14 +1509,72 @@ function WhenField({ mode, onModeChange, value, onValueChange, min, max, problem
               {Number.isFinite(at) && zoneName(at) ? ` (${zoneName(at)})` : ''}
             </span>
           </div>
+          {spread && <SpreadFields spread={spread} />}
           {problem ? (
             <p role="alert" className="mt-2 text-xs text-danger">{problem}</p>
           ) : (
-            <p className="mt-2 text-xs leading-relaxed text-ink-subtle">Zernio publishes it at this time, even when BridgeClip is closed. Up to 6½ days ahead, because Zernio keeps uploads for 7 days.</p>
+            <p className="mt-2 text-xs leading-relaxed text-ink-subtle">Zernio publishes {spreading ? 'each clip at its time' : 'it at this time'}, even when CreatorClips is closed. Up to 6½ days ahead, because Zernio keeps uploads for 7 days.</p>
           )}
         </div>
       )}
     </Section>
+  )
+}
+
+/** "Spread out: one every [day], starting at the time above", with each clip's time listed. */
+function SpreadFields({ spread }: { spread: SpreadControls }): React.JSX.Element {
+  const zone = localTimeZone()
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+        <Switch checked={spread.on} onChange={spread.onToggle} label="Spread out" disabled={spread.locked} />
+        <span>Spread out: one every</span>
+        <Select
+          aria-label="Time between clips"
+          size="sm"
+          className="w-32"
+          value={spread.interval}
+          onChange={(value) => spread.onIntervalChange(value as SpreadInterval)}
+          disabled={!spread.on || spread.locked}
+          options={SPREAD_INTERVALS.map((item) => ({ value: item.id, label: item.label }))}
+        />
+        <span>starting at the time above</span>
+      </div>
+      {spread.on && spread.times.length > 0 && (
+        <ol className="glass-well mt-2 space-y-0.5 rounded-2xl px-3 py-2 text-xs" aria-label="Clip publish times">
+          {spread.times.map((time, i) => {
+            const problem = i >= spread.current ? scheduleError(time, spread.now) : null
+            return (
+              <li key={time} className={cn('flex flex-wrap justify-between gap-2', i === spread.current ? 'text-ink' : 'text-ink-muted', i < spread.current && 'line-through opacity-60')}>
+                <span>Clip {i + 1}{i === spread.current ? ' (this one)' : ''}</span>
+                <span className="font-mono tabular">{formatScheduled(new Date(time).toISOString(), zone)}</span>
+                {problem && <span className="w-full text-danger">{problem}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function FirstCommentField({ value, onChange, platforms, without, fromCaption, problem }: {
+  value: string
+  onChange: (value: string) => void
+  platforms: ZernioPlatform[]
+  without: ZernioPlatform[]
+  fromCaption: boolean
+  problem: string | null
+}): React.JSX.Element {
+  const names = platforms.map(platformName).join(', ')
+  const missing = without.map(platformName).join(' and ')
+  return (
+    <Field
+      label="First comment (optional)"
+      hint={`${captionLength(value).toLocaleString('en-US')} / ${FIRST_COMMENT_MAX} · Zernio adds it as the first comment on ${names} right after the post goes up.${without.length ? ` ${missing} ${without.length === 1 ? 'doesn’t' : 'don’t'} support it.` : ''}${fromCaption ? ' Filled in from your caption’s comment keyword.' : ''}`}
+    >
+      <TextArea aria-label="First comment" rows={2} value={value} maxLength={FIRST_COMMENT_MAX} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(problem)} />
+    </Field>
   )
 }
 
@@ -1243,7 +1584,7 @@ const TARGET_BADGE: Record<PostRecordTarget['status'], { label: string; tone: 'n
   uploading: { label: 'Uploading', tone: 'accent' },
   published: { label: 'Published', tone: 'neutral' },
   failed: { label: 'Failed', tone: 'danger' },
-  cancelled: { label: 'Cancelled', tone: 'neutral' }
+  cancelled: { label: 'Canceled', tone: 'neutral' }
 }
 
 export function targetBadge(target: PostRecordTarget, postStatus: string): { label: string; tone: 'neutral' | 'accent' | 'danger' } {

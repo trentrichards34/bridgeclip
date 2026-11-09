@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "tracks": [
+    {
+      "id": "calm-pad",
+      "name": "Calm pad",
+      "mood": "Warm, slow chords. No beat.",
+      "file": "calm-pad.ogg",
+      "offset": 4800,
+      "samples": 1536000,
+      "rate": 48000,
+      "seconds": 32.0,
+      "lufs": -18.0
+    },
+    {
+      "id": "upbeat-pulse",
+      "name": "Upbeat pulse",
+      "mood": "Bright and energetic, 120 BPM.",
+      "file": "upbeat-pulse.ogg",
+      "offset": 4800,
+      "samples": 1536000,
+      "rate": 48000,
+      "seconds": 32.0,
+      "lufs": -18.0
+    },
+    {
+      "id": "lofi-beat",
+      "name": "Lo-fi beat",
+      "mood": "Mellow, laid-back groove.",
+      "file": "lofi-beat.ogg",
+      "offset": 4800,
+      "samples": 1645714,
+      "rate": 48000,
+      "seconds": 34.286,
+      "lufs": -18.0
+    },
+    {
+      "id": "cinematic-swell",
+      "name": "Cinematic swell",
+      "mood": "Big, slow build. Dramatic.",
+      "file": "cinematic-swell.ogg",
+      "offset": 4800,
+      "samples": 1920000,
+      "rate": 48000,
+      "seconds": 40.0,
+      "lufs": -18.0
+    }
+  ]
+}

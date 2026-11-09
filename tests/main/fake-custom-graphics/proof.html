@@ -1,0 +1,57 @@
+<div id="cg-root" data-duration="4.50">
+  <svg class="art" viewBox="0 0 1080 806">
+    <defs><symbol id="p" viewBox="0 0 60 80"><circle cx="30" cy="18" r="15"/><path d="M30 38 C12 38 6 52 6 70 V80 H54 V70 C54 52 48 38 30 38 Z"/></symbol></defs>
+    <path class="base" d="M120 636 H960"/>
+    <rect class="bar spent" x="214" y="402" width="196" height="234" rx="18"/>
+    <rect class="bar made" x="604" y="196" width="260" height="440" rx="18"/>
+    <g class="buyers"><use href="#p" x="624" y="540" width="48" height="64"/><use href="#p" x="680" y="540" width="48" height="64"/><use href="#p" x="736" y="540" width="48" height="64"/><use href="#p" x="792" y="540" width="48" height="64"/>
+      <use href="#p" x="652" y="460" width="48" height="64"/><use href="#p" x="708" y="460" width="48" height="64"/><use href="#p" x="764" y="460" width="48" height="64"/></g>
+    <path class="tick" d="M410 402 H604" />
+    <path class="ring" d="M500 182 C560 160 960 150 1010 176"/>
+  </svg>
+  <div class="val v-spent">$4,365</div>
+  <div class="val v-made"><span class="count" style="display:inline-block">$8,188</span></div>
+  <div class="cap c-spent">on ads</div>
+  <div class="cap c-made">generating</div>
+  <div class="date">October 20th</div>
+</div>
+<style>
+#cg-root .art{position:absolute;left:0;top:0;width:1080px;height:806px}
+#cg-root .base{stroke:rgba(14,21,37,.35);stroke-width:6;stroke-linecap:round}
+#cg-root .spent{fill:rgba(14,21,37,.18)}
+#cg-root .made{fill:var(--cg-accent)}
+#cg-root .buyers{fill:rgba(255,255,255,.9)}
+#cg-root .tick{stroke:rgba(14,21,37,.3);stroke-width:4;stroke-dasharray:4 14;stroke-linecap:round}
+#cg-root .ring{fill:none;stroke:var(--cg-accent);stroke-width:9;stroke-linecap:round;stroke-dasharray:560;stroke-dashoffset:560}
+#cg-root .val{position:absolute;font-family:var(--cg-font-display);line-height:1;white-space:nowrap;text-align:center}
+#cg-root .v-spent{left:152px;width:320px;top:306px;font-size:74px;color:rgba(14,21,37,.62)}
+#cg-root .v-made{left:414px;width:640px;top:44px;font-size:132px;color:var(--cg-accent-ink)}
+#cg-root .cap{position:absolute;top:660px;font-family:var(--cg-font-body);font-weight:800;font-size:48px;line-height:1;text-align:center;color:var(--cg-ink)}
+#cg-root .c-spent{left:152px;width:320px} #cg-root .c-made{left:574px;width:320px}
+#cg-root .date{position:absolute;left:0;right:0;top:738px;text-align:center;font-family:var(--cg-font-body);font-weight:700;font-size:40px;line-height:1;color:var(--cg-muted)}
+</style>
+<script>
+const D = parseFloat(document.getElementById('cg-root').dataset.duration);
+const tl = gsap.timeline({ paused: true });
+const idle = (sel, vars, at, beat) => { const b = beat || 0.8; let n = Math.max(1, Math.floor((D - 0.5 - at) / b) - 1); if (n % 2 === 0) n -= 1; tl.to(sel, Object.assign({ duration: b, ease: 'sine.inOut', yoyo: true, repeat: Math.max(1, n) }, vars), at); };
+// "generating eight thousand…": the spend, then the result revealed as it is said.
+tl.from('#cg-root .base', { scaleX: 0, transformOrigin: '50% 50%', duration: 0.45, ease: 'power4.out' }, 0)
+  .from('#cg-root .spent', { scaleY: 0, transformOrigin: '50% 100%', duration: 0.5, ease: 'expo.out' }, 0.05)
+  .from('#cg-root .v-spent, #cg-root .c-spent', { y: 20, autoAlpha: 0, duration: 0.45, ease: 'expo.out', stagger: 0.06 }, 0.12)
+  .from('#cg-root .made', { scaleY: 0, transformOrigin: '50% 100%', duration: 1.25, ease: 'expo.out' }, 0.05)
+  // The result lands as said (no counting through numbers that were never said).
+  .from('#cg-root .v-made', { y: 30, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 0.1)
+  .from('#cg-root .count', { clipPath: 'inset(0 100% 0 0)', duration: 0.9, ease: 'power3.out' }, 0.1)
+  .from('#cg-root .c-made', { y: 20, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 0.2)
+  // "eighty-eight dollars": the buyers behind it stack into the bar.
+  .from('#cg-root .buyers use', { y: 30, autoAlpha: 0, duration: 0.35, ease: 'expo.out', stagger: 0.06 }, 0.86)
+  .from('#cg-root .tick', { autoAlpha: 0, duration: 0.3 }, 1.25)
+  .from('#cg-root .date', { y: 14, autoAlpha: 0, duration: 0.4, ease: 'expo.out' }, 1.4)
+  // "stress… enough": the result gets its ring, then the spend steps back.
+  .to('#cg-root .ring', { strokeDashoffset: 0, duration: 0.45, ease: 'power3.out' }, 2.47)
+  .to('#cg-root .v-spent, #cg-root .spent, #cg-root .c-spent', { opacity: 0.45, duration: 0.4, ease: 'power2.out' }, 2.9);
+idle('#cg-root .buyers use', { y: -6, stagger: 0.07 }, 1.5, 0.45);
+idle('#cg-root .v-made', { scale: 1.03, transformOrigin: '50% 60%' }, 1.9, 0.5);
+tl.to('#cg-root .art, #cg-root .val, #cg-root .cap, #cg-root .date', { autoAlpha: 0, y: -18, duration: 0.3, ease: 'power2.in', stagger: 0.02 }, D - 0.36);
+window.__timelines = [tl];
+</script>

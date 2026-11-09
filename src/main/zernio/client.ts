@@ -7,7 +7,7 @@ import { logger } from '../logger'
 
 const BASE_URL = 'https://zernio.com/api/v1'
 const REQUEST_TIMEOUT_MS = 30_000
-/** Longest wait BridgeClip honours from Retry-After or X-RateLimit-Reset. */
+/** Longest wait CreatorClips honours from Retry-After or X-RateLimit-Reset. */
 const MAX_RATE_LIMIT_WAIT_S = 3600
 
 type JsonRecord = Record<string, unknown>
@@ -198,16 +198,16 @@ function errorFor(status: number, body: JsonRecord, headers: Headers | string | 
   if (status === 402) return new ZernioApiError(paymentMessage(str(body.reason)), status, code ?? 'PAYMENT_REQUIRED')
   if (status === 403) {
     if (/this api key does not have access to this profile/i.test(String(body.error ?? body.message ?? '')) || code === 'profile_access_denied') {
-      return new ZernioApiError("This Zernio API key cannot access this profile. In Zernio's API keys, use a key with access to this profile, or Full access for new profiles, and Read & Write permission. Update the key in BridgeClip Settings.", status, 'profile_access_denied')
+      return new ZernioApiError("This Zernio API key cannot access this profile. In Zernio's API keys, use a key with access to this profile, or Full access for new profiles, and Read & Write permission. Update the key in CreatorClips Settings.", status, 'profile_access_denied')
     }
     if (code === 'PLATFORM_BETA_RESTRICTED') return new ZernioApiError("This platform is in a closed beta on Zernio and isn't enabled for your workspace yet.", status, code)
     if (code === 'PLATFORM_DISABLED') return new ZernioApiError('Zernio has temporarily disabled this platform. Try again later.', status, code)
     if (code === 'PROFILE_OVER_LIMIT') return new ZernioApiError("This Zernio profile is over your plan's limit. Pick another profile or upgrade in Zernio.", status, code)
     if (code === 'ACCOUNT_DISCONNECTED') return new ZernioApiError('That account needs to sign in again. Reconnect it on the Accounts page.', status, code)
-    if (code === 'insufficient_permissions') return new ZernioApiError("This Zernio API key isn't allowed to do that. Check its profile access, Read & Write permission, and enabled resources in Zernio, then update the key in BridgeClip Settings.", status, code)
+    if (code === 'insufficient_permissions') return new ZernioApiError("This Zernio API key isn't allowed to do that. Check its profile access, Read & Write permission, and enabled resources in Zernio, then update the key in CreatorClips Settings.", status, code)
   }
   if (status === 400 && code === 'INVALID_REDIRECT_URL') {
-    return new ZernioApiError("Zernio didn't accept BridgeClip's local sign-in return address. Please report this issue.", status, code)
+    return new ZernioApiError("Zernio didn't accept CreatorClips's local sign-in return address. Please report this issue.", status, code)
   }
   if (status === 409 && code === 'ads_connection_required') {
     return new ZernioApiError('That account needs to sign in again. Reconnect it on the Accounts page.', status, code)
@@ -511,10 +511,10 @@ export class ZernioClient {
   private async postingRequest(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
-    options: { body?: unknown; requestId?: string; timeoutMs?: number } = {}
+    options: { body?: unknown; requestId?: string; timeoutMs?: number; acceptStatuses?: readonly number[] } = {}
   ): Promise<{ status: number; body: JsonRecord }> {
     const startedAt = Date.now()
-    const labels = new Set(['posts', 'retry', 'media', 'presign', 'accounts', 'tiktok', 'creator-info'])
+    const labels = new Set(['posts', 'retry', 'media', 'presign', 'accounts', 'tiktok', 'creator-info', 'analytics'])
     const operation = path.split('?')[0].split('/').filter(Boolean).map((part) => labels.has(part) ? part : 'item').join('.')
     const context = { traceId: this.traceId, requestId: randomUUID(), method, operation }
     logger.info('zernio.post.request.start', context)
@@ -547,7 +547,7 @@ export class ZernioClient {
     }
     if (response.status !== 429) noteRateLimit(response.headers)
     const body = asRecord(raw ? safeJson(raw) : {})
-    if (response.ok) {
+    if (response.ok || options.acceptStatuses?.includes(response.status)) {
       logger.info('zernio.post.request.completed', { ...context, status: response.status, durationMs: Date.now() - startedAt })
       return { status: response.status, body }
     }
@@ -627,6 +627,18 @@ export class ZernioClient {
   async retryPost(postId: string, timeoutMs: number): Promise<{ post: JsonRecord; error: string | null }> {
     const { body } = await this.postingRequest('POST', `/posts/${encodeURIComponent(postId)}/retry`, { timeoutMs })
     return { post: asRecord(body.post), error: sanitizeProviderText(body.error, 300) ?? null }
+  }
+
+  /**
+   * GET /v1/analytics?postId=: one post's views, likes and more, per platform.
+   * Zernio answers 202 while it is still syncing the numbers and 424 when every
+   * platform failed; both carry the usual body, so they are returned, not thrown.
+   * `fromDate` (YYYY-MM-DD) must cover the post's publish date.
+   */
+  async getPostAnalytics(postId: string, fromDate: string): Promise<{ status: number; body: JsonRecord }> {
+    if (!isZernioId(postId) || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) throw new Error('Invalid analytics request')
+    const params = new URLSearchParams({ postId, fromDate })
+    return this.postingRequest('GET', `/analytics?${params}`, { acceptStatuses: [424] })
   }
 
   /** Allowed privacy levels, interaction toggles and limits for a TikTok account. */

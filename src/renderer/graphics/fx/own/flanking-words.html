@@ -1,0 +1,77 @@
+<!--
+  CreatorClips unit "flanking-words": two huge condensed words around the speaker ("STEP [speaker] ONE"),
+  remade from HyperFrames' headline-slam component in its style and motion (https://github.com/heygen-com/hyperframes,
+  registry/components/headline-slam, Copyright 2026 HeyGen, Inc., Apache License 2.0; see ../vendor/LICENSE and
+  ../vendor/NOTICE). In a wide box (over the speaker) the words sit left and right with the speaker between them; in a
+  tall box (a stage above the speaker's card) they stack, the second one in the brand color, right over the card.
+  Each word fills its space and slams in from slight oversize as it is said. Sized to its box (cq units), themed by
+  the brand tokens, timed by CreatorClips' shared motion (window.__ccMotion); seek-driven.
+
+  Variables: words (the two words or short pairs as said, "|"-separated), layout (auto | sides | stack),
+  cues (comma seconds: when each one is said).
+-->
+<template>
+  <div id="root" data-composition-id="flanking-words" data-duration="3">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; overflow: visible; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .fw-word { position: absolute; box-sizing: border-box; display: flex; align-items: center; white-space: nowrap; }
+      .fw-word span { display: block; font-family: "Anton", "Impact", sans-serif; font-weight: 400; line-height: 0.86; letter-spacing: 0.005em; text-transform: uppercase;
+        color: var(--fw-ink); text-shadow: 0 0.5cqmin 2.2cqmin rgba(0, 0, 0, 0.32); padding-top: 0.04em; }
+      .fw-word.fw-second span { color: var(--brand, #22c55e); }
+      .fw-left { justify-content: flex-end; }
+      .fw-right { justify-content: flex-start; }
+      .fw-stack { justify-content: center; }
+    </style>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var pair = String(vars.words == null ? '' : vars.words).split('|').map(words).filter(Boolean).slice(0, 2);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        var W = root.clientWidth, H = root.clientHeight;
+        var fg = getComputedStyle(root).getPropertyValue('--fg').trim();
+        var layout = vars.layout === 'sides' || vars.layout === 'stack' ? vars.layout : (W / Math.max(1, H) >= 1.3 ? 'sides' : 'stack');
+        // Beside the speaker (over the video) the words are always white; stacked on the stage they take the look's ink.
+        root.style.setProperty('--fw-ink', layout === 'stack' && /^#0/.test(fg) ? '#0f172a' : '#ffffff');
+        // Each word's slot (box pixels): left and right thirds with the speaker's gap between, or two stacked rows.
+        var gap = W * 0.26;
+        var slots = layout === 'sides'
+          ? [{ x: 0, y: 0, w: (W - gap) / 2, h: H, cls: 'fw-left' }, { x: (W + gap) / 2, y: 0, w: (W - gap) / 2, h: H, cls: 'fw-right' }]
+          : [{ x: 0, y: 0, w: W, h: H * 0.5, cls: 'fw-stack' }, { x: 0, y: H * 0.5, w: W, h: H * 0.5, cls: 'fw-stack' }];
+        var els = pair.map(function (text, i) {
+          var s = slots[i];
+          var el = document.createElement('div'); el.className = 'fw-word ' + s.cls + (i ? ' fw-second' : '');
+          Object.assign(el.style, { left: s.x.toFixed(1) + 'px', top: s.y.toFixed(1) + 'px', width: s.w.toFixed(1) + 'px', height: s.h.toFixed(1) + 'px' });
+          var span = document.createElement('span'); span.textContent = text; el.appendChild(span); root.appendChild(el);
+          // The word fills its slot: as wide as it allows (96%), no taller than the slot.
+          span.style.fontSize = '100px';
+          var nw = span.scrollWidth || 1;
+          span.style.fontSize = Math.max(20, Math.min(100 * s.w * 0.96 / nw, s.h * 0.98 / 0.9)).toFixed(1) + 'px';
+          return el;
+        });
+        // Both words the same size in a stack (the larger one shrinks to match), so they read as one line pair.
+        if (layout === 'stack' && els.length === 2) {
+          var a = els[0].firstChild, b = els[1].firstChild;
+          var size = Math.min(parseFloat(a.style.fontSize), parseFloat(b.style.fontSize));
+          a.style.fontSize = b.style.fontSize = size.toFixed(1) + 'px';
+          // The rows hug each other around the middle.
+          els[0].style.alignItems = 'flex-end'; els[1].style.alignItems = 'flex-start';
+        }
+        var tl = gsap.timeline({ paused: true });
+        var last = 0;
+        els.forEach(function (el, k) {
+          // Each word slams in as it is said (else the second right after the first).
+          var at = isFinite(cues[k]) ? Math.max(0.05, cues[k] - 0.08) : (k ? last + 0.45 : 0.1);
+          at = Math.max(at, last + (k ? 0.18 : 0)); last = at;
+          var span = el.firstChild;
+          var dx = layout === 'sides' ? (k ? 1 : -1) * W * 0.05 : 0, dy = layout === 'stack' ? (k ? 1 : -1) * H * 0.05 : 0;
+          tl.fromTo(span, { opacity: 0, scale: 1.18, x: dx, y: dy }, { opacity: 1, scale: 1, x: 0, y: 0, duration: M.move_s * 1.2, ease: M.enter }, at);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['flanking-words'] = tl;
+      })();
+    </script>
+  </div>
+</template>

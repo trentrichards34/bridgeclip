@@ -1,14 +1,16 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Images, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, AudioLines, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
-import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, ISSUES_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { SupportSettings } from '../components/SupportReport'
 import type { ClipSettings, ToolStatus } from '../../preload/index'
 import { ApiKeyInput } from '../components/ApiKeyInput'
+import { HeygenKeyCheck } from '../components/HeygenKeyCheck'
 import { BridgeClipLogo } from '../components/brand/BridgeClipLogo'
 import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
@@ -16,20 +18,36 @@ import { Panel, PanelHeader } from '../components/ui/Panel'
 import { Button } from '../components/ui/Button'
 import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Badge, StatusDot } from '../components/ui/Badge'
+import { Select } from '../components/ui/Select'
 import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
+import { SettingRow } from '../components/ui/SettingRow'
+import { Switch } from '../components/ui/Switch'
 import { UpdatesRow } from '../components/Updates'
 import { OutputStorage } from '../components/OutputStorage'
+import { YourData } from '../components/YourData'
+import { useOutputFolderChange } from '../components/OutputFolderChange'
 import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
+import { SpendingSettings } from '../components/spending/SpendingSettings'
+import { SetupChecklist } from '../components/SetupChecklist'
+import { MusicSettingsPanel } from '../components/MusicPicker'
+import { SoundPaletteSettings } from '../components/SoundPalette'
+import { BrollAiSettingsPanel } from '../components/BrollSourcePicker'
+import type { Page as AppPage } from '../components/Sidebar'
+import { isAvatarStudioEnabled } from '../../shared/features'
 
-type SectionId = 'keys' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'sounds' | 'broll' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
+type SectionGroup = 'Set up' | 'Your clips' | 'This computer'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
-export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+/** Safari and the macOS prompts only exist on a Mac. */
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent)
+
+export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: number; onNavigate?: (page: AppPage) => void }): React.JSX.Element {
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, heygenConfigured, sourceContextWebResearch, downloadLoginBrowser, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -51,6 +69,8 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
     }
   }
 
+  // A new output folder asks what to do with the Library runs in the current one.
+  const folderChange = useOutputFolderChange((dir) => commit({ outputDirectory: dir }))
   const lastSaved = Math.max(savedAt ?? 0, keys.savedAt ?? 0)
   const error = saveError ?? keys.error
   const tools = toolRows(toolStatus)
@@ -60,15 +80,26 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   const vocabularyTerms = customVocabulary.split('\n').filter((line) => line.trim()).length
   const assistantConnected = useAssistantStore((state) => Object.values(state.statuses).some((status) => status?.state === 'connected'))
 
-  const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
-    { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
-    { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
-    { id: 'jev', label: 'TypeSafe Jev', icon: <SlidersHorizontal />, tone: 'idle' },
-    { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
-    { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
-    { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
-    { id: 'about', label: 'About', icon: <Info />, tone: 'idle' }
+  const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone; group: SectionGroup }[] = [
+    ...(onNavigate ? [{ id: 'setup' as const, label: 'Get set up', icon: <ListChecks />, tone: 'idle' as const, group: 'Set up' as const }] : []),
+    { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success', group: 'Set up' },
+    { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle', group: 'Set up' },
+    { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle', group: 'Set up' },
+    { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle', group: 'Your clips' },
+    { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle', group: 'Your clips' },
+    { id: 'music', label: 'My music', icon: <Music />, tone: 'idle', group: 'Your clips' },
+    { id: 'sounds', label: 'My sounds', icon: <AudioLines />, tone: 'idle', group: 'Your clips' },
+    { id: 'broll', label: 'AI b-roll', icon: <Images />, tone: 'idle', group: 'Your clips' },
+    { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle', group: 'Your clips' },
+    { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success', group: 'This computer' },
+    { id: 'about', label: 'About', icon: <Info />, tone: 'idle', group: 'This computer' }
   ]
+  const groups = sections.reduce<{ group: SectionGroup; items: typeof sections }[]>((acc, section) => {
+    const last = acc[acc.length - 1]
+    if (last?.group === section.group) last.items.push(section)
+    else acc.push({ group: section.group, items: [section] })
+    return acc
+  }, [])
   const [active, jump] = useActiveSection(sections.map((section) => section.id))
   useEffect(() => {
     if (!showUpdates) return
@@ -94,29 +125,45 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   return (
     <Page width="default" className="max-w-[1080px]">
       <PageHeader
-        eyebrow="Preferences"
+        eyebrow="Workspace"
         title="Settings"
-        description="Changes save automatically. Jev thresholds use Apply."
+        description="Changes save as you make them."
         actions={<SaveIndicator saving={saving} savedAt={lastSaved || null} error={error} />}
       />
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[184px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="hidden space-y-0.5 lg:sticky lg:top-12 lg:block">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              onClick={() => jump(section.id)}
-              aria-current={active === section.id ? 'true' : undefined}
-              className={cn(
-                'flex h-8 w-full items-center gap-2.5 rounded-full px-3 text-left text-sm transition-colors duration-150 [&_svg]:h-3.5 [&_svg]:w-3.5',
-                active === section.id ? 'bg-white/[0.09] text-ink' : 'text-ink-muted hover:bg-white/[0.05] hover:text-ink'
-              )}
-            >
-              {section.icon}
-              <span className="flex-1">{section.label}</span>
-              {section.tone !== 'idle' && <StatusDot tone={section.tone} />}
-            </button>
+      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] xl:gap-5">
+        <nav aria-label="Settings sections" className="glass hidden rounded-2xl p-2 lg:sticky lg:top-3 lg:block">
+          {groups.map(({ group, items }, index) => (
+            <div key={group} className={cn(index > 0 && 'mt-2 border-t border-line pt-2')}>
+              <p className="eyebrow px-2.5 pb-1 pt-1">{group}</p>
+              {items.map((section) => {
+                const current = active === section.id
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => jump(section.id)}
+                    aria-current={current ? 'true' : undefined}
+                    className={cn(
+                      'relative flex h-9 w-full items-center gap-2.5 rounded-[10px] pl-1.5 pr-2.5 text-left text-sm transition-colors duration-150',
+                      current ? 'bg-white/[0.07] text-ink' : 'text-ink-muted hover:bg-white/[0.04] hover:text-ink'
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors duration-150 [&_svg]:h-3.5 [&_svg]:w-3.5',
+                        current ? 'bg-tool text-canvas' : 'bg-white/[0.05] text-ink-subtle'
+                      )}
+                    >
+                      {section.icon}
+                    </span>
+                    <span className="flex-1 truncate">{section.label}</span>
+                    {section.tone !== 'idle' && <StatusDot tone={section.tone} />}
+                  </button>
+                )
+              })}
+            </div>
           ))}
         </nav>
 
@@ -149,11 +196,17 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
             </div>
           </Panel>
 
+          <GroupLabel>Set up</GroupLabel>
+          {onNavigate && <Section id="setup">
+            <PanelHeader icon={<IconTile><ListChecks /></IconTile>} title="Get set up" description="The steps to go from a fresh install to your first posted clip." />
+            <SetupChecklist inSettings onNavigate={onNavigate} className="mt-1" />
+          </Section>}
+
           <Section id="keys">
             <PanelHeader
               icon={<IconTile tone="accent"><KeyRound /></IconTile>}
               title="API keys"
-              description="Encrypted with your system keychain. BridgeClip has no account and no server of its own."
+              description="Encrypted with your system keychain. CreatorClips has no account and no server of its own."
             />
             <div className="mt-4 space-y-2">
               <KeyRow>
@@ -169,14 +222,29 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   getKeyUrl={PROVIDER_LINKS.openrouter}
                 />
               </KeyRow>
-              <label className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
-                <input type="checkbox" className="mt-1" checked={sourceContextWebResearch === 'on'}
-                  onChange={(e) => commit({ sourceContextWebResearch: e.target.checked ? 'on' : 'off' })} />
-                <span>Research the source before clipping <Badge tone="warning" className="ml-1 align-middle">Beta</Badge>
-                  <span className="mt-1 block text-xs text-ink-subtle">Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector.</span>
+              <SettingRow
+                className="items-start"
+                title={<>Research the source before clipping <Badge tone="warning" className="ml-1 align-middle">Beta</Badge></>}
+                description="Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector."
+                control={<Switch className="mt-0.5" label="Research the source before clipping" checked={sourceContextWebResearch === 'on'}
+                  onChange={(on) => void commit({ sourceContextWebResearch: on ? 'on' : 'off' })} />}
+              />
+              <div className="glass-tile flex items-start gap-3 rounded-xl px-3 py-2.5">
+                <span className="flex-1 text-sm font-medium text-ink">Instagram, TikTok, X and Facebook links
+                  <span className="mt-0.5 block text-2xs font-normal leading-relaxed text-ink-subtle">These sites often only share a video with someone logged in. Choose the browser you’re logged in with and CreatorClips downloads with that login (it reads the browser’s cookies on this computer, nothing is sent anywhere else). {IS_MAC ? 'For Chrome, Edge or Brave your Mac asks once to allow it; Safari needs Full Disk Access for CreatorClips in System Settings → Privacy & Security.' : 'Close the browser first if it can’t be read while open.'}</span>
                 </span>
-              </label>
-              <p className="eyebrow px-1 pt-2">Optional</p>
+                <Select aria-label="Browser login for social links" size="sm" className="mt-0.5 w-44 shrink-0" value={downloadLoginBrowser ?? ''}
+                  onChange={(value) => void commit({ downloadLoginBrowser: value })}
+                  options={[
+                    { value: '', label: 'Don’t use a login' },
+                    { value: 'chrome', label: 'Chrome' },
+                    ...(IS_MAC ? [{ value: 'safari', label: 'Safari' }] : []),
+                    { value: 'firefox', label: 'Firefox' },
+                    { value: 'edge', label: 'Edge' },
+                    { value: 'brave', label: 'Brave' }
+                  ]} />
+              </div>
+              <p className="eyebrow px-1 pb-0.5 pt-3">Optional keys</p>
               <KeyRow>
                 <ApiKeyInput
                   label="Zernio (optional)"
@@ -190,23 +258,97 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   getKeyUrl={PROVIDER_LINKS.zernio}
                 />
               </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="Pexels (optional)"
+                  value={keys.drafts.pexelsApiKey}
+                  configured={pexelsConfigured}
+                  onChange={(v) => keys.setDraft('pexelsApiKey', v)}
+                  onRemove={() => void keys.remove('pexelsApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your Pexels API key"
+                  description="Free stock video for B-roll mode. CreatorClips searches Pexels for footage that matches each beat of a clip."
+                  getKeyUrl={PROVIDER_LINKS.pexels}
+                />
+              </KeyRow>
+              {/* Avatar Studio's keys: hidden while it's switched off (shared/features), unless one is saved and can be removed. */}
+              {(isAvatarStudioEnabled() || falConfigured) && <KeyRow>
+                <ApiKeyInput
+                  label="fal.ai (optional)"
+                  value={keys.drafts.falApiKey}
+                  configured={falConfigured}
+                  onChange={(v) => keys.setDraft('falApiKey', v)}
+                  onRemove={() => void keys.remove('falApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your fal.ai API key"
+                  description="Only for Avatar Studio’s Recreate (your avatar takes over someone in a video). Everything else in Avatar Studio runs on your OpenRouter key."
+                  getKeyUrl={PROVIDER_LINKS.fal}
+                />
+              </KeyRow>}
+              {(isAvatarStudioEnabled() || heygenConfigured) && <KeyRow>
+                <ApiKeyInput
+                  label="HeyGen (optional, Beta)"
+                  value={keys.drafts.heygenApiKey}
+                  configured={heygenConfigured}
+                  onChange={(v) => keys.setDraft('heygenApiKey', v)}
+                  onRemove={() => void keys.remove('heygenApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your HeyGen API key"
+                  description="For realistic, lip-synced talking avatars in Avatar Studio: made from a short video or a photo of you, or one of HeyGen’s stock AI people. HeyGen bills your own account."
+                  getKeyUrl={PROVIDER_LINKS.heygen}
+                />
+                <HeygenKeyCheck configured={heygenConfigured} />
+              </KeyRow>}
             </div>
+          </Section>
+
+          <Section id="spending">
+            <SpendingSettings />
           </Section>
 
           <Section id="assistant">
             <AssistantSettings />
           </Section>
 
+          <GroupLabel>Your clips</GroupLabel>
           <JevSettings />
 
           <Section id="vocabulary">
             <PanelHeader
               icon={<IconTile><BookA /></IconTile>}
               title="Custom vocabulary"
-              description="Names, products and jargon that transcription should spell exactly, one per line. Used for captions and generated post metadata."
+              description="Words captions should spell exactly, one per line: your name, your course, your offer, and any terms you use. Used for captions and post text."
               action={vocabularyTerms > 0 && <Badge className="font-mono tabular">{vocabularyTerms} term{vocabularyTerms === 1 ? '' : 's'}</Badge>}
             />
             <VocabularyField value={customVocabulary} onCommit={(value) => commit({ customVocabulary: value })} />
+          </Section>
+
+          <Section id="music">
+            <PanelHeader
+              icon={<IconTile><Music /></IconTile>}
+              title="My music"
+              description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Clip, Edit my recording and Remix."
+            />
+            <MusicSettingsPanel />
+          </Section>
+
+          <Section id="sounds">
+            <PanelHeader
+              icon={<IconTile><AudioLines /></IconTile>}
+              title="My sounds"
+              description="Your own sound effects, each for one kind of moment: a whoosh, a pop, a click. Edited videos play yours first, as each graphic or scene comes in."
+            />
+            <SoundPaletteSettings />
+          </Section>
+
+          <Section id="broll">
+            <PanelHeader
+              icon={<IconTile><Images /></IconTile>}
+              title="AI b-roll"
+              description="When Clip or Remix fill b-roll with AI, or you make a shot in your B-roll library: what AI makes, the model, and the most AI shots per clip."
+              action={onNavigate && <Button size="sm" variant="ghost" onClick={() => onNavigate('broll')}>Open my B-roll library</Button>}
+            />
+            <div className="mt-3"><BrollAiSettingsPanel /></div>
           </Section>
 
           <Section id="output">
@@ -215,14 +357,16 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
               title="Output"
               description="Every run gets its own folder of clips, transcript and plan."
             />
-            <OutputFolder value={outputDirectory} onCommit={(dir) => commit({ outputDirectory: dir })} />
+            <OutputFolder value={outputDirectory} onCommit={(dir) => { void folderChange.change(dir) }} />
+            {folderChange.dialog}
           </Section>
 
+          <GroupLabel>This computer</GroupLabel>
           <Section id="system">
             <PanelHeader
               icon={<IconTile tone={toolsChecked && toolsMissing ? 'danger' : 'neutral'}><Cpu /></IconTile>}
               title="System check"
-              description="Tools BridgeClip needs to download, transcribe and cut video."
+              description="Tools CreatorClips needs to download, transcribe and cut video."
               action={
                 <Button
                   size="sm"
@@ -257,14 +401,14 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   <Badge className="font-mono tabular">v{APP_VERSION}</Badge>
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                  Released under the {LICENSE_NAME} license. Built by{' '}
+                  Built on BridgeClip by{' '}
                   <button
                     onClick={() => getApi().shell.openPath(BRIDGEMIND_URL)}
                     className="text-ink underline decoration-white/25 underline-offset-2 transition-colors hover:decoration-ink"
                   >
                     BridgeMind
                   </button>
-                  .
+                  {' '}({LICENSE_NAME}).
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -282,14 +426,6 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <Button
                   size="sm"
                   variant="ghost"
-                  trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />}
-                  onClick={() => getApi().shell.openPath(ISSUES_URL)}
-                >
-                  Report an issue
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
                   icon={<ScrollText className="h-3.5 w-3.5" />}
                   onClick={() => getApi().diagnostics.openLogFolder()}
                 >
@@ -297,8 +433,10 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 </Button>
               </div>
             </div>
+            <SupportSettings />
             <UpdatesRow />
             <OutputStorage outputDirectory={outputDirectory} />
+            <YourData />
           </Section>
         </div>
       </div>
@@ -306,9 +444,14 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   )
 }
 
+/** Mono uppercase label over a run of Settings cards; matches the group names in the side nav. */
+function GroupLabel({ children }: { children: ReactNode }): React.JSX.Element {
+  return <p className="eyebrow px-1 pt-2 first:pt-0" aria-hidden>{children}</p>
+}
+
 function Section({ id, className, children }: { id: SectionId; className?: string; children: ReactNode }): React.JSX.Element {
   return (
-    <section id={`settings-${id}`} className="scroll-mt-14">
+    <section id={`settings-${id}`} className="scroll-mt-4">
       <Panel className={className}>{children}</Panel>
     </section>
   )
@@ -362,7 +505,7 @@ function useActiveSection(ids: SectionId[]): [SectionId, (id: SectionId) => void
 }
 
 function KeyRow({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="glass-tile rounded-2xl px-3 py-2.5">{children}</div>
+  return <div className="glass-tile rounded-xl px-3 py-2.5">{children}</div>
 }
 
 function SaveIndicator({ saving, savedAt, error }: { saving: boolean; savedAt: number | null; error: string | null }): React.JSX.Element | null {
@@ -448,7 +591,7 @@ function VocabularyField({ value, onCommit }: { value: string; onCommit: (value:
       <TextArea
         rows={4}
         value={draft}
-        placeholder={'GPT 6 Sol\nOpus 5.5\nBridgeMind'}
+        placeholder={'Jane Rivera\nProfit Path Academy\n90-Day Money Reset'}
         aria-label="Custom vocabulary"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => draft !== value && onCommit(draft)}
@@ -507,8 +650,8 @@ function toolRows(status: ToolStatus | null): ToolRow[] {
     },
     { name: 'FFprobe', ok: status?.ffprobe ?? null },
     { name: 'yt-dlp', ok: status?.ytdlp ?? null, detail: 'Downloads YouTube videos and Twitch VODs' },
-    { name: 'BridgeClip clipping engine', ok: status?.engine ?? null, detail: status?.enginePath },
-    { name: 'Bridge runner', ok: status?.bridgeRunner ?? null, detail: status?.bridgePath }
+    { name: 'CreatorClips clipping engine', ok: status?.engine ?? null, detail: status?.enginePath },
+    { name: 'CreatorClips video engine', ok: status?.bridgeRunner ?? null, detail: status?.bridgePath }
   ]
 }
 
@@ -524,7 +667,7 @@ function ToolList({ rows, checking }: { rows: ToolRow[]; checking: boolean }): R
         <div className="mb-3 flex items-center gap-2 px-1 text-xs">
           <StatusDot tone={missing > 0 ? 'danger' : 'success'} />
           <span className={cn('flex-1', missing > 0 ? 'text-danger' : 'text-ink-muted')}>
-            {missing > 0 ? `${missing} required check${missing === 1 ? '' : 's'} need${missing === 1 ? 's' : ''} attention` : `Everything BridgeClip needs is installed (${rows.filter((row) => row.ok).length} tools)`}
+            {missing > 0 ? `${missing} required check${missing === 1 ? '' : 's'} need${missing === 1 ? 's' : ''} attention` : `Everything CreatorClips needs is installed (${rows.filter((row) => row.ok).length} tools)`}
           </span>
           {missing === 0 && (
             <Button
@@ -560,7 +703,7 @@ function ToolList({ rows, checking }: { rows: ToolRow[]; checking: boolean }): R
                 )}
               </div>
               {row.ok == null ? (
-                <span className="shrink-0 text-xs text-ink-faint">{checking ? 'Checking…' : 'Not checked'}</span>
+                <span className="shrink-0 text-xs text-ink-subtle">{checking ? 'Checking…' : 'Not checked'}</span>
               ) : (
                 <Badge tone={row.ok ? 'neutral' : row.optional ? 'warning' : 'danger'} className="shrink-0">
                   {row.ok ? 'Found' : row.optional ? 'Unavailable' : row.failureLabel ?? 'Missing'}

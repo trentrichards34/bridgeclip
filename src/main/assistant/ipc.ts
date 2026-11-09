@@ -18,6 +18,7 @@ import {
 import { assertTrustedSender } from '../security'
 import { logger } from '../logger'
 import { loadSettings } from '../settings-store'
+import { recordChatCost } from '../spending'
 import { AssistantService } from './assistant-service'
 import { createBridgeClipTools } from './bridgeclip-tools'
 import { checkProvider, openRouterStatus } from './providers'
@@ -71,7 +72,7 @@ export function registerAssistant(getMainWindow: () => BrowserWindow | null): As
     tools: () => tools,
     systemPrompt: () => assistantSystemPrompt(),
     emit: (event: AssistantEvent) => send('assistant:event', event),
-    openRouter: { apiKey: openRouterKey, url: openRouterUrl }
+    openRouter: { apiKey: openRouterKey, url: openRouterUrl, onCost: recordChatCost }
   })
 
   const statusCache = new Map<AssistantCliProviderId, { at: number; status: Promise<AssistantProviderStatus> }>()
@@ -137,7 +138,7 @@ export function registerAssistant(getMainWindow: () => BrowserWindow | null): As
   handle('assistant:signIn:code', (id, code) => signIn.submitCode(cliProvider(id), code))
   handle('assistant:signIn:cancel', (id) => signIn.cancel(cliProvider(id)))
   handle('assistant:signIn:open', (id) => signIn.openUrl(cliProvider(id)))
-  // Only BridgeClip's own fixed commands reach the clipboard.
+  // Only CreatorClips's own fixed commands reach the clipboard.
   handle('assistant:copyCommand', (id, which) => {
     const info = ASSISTANT_PROVIDER_INFO[cliProvider(id)]
     const command = which === 'signIn' ? info.signInCommand : info.installCommand

@@ -104,8 +104,14 @@ def test_download_guard_follows_work_into_threads_and_executors():
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pool.submit(attempt, "pool").result()
             loop.run_until_complete(via_loop())
-            with pytest.raises(OSError, match="not public"):
-                socket.socket(socket.AF_INET6).connect(("::ffff:127.0.0.1", port))
+            # (A machine without IPv6 can't make the socket at all: nothing to guard there.)
+            try:
+                v6 = socket.socket(socket.AF_INET6)
+            except OSError:
+                v6 = None
+            if v6 is not None:
+                with v6, pytest.raises(OSError, match="not public"):
+                    v6.connect(("::ffff:127.0.0.1", port))
         attempt("outside-guard")
     finally:
         loop.close()

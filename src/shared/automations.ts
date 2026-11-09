@@ -108,6 +108,68 @@ export interface AutomationContent {
   postedAt: string | null
   postId: string | null
   error: string | null
+  /**
+   * The upcoming daily slot this clip was handed to Zernio for, as a
+   * scheduled post (status 'posted', postedAt null until the slot passes).
+   * While set, that slot is covered and the app never posts another clip in it.
+   */
+  aheadSlot?: AheadSlot | null
+}
+
+export interface AheadSlot {
+  time: string
+  date: string
+  /** ISO instant of the slot. */
+  at: string
+  /** The automation changed or was paused; Zernio's post still has to be cancelled. */
+  cancel?: boolean
+}
+
+/** Slots handed to Zernio ahead of time: at most this many… */
+export const AHEAD_SLOT_COUNT = 3
+/** …and none further out than this. Zernio keeps uploads for 7 days. */
+export const AHEAD_HORIZON_MS = 48 * 3_600_000
+/** Closer slots are left to the app, so a slow upload can't make one late. */
+export const AHEAD_MIN_LEAD_MS = 15 * 60_000
+
+export function slotKey(slot: { date: string; time: string }): string {
+  return `${slot.date}/${slot.time}`
+}
+
+/** A post scheduled with Zernio whose slot hasn't come yet. */
+export function isScheduledAhead(item: AutomationContent, now: number): boolean {
+  return Boolean(item.aheadSlot && item.status === 'posted' && Date.parse(item.aheadSlot.at) > now)
+}
+
+export type UpcomingState = 'zernio' | 'cancelling' | 'app' | 'skipped' | 'uncertain' | 'empty'
+export interface UpcomingPost {
+  time: string
+  date: string
+  at: string
+  state: UpcomingState
+  /** The clip in this slot: scheduled with Zernio, or next in the queue. */
+  contentId: string | null
+  title: string | null
+}
+
+/**
+ * What the next few slots will post and who posts them: Zernio (already
+ * scheduled, safe to close the app) or CreatorClips (must be open).
+ * `slots` comes from upcomingSlots() in schedule-math.ts.
+ */
+export function upcomingPlan(automation: Pick<Automation, 'accounts' | 'content' | 'skippedSlots'>, slots: { time: string; date: string; at: string }[]): UpcomingPost[] {
+  const ready = automation.content.filter((item) => item.status === 'queued' && !item.metadataDraft && !needsTikTokReview(automation, item))
+  const queue = [...ready.filter((item) => !item.error), ...ready.filter((item) => item.error)]
+  return slots.map((slot) => {
+    const ahead = automation.content.find((item) => item.aheadSlot && slotKey(item.aheadSlot) === slotKey(slot))
+    if (ahead) {
+      const state: UpcomingState = ahead.status === 'needs_review' ? 'uncertain' : ahead.aheadSlot!.cancel ? 'cancelling' : 'zernio'
+      return { ...slot, at: ahead.aheadSlot!.at, state, contentId: ahead.id, title: ahead.title }
+    }
+    if (automation.skippedSlots?.includes(slotKey(slot))) return { ...slot, state: 'skipped' as const, contentId: null, title: null }
+    const next = queue.shift()
+    return { ...slot, state: next ? 'app' as const : 'empty' as const, contentId: next?.id ?? null, title: next?.title ?? null }
+  })
 }
 
 export interface AutomationSourceGroup {
@@ -152,6 +214,10 @@ export interface Automation {
   lastRunAt: string | null
   lastError: string | null
   lastErrorAcknowledged?: boolean
+  /** Hand the next few slots to Zernio as scheduled posts, so they post while the app is closed. Off when unset. */
+  scheduleAhead?: boolean
+  /** Slots ('YYYY-MM-DD/HH:mm') whose Zernio post was cancelled outside the automation; nothing posts in them. */
+  skippedSlots?: string[]
 }
 
 export function hasContentWarnings(item: AutomationContent): boolean {
@@ -172,6 +238,8 @@ export interface AutomationUpdate {
   timezone: string
   youtubeVisibility: YouTubeVisibility
   youtubeMadeForKids: boolean
+  /** Omitted keeps the current setting. */
+  scheduleAhead?: boolean
 }
 
 export function needsTikTokReview(automation: Pick<Automation, 'accounts'>, item: AutomationContent): boolean {

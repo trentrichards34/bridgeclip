@@ -1,0 +1,104 @@
+<div id="cg-root" data-duration="12.00">
+  <div class="title">only three things</div>
+  <svg class="art" viewBox="0 0 1080 1267">
+    <defs>
+      <symbol id="who" viewBox="0 0 80 150"><circle cx="40" cy="26" r="22"/><path d="M40 52 C16 52 10 70 10 96 V150 H70 V96 C70 70 64 52 40 52 Z"/></symbol>
+      <symbol id="dot" viewBox="0 0 40 52"><circle cx="20" cy="12" r="11"/><path d="M20 26 C8 26 4 34 4 44 V52 H36 V44 C36 34 32 26 20 26 Z"/></symbol>
+    </defs>
+    <path class="ground" d="M52 1150 H1028"/>
+    <rect class="fill f1" x="64" y="900" width="320" height="250"/>
+    <rect class="fill f2" x="384" y="600" width="320" height="550"/>
+    <rect class="fill f3" x="704" y="370" width="312" height="780"/>
+    <rect class="lit l1" x="64" y="900" width="320" height="250"/>
+    <rect class="lit l2" x="384" y="600" width="320" height="550"/>
+    <rect class="lit l3" x="704" y="370" width="312" height="780"/>
+    <path class="stairs" d="M64 1150 V900 H384 V600 H704 V370 H1016 V1150 M384 900 V1150 M704 600 V1150"/>
+    <g class="obj o1" transform="translate(-6 -60)"><path d="M170 950 V870 L230 846 L290 870 V950 Z M170 870 L230 894 L290 870 M230 894 V950"/></g>
+    <path class="tick" d="M300 830 L322 852 L360 806"/>
+    <g class="obj o2" transform="translate(4 -120)"><path d="M472 706 L472 640 L524 610 L590 652 L590 706 Z"/><circle cx="524" cy="642" r="10"/><path d="M510 684 H556"/></g>
+    <g class="beam b2"><path d="M430 770 L430 800"/><path d="M540 770 L540 800"/><path d="M650 770 L650 800"/></g>
+    <g class="crowd c2"><use href="#dot" x="404" y="830" width="40" height="52"/><use href="#dot" x="454" y="822" width="40" height="52"/><use href="#dot" x="504" y="830" width="40" height="52"/><use href="#dot" x="554" y="822" width="40" height="52"/><use href="#dot" x="604" y="830" width="40" height="52"/><use href="#dot" x="654" y="822" width="40" height="52"/></g>
+    <use class="buyer" href="#dot" x="300" y="848" width="40" height="52"/>
+    <path class="way" d="M700 560 C760 520 790 470 820 420"/>
+    <text class="three" x="860" y="330">3</text>
+    <g class="obj o3" transform="translate(-20 -110)"><path d="M800 410 C845 352 925 352 970 410 C925 468 845 468 800 410 Z"/><circle class="pupil" cx="885" cy="410" r="26"/></g>
+    <g class="beam b3"><path d="M760 240 L700 180"/><path d="M860 220 L860 150"/><path d="M960 240 L1020 180"/></g>
+    <use class="who" href="#who" x="84" y="780" width="64" height="120"/>
+  </svg>
+  <div class="label t1">a product</div>
+  <div class="label t2">an offer</div>
+  <div class="label t3">attract<br>eyeballs</div>
+</div>
+<style>
+#cg-root .title{position:absolute;left:0;right:0;top:56px;text-align:center;font-family:var(--cg-font-display);font-size:92px;line-height:1.04;color:var(--cg-ink)}
+#cg-root .art{position:absolute;left:0;top:0;width:1080px;height:1267px;overflow:visible}
+#cg-root .ground{stroke:var(--cg-muted);stroke-width:6;stroke-linecap:round}
+#cg-root .fill{fill:rgba(255,255,255,.08)}
+#cg-root .lit{fill:var(--cg-accent);opacity:0}
+#cg-root .stairs{fill:none;stroke:var(--cg-ink);stroke-width:9;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:3600;stroke-dashoffset:3600}
+#cg-root .obj path,#cg-root .obj circle{fill:none;stroke:var(--cg-ink);stroke-width:9;stroke-linejoin:round;stroke-linecap:round}
+#cg-root .obj .pupil{fill:var(--cg-ink);stroke:none}
+#cg-root .tick{fill:none;stroke:var(--cg-ink);stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:120;stroke-dashoffset:120}
+#cg-root .beam path{fill:none;stroke:var(--cg-accent);stroke-width:8;stroke-linecap:round}
+#cg-root .crowd,#cg-root .buyer{fill:var(--cg-ink)}
+#cg-root .way{fill:none;stroke:var(--cg-ink);stroke-width:6;stroke-linecap:round;stroke-dasharray:4 16}
+#cg-root .three{font-family:var(--cg-font-display);font-size:96px;fill:var(--cg-accent)}
+#cg-root .who{fill:var(--cg-ink)}
+#cg-root .label{position:absolute;font-family:var(--cg-font-body);font-weight:800;font-size:54px;line-height:1.05;color:var(--cg-ink);white-space:nowrap}
+#cg-root .t1{left:86px;top:1000px} #cg-root .t2{left:406px;top:690px} #cg-root .t3{left:726px;top:460px}
+</style>
+<script>
+const D = parseFloat(document.getElementById('cg-root').dataset.duration);
+const tl = gsap.timeline({ paused: true });
+const ink = '#0E1525', white = '#FFFFFF';
+const idle = (sel, vars, at, beat) => { const b = beat || 0.8; let n = Math.max(1, Math.floor((D - 0.5 - at) / b) - 1); if (n % 2 === 0) n -= 1; tl.to(sel, Object.assign({ duration: b, ease: 'sine.inOut', yoyo: true, repeat: Math.max(1, n) }, vars), at); };
+tl.from('#cg-root .title', { y: 30, autoAlpha: 0, duration: 0.55, ease: 'expo.out' }, 0.05)
+  .from('#cg-root .ground', { scaleX: 0, transformOrigin: '0% 50%', duration: 0.5, ease: 'power4.out' }, 0.05)
+  .to('#cg-root .stairs', { strokeDashoffset: 0, duration: 1.1, ease: 'power2.inOut' }, 0.2)
+  .from('#cg-root .who', { autoAlpha: 0, duration: 0.4, ease: 'expo.out' }, 0.5)
+  // "a product": step 1 lights, its box lands.
+  .from('#cg-root .o1', { y: -40, autoAlpha: 0, duration: 0.5, ease: 'expo.out' }, 0.84)
+  .to('#cg-root .l1', { opacity: 1, duration: 0.3, ease: 'power2.out' }, 0.86)
+  .from('#cg-root .t1', { y: 24, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 0.88)
+  .to('#cg-root .t1', { color: ink, duration: 0.2 }, 0.88)
+  .to('#cg-root .title', { opacity: 0.5, duration: 0.4 }, 0.9)
+  // "sell": the first buyer hops on; "obvious": a tick.
+  .from('#cg-root .buyer', { y: -60, autoAlpha: 0, duration: 0.45, ease: 'back.out(1.4)' }, 1.9)
+  .to('#cg-root .tick', { strokeDashoffset: 0, duration: 0.35, ease: 'power3.out' }, 2.68)
+  // "an offer": step 2 lights, the figure climbs.
+  .to('#cg-root .l1', { opacity: 0.25, duration: 0.3, ease: 'power2.out' }, 4.12)
+  .to('#cg-root .t1', { color: white, duration: 0.3 }, 4.12)
+  .from('#cg-root .o2', { y: -40, autoAlpha: 0, duration: 0.5, ease: 'expo.out' }, 4.12)
+  .to('#cg-root .l2', { opacity: 1, duration: 0.3, ease: 'power2.out' }, 4.14)
+  .from('#cg-root .t2', { y: 24, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 4.16)
+  .to('#cg-root .t2', { color: ink, duration: 0.2 }, 4.16)
+  .to('#cg-root .who', { attr: { x: 404, y: 480 }, duration: 0.55, ease: 'power3.inOut' }, 4.5)
+  // "attracts": the offer sends out its beam; "people": the crowd gathers on it.
+  .from('#cg-root .b2 path', { scaleY: 0, transformOrigin: '50% 0%', autoAlpha: 0, duration: 0.35, ease: 'power4.out', stagger: 0.06 }, 5.38)
+  .from('#cg-root .c2 use', { y: -50, autoAlpha: 0, duration: 0.4, ease: 'expo.out', stagger: 0.07 }, 5.94)
+  // "sell our product": the buyer on step 1 jumps, the box answers.
+  .to('#cg-root .buyer', { y: -30, duration: 0.25, ease: 'power2.out', yoyo: true, repeat: 1 }, 7.04)
+  .to('#cg-root .o1', { scale: 1.12, transformOrigin: '50% 100%', duration: 0.25, ease: 'power2.out', yoyo: true, repeat: 1 }, 7.66)
+  // "number three": the third step is called; "way": the path to it draws.
+  .from('#cg-root .three', { y: 30, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 8.45)
+  .to('#cg-root .l2', { opacity: 0.25, duration: 0.3, ease: 'power2.out' }, 8.45)
+  .to('#cg-root .t2', { color: white, duration: 0.3 }, 8.45)
+  .from('#cg-root .way', { autoAlpha: 0, x: -20, duration: 0.5, ease: 'expo.out' }, 9.95)
+  // "attract": step 3 lights; "eyeballs": the eye opens and looks out over everything.
+  .to('#cg-root .three', { autoAlpha: 0, y: -20, duration: 0.3, ease: 'power2.in' }, 10.3)
+  .from('#cg-root .o3', { scale: 0.6, transformOrigin: '50% 50%', autoAlpha: 0, duration: 0.5, ease: 'back.out(1.4)' }, 10.38)
+  .to('#cg-root .l3', { opacity: 1, duration: 0.3, ease: 'power2.out' }, 10.4)
+  .from('#cg-root .t3', { y: 24, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 10.42)
+  .to('#cg-root .t3', { color: ink, duration: 0.2 }, 10.42)
+  .from('#cg-root .b3 path', { scaleY: 0, transformOrigin: '50% 100%', autoAlpha: 0, duration: 0.35, ease: 'power4.out', stagger: 0.06 }, 10.9)
+  .to('#cg-root .who', { attr: { x: 712, y: 250 }, duration: 0.55, ease: 'power3.inOut' }, 10.95);
+// Gentle life between the words: the figure breathes, the crowd shuffles, the beams pulse, the pupil looks around.
+idle('#cg-root .who', { scaleY: 0.97, transformOrigin: '50% 100%' }, 1.0, 0.7);
+idle('#cg-root .buyer', { x: 8 }, 2.4, 0.6);
+idle('#cg-root .b2', { opacity: 0.45 }, 5.8, 0.5);
+idle('#cg-root .c2 use', { y: -6, stagger: 0.1 }, 6.4, 0.45);
+idle('#cg-root .three', { scale: 1.08, transformOrigin: '50% 50%' }, 8.95, 0.35);
+idle('#cg-root .o3 .pupil', { x: 14 }, 10.9, 0.3);
+tl.to('#cg-root .title, #cg-root .art, #cg-root .label', { autoAlpha: 0, y: -20, duration: 0.32, ease: 'power2.in', stagger: 0.02 }, D - 0.4);
+window.__timelines = [tl];
+</script>

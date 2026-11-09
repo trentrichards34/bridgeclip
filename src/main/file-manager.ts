@@ -10,7 +10,18 @@ import { resolveBinary } from './tools'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { readRunRecord } from './run-history'
 
+export type RunMaker = 'create' | 'remix' | 'avatar' | 'edit' | 'listicle' | 'broll'
+export type RemixKind = 'ai' | 'camera' | 'image'
+
 export interface JobHistoryEntry {
+  /** What made a finished run (missing on unfinished ones). */
+  madeWith?: RunMaker
+  /** For Remix runs: AI presenter, on camera, or over an article or post. */
+  remixKinds?: RemixKind[]
+  /** Edit my recording: a reel or a YouTube video (the Library's tag). */
+  format?: 'reel' | 'youtube'
+  /** Create runs: the video's link or file (the daily plan offers more clips from it). */
+  sourceUrl?: string
   editorProject?: boolean
   candidateCount?: number
   favorite?: boolean
@@ -83,7 +94,7 @@ export async function getJobHistory(baseDir: string, activeJobIds: ReadonlySet<s
   const entries: JobHistoryEntry[] = []
 
   try {
-    const dirs = (await readdir(baseDir, { withFileTypes: true })).filter((d) => d.isDirectory() && !d.name.startsWith(DELETING_RUN_PREFIX))
+    const dirs = (await readdir(baseDir, { withFileTypes: true })).filter((d) => d.isDirectory() && !d.name.startsWith(DELETING_RUN_PREFIX) && !d.name.startsWith('.moving-'))
 
     for (const dir of dirs) {
       const outputPath = join(baseDir, dir.name, 'job_output.json')
@@ -96,7 +107,17 @@ export async function getJobHistory(baseDir: string, activeJobIds: ReadonlySet<s
         const { data } = result
         const costs = data.metrics?.api_costs
         const costVal = costs && typeof costs === 'object' ? (costs as Record<string, unknown>).total_estimated_cost_usd : null
+        const metrics = data.metrics ?? {}
+        const madeWith: RunMaker = metrics.remix === true ? 'remix' : typeof metrics.avatar_studio === 'string' ? 'avatar' : metrics.edit_recording === true ? 'edit' : metrics.listicle === true ? 'listicle' : metrics.broll_video === true ? 'broll' : 'create'
+        // Remix runs made before the kinds were recorded: a clip with no AI presenter was made on camera.
+        const remixKinds: RemixKind[] | undefined = madeWith !== 'remix' ? undefined
+          : Array.isArray(metrics.remix_kinds) ? metrics.remix_kinds as RemixKind[]
+            : [...new Set(data.clips.map((clip): RemixKind => clip.ai_generated ? 'ai' : 'camera'))]
         entries.push({
+          madeWith,
+          ...(remixKinds ? { remixKinds } : {}),
+          ...(madeWith === 'edit' ? { format: metrics.format === 'youtube' ? 'youtube' as const : 'reel' as const } : {}),
+          ...(madeWith === 'create' && data.source_video_url ? { sourceUrl: data.source_video_url } : {}),
           favorite: isRunFavorite(join(baseDir, dir.name)),
           jobId: dir.name,
           date: record?.startedAt ?? result.modified.toISOString(),

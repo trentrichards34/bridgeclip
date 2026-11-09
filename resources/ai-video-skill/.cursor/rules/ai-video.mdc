@@ -1,0 +1,5 @@
+---
+description: Make Instagram reels / TikToks / Shorts / explainer videos with the AI Video Editing Skill
+alwaysApply: true
+---
+This folder is the AI Video workspace. For any reel/video request, read and follow skill/SKILL.md (SKILL_DIR = skill/). Reels go in videos/<slug>/.

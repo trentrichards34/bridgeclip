@@ -58,7 +58,7 @@ test('the MCP server lists and calls tools, reports failures as tool errors and 
   t.after(() => server.stop())
   let cancelled = false
   const session = await server.openSession({
-    instructions: 'BridgeClip tools',
+    instructions: 'CreatorClips tools',
     listTools: () => [{ name: 'echo', title: 'Echo', description: 'Echo', inputSchema: { type: 'object' } }],
     callTool: async (name, args, signal) => {
       if (name === 'slow') {
@@ -73,7 +73,7 @@ test('the MCP server lists and calls tools, reports failures as tool errors and 
   const init = await post(session, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } } })
   assert.equal(init.body.result.protocolVersion, '2025-11-25')
   assert.equal(init.body.result.serverInfo.name, 'bridgeclip')
-  assert.equal(init.body.result.instructions, 'BridgeClip tools')
+  assert.equal(init.body.result.instructions, 'CreatorClips tools')
   assert.deepEqual(init.body.result.capabilities, { tools: { listChanged: false } })
   assert.equal((await post(session, { jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const list = await post(session, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
@@ -161,7 +161,7 @@ test('CLI failures map to sign-in, limit and update guidance', () => {
   assert.equal(parsers.describeCliFailure('codex', '', 9), 'Codex stopped unexpectedly (exit code 9).')
 })
 
-test('turn commands keep the CLIs on BridgeClip tools and never put the token in argv', () => {
+test('turn commands keep the CLIs on CreatorClips tools and never put the token in argv', () => {
   const cli = { command: '/bin/claude', prefixArgs: [], pathValue: '/usr/bin' }
   const options = { cli, model: 'sonnet', resumeId: 'sess-9', systemPrompt: 'SYSTEM', mcpUrl: 'http://127.0.0.1:5555/mcp', cwd: '/tmp/ws' }
   const claude = providers.claudeTurnArgs(options)
@@ -312,7 +312,7 @@ function serviceHarness(t, provider = 'claude', extraTools = [], { openRouter, m
 }
 
 for (const provider of ['claude', 'codex']) {
-  test(`${provider}: a turn streams text, calls BridgeClip tools over MCP and resumes the session`, async (t) => {
+  test(`${provider}: a turn streams text, calls CreatorClips tools over MCP and resumes the session`, async (t) => {
     const { service, events, calls, turnEnd, send } = serviceHarness(t, provider)
     const first = send('CALL echo {"text":"hi"}')
     const end = await turnEnd(first.conversationId)
@@ -402,7 +402,7 @@ test('messages are validated before a turn starts', (t) => {
   assert.throws(() => service.sendMessage({ conversationId: null, provider: 'claude', model: '', text: 'x'.repeat(20001) }), /limited/)
 })
 
-// ---- OpenRouter: BridgeClip runs the agent loop itself ----
+// ---- OpenRouter: CreatorClips runs the agent loop itself ----
 
 /** A streamed chat completion, as OpenRouter sends it. */
 function sse(chunks) {
@@ -432,7 +432,7 @@ function openRouterHarness(t, replies, { key = 'sk-or-test', model = 'vendor/mod
   return { ...harness, requests }
 }
 
-test('openrouter: streams a reply, runs BridgeClip tools and sends their results back', async (t) => {
+test('openrouter: streams a reply, runs CreatorClips tools and sends their results back', async (t) => {
   const { service, calls, turnEnd, send, requests } = openRouterHarness(t, [
     () => sse([...textChunks('Let me check.'), ...toolChunks('call_1', 'echo', '{"text":"hi"}')]),
     () => sse(textChunks('Done: ', 'hi'))

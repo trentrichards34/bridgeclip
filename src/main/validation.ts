@@ -1,10 +1,21 @@
+import { isBrollSource } from '../shared/broll-library'
 import { normalizeVideoSource, twitchSourceError } from '../shared/video-source'
 import { isAbsolute } from 'path'
 import type { ClipJobConfig } from './pipeline-runner'
 import { isWebUrl } from './security'
 import { CLIP_REQUEST_MAX_CHARS, DURATION_IDS, isVideoSpeed } from '../shared/job-contract'
 import { isModelId } from '../shared/openrouter-models'
-import type { ClipJobRequest } from '../shared/jobs'
+import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
+import { isBackgroundVideoName } from '../shared/backgrounds'
+import { parseHeadlineLook } from '../shared/headline-look'
+import { isGraphicsRegister, parseLookExtras } from '../shared/look-extras'
+import { isCtaId } from '../shared/ctas'
+import { isCaptionLanguage } from '../shared/caption-language'
+import { parseAudioSkills } from '../shared/skills'
+import { isReferenceId, parsePurpose } from '../shared/purpose'
+
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword } from '../shared/remix'
 
 // Trims what Python's str.strip() also treats as whitespace (\x1c-\x1f, \x85),
 // so the bridge never receives a request it considers blank.
@@ -21,8 +32,27 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (typeof v.autoClipCount !== 'boolean' || typeof v.includeCaptions !== 'boolean') throw new Error('Invalid job options')
   if (typeof v.layoutVision !== 'boolean') throw new Error('Invalid vision option')
   if (v.includeTitle !== undefined && typeof v.includeTitle !== 'boolean') throw new Error('Invalid title option')
+  if (v.backgroundVideo !== undefined && (!isBackgroundVideoName(v.backgroundVideo) || v.aspectRatio !== '9:16')) throw new Error('Background videos work with 9:16 clips only')
+  if (v.broll !== undefined && v.broll !== 'after-hook' && v.broll !== 'full') throw new Error('Invalid B-roll option')
+  if (v.broll !== undefined && v.backgroundVideo !== undefined) throw new Error('Choose either a background video or B-roll, not both')
+  if (v.broll !== undefined && v.workflow === 'review') throw new Error('B-roll works with the Automatic workflow')
+  if (v.brollSource !== undefined && (!isBrollSource(v.brollSource) || v.broll === undefined)) throw new Error('Invalid B-roll source')
+  if (v.hookPreview !== undefined && typeof v.hookPreview !== 'boolean') throw new Error('Invalid hook preview option')
+  if (v.hookPreview && v.workflow === 'review') throw new Error('Hook preview works with the Automatic workflow')
+  if (v.motionGraphics !== undefined && typeof v.motionGraphics !== 'boolean') throw new Error('Invalid motion graphics option')
+  if (v.motionGraphics && v.workflow === 'review') throw new Error('Automatic motion graphics work with the Automatic workflow')
+  if (v.stageLayouts !== undefined && typeof v.stageLayouts !== 'boolean') throw new Error('Invalid stage layouts option')
+  if (v.register !== undefined && !isGraphicsRegister(v.register)) throw new Error('Invalid graphics amount')
+  if (v.soundEffects !== undefined && typeof v.soundEffects !== 'boolean') throw new Error('Invalid sound effects option')
+  if (v.qualityBar !== undefined && !QUALITY_BARS.includes(v.qualityBar)) throw new Error('Invalid quality bar')
+  if (v.headlineVoice !== undefined && !HEADLINE_VOICES.includes(v.headlineVoice)) throw new Error('Invalid headline voice')
+  if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
+  if (v.screenFocus !== undefined && !SCREEN_FOCUS_MODES.includes(v.screenFocus)) throw new Error('Invalid screen share framing')
   if (v.clipRequest !== undefined && (typeof v.clipRequest !== 'string' || v.clipRequest.includes('\0') || trimClipRequest(v.clipRequest).length > CLIP_REQUEST_MAX_CHARS)) throw new Error(`Describe what to clip in ${CLIP_REQUEST_MAX_CHARS} characters or fewer`)
   if (v.videoSpeed !== undefined && !isVideoSpeed(v.videoSpeed)) throw new Error('Video speed must be between 1× and 2×')
+  if (v.captionLanguage !== undefined && !isCaptionLanguage(v.captionLanguage)) throw new Error('Choose a caption language from the list')
+  if (v.reuseFrom !== undefined && (typeof v.reuseFrom !== 'string' || !RUN_ID.test(v.reuseFrom))) throw new Error('Choose a finished run in your Library')
+  if (v.reuseFrom !== undefined && v.workflow === 'review') throw new Error('More clips works with the Automatic workflow')
   if (v.workflow !== undefined && !['automatic', 'review'].includes(v.workflow)) throw new Error('Invalid workflow')
   if (v.clippingMode !== undefined && !['quality', 'economy', 'advanced'].includes(v.clippingMode)) throw new Error('Invalid clipping mode')
   if (v.clippingMode === 'advanced' && (!isModelId(v.plannerModel) || !isModelId(v.transcriptionModel))) throw new Error('Choose both models in Advanced mode')
@@ -43,11 +73,51 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   const clipRequest = v.clipRequest === undefined ? undefined : trimClipRequest(v.clipRequest) || undefined
   // Only known fields continue: a misspelled option must not ride along in the job record.
   const known = Object.fromEntries(JOB_REQUEST_FIELDS.filter((key) => v[key] !== undefined).map((key) => [key, v[key]])) as unknown as ClipJobConfig
+  if (known.headlineLook !== undefined) known.headlineLook = parseHeadlineLook(known.headlineLook)
+  if (known.lookExtras !== undefined) {
+    if (!Array.isArray(known.lookExtras)) throw new Error('Invalid extras')
+    const extras = parseLookExtras(known.lookExtras)
+    if (extras.length) known.lookExtras = extras
+    else delete known.lookExtras
+  }
+  if (known.ctaId !== undefined && !isCtaId(known.ctaId)) throw new Error('Choose a call to action from your library.')
+  if (known.brandIdentityId !== undefined && (typeof known.brandIdentityId !== 'string' || !/^[a-f0-9]{16}$/.test(known.brandIdentityId))) throw new Error('Choose a brand identity.')
+  if (known.showHandle !== undefined && typeof known.showHandle !== 'boolean') throw new Error('Invalid handle option')
+  if (known.showHandle && (!known.brandIdentityId || v.workflow === 'review')) throw new Error('Showing your handle needs a brand and the Automatic workflow')
+  const keyword = normalizeCtaKeyword(known.ctaKeyword)
+  if (keyword === null) throw new Error('Use one word for the comment keyword (letters, numbers or a dash), like SALES.')
+  if (keyword && v.workflow === 'review') throw new Error('The comment keyword works with the Automatic workflow')
+  if (known.ctaOffer !== undefined && (typeof known.ctaOffer !== 'string' || /[\0\r\n]/.test(known.ctaOffer) || known.ctaOffer.replace(/\s+/g, ' ').trim().length > MAX_CTA_OFFER_CHARS)) {
+    throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
+  }
+  if (keyword) {
+    known.ctaKeyword = keyword
+    known.ctaOffer = (known.ctaOffer ?? '').replace(/\s+/g, ' ').trim()
+  } else {
+    delete known.ctaKeyword
+    delete known.ctaOffer
+  }
+  if (!known.showHandle) delete known.showHandle
+  // Skills: music and voice cleanup (off unless on; a track only with music).
+  delete known.music; delete known.musicTrack; delete known.voiceCleanup
+  Object.assign(known, parseAudioSkills(v as unknown as Record<string, unknown>))
+  // "Say what it's for": the line, and the reference picture's id (main finds the file).
+  const purpose = parsePurpose(v.purpose)
+  if (purpose) known.purpose = purpose
+  else delete known.purpose
+  if (known.referenceImage !== undefined && !isReferenceId(known.referenceImage)) throw new Error('Choose your reference image again.')
+  if (!known.motionGraphics) { delete known.motionGraphics; delete known.register }
+  // Sound effects follow the motion graphics (their cards, scenes and hook).
+  if (!known.soundEffects || !known.motionGraphics) delete known.soundEffects
+  // Stage layouts ride on motion graphics, on vertical clips without a gameplay background.
+  if (!known.stageLayouts || !known.motionGraphics || (known.aspectRatio ?? '9:16') !== '9:16' || known.backgroundVideo) delete known.stageLayouts
+  // Extras are drawn on Automatic renders; the review editor exports without them.
+  if (v.workflow === 'review') delete known.lookExtras
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
-  'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'soundEffects', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

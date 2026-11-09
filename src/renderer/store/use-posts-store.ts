@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { getApi } from '../lib/ipc'
 import { errorMessage } from '../lib/utils'
 import type { PostRecord } from '../../shared/zernio-posts'
+import type { PostInsights } from '../../shared/post-insights'
 
 export type PostAction = 'cancel' | 'reschedule' | 'retry' | 'dismiss'
 
@@ -24,7 +25,17 @@ interface PostsState {
   dismiss: (id: string) => Promise<void>
   open: (id: string, targetIndex: number) => void
   clearError: () => void
+  /** Stats (views, likes…) refresh: Zernio is asked about a few posts at a time, rate-limited in main. */
+  statsRefreshing: boolean
+  statsError: string | null
+  /** Zernio didn't share stats for this workspace. */
+  statsUnavailable: boolean
+  refreshStats: (force?: boolean) => Promise<void>
+  insights: PostInsights | null
+  loadInsights: () => Promise<void>
 }
+
+let statsRequest: Promise<void> | null = null
 
 let refreshRequest: Promise<void> | null = null
 // Older list responses must not replace a post created or changed while they ran.
@@ -130,6 +141,41 @@ export const usePostsStore = create<PostsState>((set, get) => {
       getApi().zernio.posts.open(id, targetIndex).catch((err) => set({ error: errorMessage(err, 'Could not open the post.') }))
     },
 
-    clearError: () => set({ error: null })
+    clearError: () => set({ error: null, statsError: null }),
+
+    statsRefreshing: false,
+    statsError: null,
+    statsUnavailable: false,
+    insights: null,
+
+    refreshStats: (force = false) => {
+      statsRequest ??= (async () => {
+        set({ statsRefreshing: true })
+        const startedAtRevision = postsRevision
+        try {
+          const result = await getApi().zernio.posts.refreshStats(force)
+          // Stats only add numbers to posts; keep any newer status the list already has.
+          if (postsRevision === startedAtRevision) {
+            set({ posts: result.posts })
+            postsRevision += 1
+          } else {
+            const byId = new Map(result.posts.map((post) => [post.id, post]))
+            set((state) => ({ posts: state.posts.map((post) => byId.get(post.id)?.stats ? { ...post, stats: byId.get(post.id)!.stats } : post) }))
+          }
+          set({ statsError: result.error, statsUnavailable: result.unavailable })
+          await get().loadInsights()
+        } catch (err) {
+          set({ statsError: errorMessage(err, 'Could not load post stats.') })
+        } finally {
+          set({ statsRefreshing: false })
+          statsRequest = null
+        }
+      })()
+      return statsRequest
+    },
+
+    loadInsights: async () => {
+      try { set({ insights: await getApi().zernio.posts.insights() }) } catch { /* The summary is optional; the list still works. */ }
+    }
   }
 })

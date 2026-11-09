@@ -1,6 +1,6 @@
 # Security follow-up — 24 September 2026
 
-Historical snapshot: this follow-up predates the move of the clipping engine into `engine/` in the BridgeClip repository. References below to a separate legacy engine checkout and release pin describe the earlier design; see [Architecture](ARCHITECTURE.md) and [Releasing](RELEASING.md) for the current design.
+Historical snapshot: this follow-up predates the move of the clipping engine into `engine/` in the CreatorClips repository. References below to a separate legacy engine checkout and release pin describe the earlier design; see [Architecture](ARCHITECTURE.md) and [Releasing](RELEASING.md) for the current design.
 
 This follows [the original review](SECURITY_REVIEW_2026-09-24.md). The five original findings remain fixed. Original review statements about actions not performed describe that first pass only.
 

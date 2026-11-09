@@ -1,56 +1,125 @@
-# Releasing BridgeClip
+# Releasing CreatorClips
 
-BridgeClip source and official downloads live in `bridge-mind/bridgeclip`. Tests, package rehearsals, signing, and publication run in the maintainer's private automation repository. Public GitHub repositories cannot make Actions logs private. Public Actions execution is disabled; no signing credentials belong in this repository.
+CreatorClips is released by Wealthery. The owner's step-by-step guide, with every click, is [FIRST-RELEASE-CHECKLIST.md](FIRST-RELEASE-CHECKLIST.md). This page is the technical reference.
 
-The primary maintainers set the project's direction and review contributions under [CONTRIBUTING.md](../CONTRIBUTING.md). Main requires a pull request and the configured checks; release tags cannot be moved or deleted. Anyone can open a pull request from a fork; only the maintainer can push branches or merge. Public source can still be forked under the MIT license. Administrators can change access policy, so review collaborators and automation access before each release.
+## Two repositories
+
+| Repository | Visibility | Holds |
+| --- | --- | --- |
+| `trentrichards34/bridgeclip` | Private | Source code, the release workflow, all signing secrets |
+| `trentrichards34/creatorclips-releases` | **Public** | Only GitHub Releases: installers and update feeds. No source |
+
+Installed apps check for updates without a GitHub token, and electron-updater can't read releases of a private repository without one. So the private source repository builds and signs, and uploads the results to the public releases repository. Members download from, and their apps update from, `https://github.com/trentrichards34/creatorclips-releases/releases`.
 
 ## Packages
 
-| System | Architecture | Download | Verification |
-| --- | --- | --- | --- |
-| macOS | Apple silicon, Intel | DMG and updater ZIP | Developer ID, team `9CBJCDR3J2`, notarized app and DMG, stapling, Gatekeeper |
-| Windows | x64 | NSIS EXE | BRIDGEMIND LLC Authenticode signatures; timestamp; installed runtime smoke |
-| Linux | x64 | AppImage and DEB | Installed/extracted runtime smoke; signed checksum manifest |
+| System | Architecture | Files | Built on | Trust |
+| --- | --- | --- | --- | --- |
+| macOS | Apple silicon | `CreatorClips-X.Y.Z-mac-arm64.dmg`, `.zip` | `macos-14` | Signed with our Apple Developer ID certificate; app and DMG notarized and stapled |
+| macOS | Intel | `CreatorClips-X.Y.Z-mac-x64.dmg`, `.zip` | `macos-15-intel` | Same |
+| Windows | x64 | `CreatorClips-X.Y.Z-win-x64.exe` | `windows-latest` | Authenticode via Azure Trusted Signing when its secrets are set; otherwise **unsigned**, labeled in the release notes |
 
-Version `v0.1.19` targets all four platform/architecture builds in one release, including the first Linux packages. Publication is gated on successful native tests, package acceptance, signatures and complete source archives; use the published release assets as the availability record. Windows ARM64 and Linux ARM64 are not release targets. Do not advertise an unsupported OS version based only on the build runner version.
+Every release also carries `latest-mac.yml` (both Mac architectures merged), `latest.yml` (Windows), blockmaps, `release-manifest.json` and `SHA256SUMS.txt`.
 
-## Maintainer sequence
+- The Mac app runs on the runner's macOS version or newer: FFmpeg links Homebrew's caption libraries, which Homebrew builds for the runner's OS. That makes Apple silicon builds need macOS 14+ and Intel builds macOS 15+. `builder-config.cjs mac <arch>` sets `mac.minimumSystemVersion` to match (14.0 / 15.0; `electron-builder.yml` has 14.0 for local builds), so macOS refuses to open the app on an older system instead of failing at FFmpeg. GitHub retired `macos-13`, the last older Intel image, in December 2025. When `macos-14` is retired, move Apple silicon to `macos-15`, which means macOS 15+.
+- Linux packages still build from source (`npm run dist:linux-x64`), but the workflow does not publish them. A Linux app has no update feed and reports "No release for this platform yet."
 
-1. Review the public commit, dependency notices, and generated inventories. Do not publish pre-BridgeClip private history. The existing export script remains available for constructing a clean public source snapshot.
-2. Run private CI for the exact 40-character source commit. It runs macOS, Windows, and Linux checks plus macOS/Linux Electron end-to-end tests without signing credentials. The private source watcher checks main and maintainer-owned pull requests periodically; dispatch manually for an immediate run.
-3. Run the private package rehearsal for that commit. This exercises native packaging and the relocated clipping runtime without publishing unsigned packages.
-4. The version-bump PR also moves `CHANGELOG.md`'s Unreleased entries into a dated `X.Y.Z` section, as described in [Changelog](../CONTRIBUTING.md#changelog); the release tests fail without it. Create an immutable `vX.Y.Z` tag on reviewed main, matching `package.json`. Dispatch the private release workflow from its protected main branch with `platform=all`, `macos`, `windows`, or `linux`. The version tag stays the same format regardless of platform. The workflow resolves `refs/tags/<tag>`, checks main ancestry and version, freezes one commit, and runs CI again for that exact commit.
-5. Selected release jobs stage runtimes, build packages, sign/notarize them, and test the packaged clipping engine. A macOS selection always builds Apple silicon and Intel. Windows acceptance installs the actual NSIS artifact and checks its publisher. Linux acceptance installs the DEB and extracts the AppImage. A captioned H.264 clip at 2× speed must retain audio and have the expected duration.
-6. Publication requires every package for the selected platform, or all four platform/architecture builds for `all`. It verifies updater hashes against final bytes, merges macOS metadata when selected, creates a manifest recording the platform, adds the reviewed FFmpeg corresponding-source archive, and signs checksums using the separate release key. It rechecks the source tag, creates a draft, downloads every uploaded asset again, and compares every digest. With publication selected, only then does the draft become public. A later release for another platform needs a new version tag; published release bytes are never overwritten.
-7. Never overwrite a published version. Fixes use a new version/tag. An incomplete upload remains a draft; investigate before explicitly removing a failed draft and retrying. Withdraw a bad public version and replace it with a higher version so installed updaters can recover. To withdraw one, delete it, turn it back into a draft, or mark it as a prerelease. A newer release for a different platform is not enough: when the latest release lacks a platform's feed, the updater picks that platform's highest published version, whichever release GitHub marks latest.
+## Release identity
 
-The website's download buttons resolve the newest published release with installers for each platform, and it links to [GitHub Releases](https://github.com/bridge-mind/bridgeclip/releases). The updater (`src/main/auto-updater.ts`) reads `latest-mac.yml`, `latest.yml`, or `latest-linux.yml` from the release GitHub marks as latest. When that release doesn't ship the running platform, which happens after a single-platform release, `src/main/update-provider.ts` falls back to the newest published release that has the platform's feed, so platforms can ship on separate schedules. Always publish with **Set as the latest release** (the workflow does), never as a prerelease: prereleases are ignored.
+Who publishes and signs a build is compiled into it. `electron.vite.config.ts` reads these variables when it runs `npm run build` and embeds them as `__CREATORCLIPS_RELEASE__` (`src/shared/release-identity.ts`, read by `src/shared/brand.ts`):
 
-Installed apps check about 15 seconds after launch and then every four hours, download in the background, and install on **Restart to update** or the next quit. Updates are off for unpackaged builds, for macOS builds not signed by team `9CBJCDR3J2`, for a macOS app running from its disk image or quarantine, and when `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`. Test a real signed update from the first installed version to the next before claiming update acceptance; a packaging rehearsal does not prove an upgrade path.
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CREATORCLIPS_RELEASES_REPO` | `trentrichards34/creatorclips-releases` | Where the app checks for updates. Also the Settings, Help menu and release-notes links |
+| `CREATORCLIPS_MAC_TEAM_ID` | none | Apple team whose Developer ID signature the Mac app requires before it updates itself |
+| `CREATORCLIPS_WIN_PUBLISHER` | none | Authenticode publisher the Windows app requires on every downloaded update |
+
+With no team ID or publisher, a build never updates itself (Settings → About says it isn't signed). Only official builds, signed with our Apple Developer certificate, self-update:
+
+- **macOS** (`src/main/auto-updater.ts`): the updater starts only if `codesign` reports `TeamIdentifier=<CREATORCLIPS_MAC_TEAM_ID>` and a Developer ID Application authority. Squirrel.Mac then installs an update only if it satisfies the running app's designated requirement, so it must come from the same team.
+- **Windows**: the updater starts only if a publisher was compiled in, which happens only when CI signed the build. electron-updater checks each downloaded installer against `publisherName` in `app-update.yml` before running it.
+- The values sit in `app.asar`, which Electron's integrity fuse checks (`electron-builder.yml` `electronFuses`), and a modified Mac bundle fails its code signature.
+
+`scripts/release/builder-config.cjs <mac|windows|linux> [arm64|x64]` writes `release-<platform>.json` for electron-builder from `electron-builder.yml` and the same variables. It points `publish` at the releases repository. With `RELEASE_SIGNING=1` it requires every signing input and enables `forceCodeSigning`: on macOS, `mac.identity` is the team ID (it picks the `Developer ID Application: … (TEAM)` certificate from `CSC_LINK`), along with `notarize` and `dmg.sign`. On Windows it sets `azureSignOptions` with `publisherName = CREATORCLIPS_WIN_PUBLISHER`. Unsigned configs refuse a team ID or publisher, so an unsigned build can't claim one.
+
+`electron-builder.yml` itself stays unsigned (`mac.identity: null`, no Windows publisher). That keeps local `npm run dist:*` builds off the update channel.
+
+## The workflow
+
+`.github/workflows/release.yml`, in the private repository:
+
+**On a pushed tag `vX.Y.Z`** (an official release):
+
+1. **Tests** (Ubuntu): checks the tag matches `package.json`, then runs `typecheck`, `lint`, `test:main` and `test:release`. `test:release` includes the changelog check: the version needs a dated `CHANGELOG.md` section.
+2. **Mac (arm64)** and **Mac (x64)**, each on its native runner: `brew install pkg-config libass` (plus `nasm` on Intel), then `scripts/prepare-resources.sh <arch>`, which builds LGPL FFmpeg, bundles Python and runs the engine smoke tests. Next `npm run build`, `builder-config.cjs mac <arch>` and `electron-builder --mac --<arch>` sign and notarize the app. The DMG is notarized and stapled with `xcrun notarytool`/`stapler`, and `refresh-metadata.cjs` rewrites `latest-mac.yml` for the final bytes (updates use the ZIP). Last come `verify-packaged-mac.sh`, the `codesign`, `spctl` and `stapler` checks, and the TeamIdentifier check.
+3. **Windows (x64)**: `stage-runtime.py`, then build, then `verify-runtime.py` on the unpacked resources. Signed builds also run `verify-windows.ps1`, which installs the real installer and checks the publisher and signatures.
+4. **Draft release**: downloads the build artifacts and runs `collect-artifacts.cjs … desktop`. That script checks every file against the updater SHA-512s and versions, merges the two Mac feeds, and writes the manifest and checksums. Release notes come from `release-notes.cjs` (download links plus the CHANGELOG section, and a warning if Windows is unsigned). `gh release create vX.Y.Z --draft --latest` then uploads to the releases repository with `GH_RELEASES_TOKEN`. It fails if that release already exists. It never overwrites one.
+
+Nothing reaches members until someone opens the draft and clicks **Publish release**.
+
+**Manual run** (Actions → Release → Run workflow; choose `all`, `macos` or `windows`): the same builds, **unsigned**, with no team ID or publisher compiled in. Nothing is published. The run page keeps the files as artifacts for 7 days.
+
+### Secrets and variables
+
+Set these in the private repository under **Settings → Secrets and variables → Actions**.
+
+| Secret | Required | Value |
+| --- | --- | --- |
+| `CSC_LINK` | Mac | Base64 of the Developer ID Application `.p12` |
+| `CSC_KEY_PASSWORD` | Mac | Password of that `.p12` |
+| `APPLE_ID` | Mac | Apple Account email used for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | Mac | App-specific password for that account |
+| `APPLE_TEAM_ID` | Mac | 10-character team ID. Also compiled in as the trusted update signer |
+| `GH_RELEASES_TOKEN` | Publish | Fine-grained token: `creatorclips-releases` only, Contents read and write |
+| `WINDOWS_PUBLISHER_NAME` | Windows signing | Certificate subject CN, exactly as on the Azure certificate profile |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | Windows signing | Entra app registration with the *Trusted Signing Certificate Profile Signer* role |
+| `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE` | Windows signing | Trusted Signing endpoint URL, account name, certificate profile name |
+
+Windows is signed only when `AZURE_CLIENT_SECRET` and `WINDOWS_PUBLISHER_NAME` are both set. Otherwise it's built unsigned, and the run shows a warning.
+
+| Variable (optional) | Effect |
+| --- | --- |
+| `RELEASES_REPO` | Use another public releases repository (`owner/repo`) |
+| `RELEASE_PLATFORMS` | `macos` skips Windows and publishes a Mac-only release |
+| `FFMPEG_MIRROR` | HTTPS base URL that serves the exact FFmpeg archive pinned in `scripts/release/runtime-lock.json` (digest still enforced) |
+
+## Versioning
+
+The first CreatorClips release is `npm run release:major` (0.1.19, the last BridgeClip version, to 1.0.0).
+
+`npm run release:patch` (or `release:minor`, `release:major`, or `node scripts/release/bump-version.cjs X.Y.Z`) runs `scripts/release/bump-version.cjs`, which:
+
+1. requires a clean working tree and refuses an existing tag;
+2. bumps `package.json` and `package-lock.json`;
+3. moves `## [Unreleased]` entries into `## [X.Y.Z] - <today>` (it refuses an empty Unreleased) and updates the link definitions;
+4. runs `scripts/changelog.test.cjs`, commits `Release vX.Y.Z` and creates the annotated tag `vX.Y.Z`.
+
+It doesn't push. `git push origin HEAD --follow-tags` pushes the commit and tag and starts the release.
+
+## Updates in the app
+
+Installed apps check about 15 seconds after launch and every four hours, download in the background, and install on **Restart to update** or the next quit. `update-provider.ts` reads the release GitHub marks as latest. If that release lacks this platform's feed (after a Mac-only release, say), it falls back to the newest published, non-prerelease `vX.Y.Z` release that has one. Always publish with **Set as the latest release**, never as a prerelease: prereleases are ignored.
+
+Updates are off for: unpackaged builds, builds without a compiled-in signer, Mac builds not signed by that team, a Mac app running from its disk image or quarantine (Settings offers **Move to Applications**), and `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
+
+Before claiming updates work, install the first signed release, publish the next, and watch it update. A packaging run doesn't prove an upgrade path.
+
+## Never overwrite a release
+
+- A published version is never replaced. Fixes ship as a new version.
+- A failed run leaves at most a draft. Delete the draft in the releases repository and rerun, or release a new version.
+- If the tag was pushed but nothing was published, you may move it: `git tag -f vX.Y.Z && git push -f origin vX.Y.Z`.
+- To withdraw a bad public version, edit it in the releases repository and save it as a draft (or delete it). Then publish a higher version, so installed apps can recover.
 
 ## Runtime reproduction
 
-macOS: `bash scripts/prepare-resources.sh arm64` on Apple silicon, or `x64` on Intel. This builds LGPL FFmpeg and stages its caption libraries and licenses.
+- macOS: `bash scripts/prepare-resources.sh arm64` on Apple silicon, or `x64` on Intel. Needs Homebrew `pkg-config` and `libass` (plus `nasm` on Intel). It builds LGPL FFmpeg from the pinned source and bundles that source as `engine-bin/FFMPEG-SOURCE.tar.xz`.
+- Windows/Linux x64: `python scripts/release/stage-runtime.py` from a clean checkout. Windows needs Visual C++ build tools for the relocatable yt-dlp launcher; Linux needs `patchelf`. Python and FFmpeg archives are pinned by SHA-256 in `scripts/release/runtime-lock.json`.
+- **The pinned FFmpeg autobuild (`autobuild-2026-09-24-14-14`) has expired upstream.** BtbN deletes old daily builds, and this URL now returns 404, so Windows builds fail at "Bundle Python and FFmpeg" until a developer acts. Either move the pin to a current BtbN LGPL shared 8.1 build (new tag, file names and SHA-256s, plus the `FFmpeg 8.1.3` text in `stage-runtime.py`), or set `FFMPEG_MIRROR` to a copy of the exact pinned archive. Until then, set `RELEASE_PLATFORMS=macos` to ship Mac-only releases.
+- Windows FFmpeg is the LGPL shared upstream build. Distributing it requires offering its corresponding source. Publish a source archive for the exact build with each Windows release, or include a written offer.
 
-Windows/Linux x64: `python scripts/release/stage-runtime.py` from a clean checkout. Windows requires Visual C++ build tools for the relocatable yt-dlp launcher. Linux requires `patchelf`. Python and FFmpeg downloads are pinned by SHA-256 in `scripts/release/runtime-lock.json`. An HTTPS mirror may be selected with `BRIDGECLIP_FFMPEG_MIRROR`, preserving the same digest checks. Upstream FFmpeg daily assets expire; official automation keeps a private mirror of the exact archives.
-
-Run `npm ci`, application and engine tests, dependency audits, `npm run build`, then electron-builder for the native target. Official Windows builds use `scripts/release/windows-config.cjs` with Azure signing configuration and `forceCodeSigning`; unsigned developer packages must never be labeled official releases.
-
-`scripts/release/verify-runtime.py <packaged-resources-directory>` copies resources to a path containing spaces and tests the shipped Python, FFmpeg, framing model, captions, speed, audio, and downloader without relying on the checkout. `scripts/release/collect-artifacts.cjs` rejects missing platforms, mismatched versions, and altered artifacts.
-
-Windows/Linux FFmpeg uses the LGPL shared upstream build, with OpenH264 for CPU encoding. Its LGPL version and dependency set differ from the minimal macOS build. macOS release jobs archive the exact FFmpeg source, bundled Homebrew library sources, formulas, patches, and license inventory for each architecture. The Windows `v0.1.18` release includes `ffmpeg-corresponding-source-win-x64.tar.xz`; private publication checks the archive's pinned SHA-256 and includes it in the signed checksum manifest. Linux publication still requires a reviewed corresponding-source distribution for its exact dependency set. A link to upstream build recipes alone is not that distribution.
+`scripts/release/verify-runtime.py <resources>` copies packaged resources to a path containing spaces and tests the shipped Python, FFmpeg, captions, audio and downloader without the checkout.
 
 ## Verify a download
 
-Obtain `resources/release-public-key.pub` from a trusted source checkout. Compare its fingerprint independently before first use; trusting a key downloaded beside an artifact alone does not establish authenticity.
-
-Use OpenSSL 3 for this verification. On macOS, the built-in LibreSSL does not support this Ed25519 command; use the `openssl` executable from an OpenSSL 3 installation.
-
-```sh
-openssl pkeyutl -verify -rawin -pubin \
-  -inkey resources/release-public-key.pub \
-  -in SHA256SUMS.txt -sigfile SHA256SUMS.sig
-shasum -a 256 --check SHA256SUMS.txt
-```
-
-The manifest records the exact public source commit. macOS and Windows also have operating-system code signatures. Linux checksum signatures can be verified manually; the current Electron updater uses HTTPS and generated SHA-512 metadata and does not verify this detached signature itself.
+`SHA256SUMS.txt` lists every file's SHA-256: `shasum -a 256 --check SHA256SUMS.txt` in the download folder. It isn't separately signed. Trust comes from the operating system's code signature (on a Mac, `spctl --assess --verbose=2 /Applications/CreatorClips.app` should say `source=Notarized Developer ID`). `resources/release-public-key.pub` is the key BridgeMind used for BridgeClip releases. It does not sign CreatorClips releases.

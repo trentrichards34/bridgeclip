@@ -8,7 +8,7 @@ const editorFixture = require('../fixtures/editor/project.json')
 
 test('Jobs actions inspect runs and open completed jobs in the shared Library view', { timeout: 90000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-jobs-library-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const completedId = '11111111-1111-4111-8111-111111111111'
   const failedId = '22222222-2222-4222-8222-222222222222'
   const liveId = '33333333-3333-4333-8333-333333333333'
@@ -41,7 +41,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
   })
   const jobs = async () => {
     await page.getByRole('button', { name: /^Jobs(?:,|$)/ }).click()
-    await page.getByRole('heading', { name: 'Jobs', exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Everything that’s running or ran', exact: true }).waitFor()
   }
   const expectLibrary = async title => {
     await page.getByRole('heading', { name: title, exact: true }).waitFor()
@@ -56,7 +56,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
   await completedActions.press('ArrowDown')
   const menu = page.getByRole('menu', { name: 'Actions for Completed test run', exact: true })
   await menu.waitFor()
-  assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open in Library', 'Open folder', 'Details'])
+  assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open in Library', 'More clips from this video', 'Open folder', 'Details'])
   assert.equal(await menu.getByRole('menuitem', { name: 'Open in Library' }).evaluate(el => el === document.activeElement), true)
   await menu.press('Escape')
   assert.equal(await completedActions.evaluate(el => el === document.activeElement), true)
@@ -152,7 +152,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
 
 test('Jobs marks review runs as Editing until every candidate is baked or discarded', { timeout: 90000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-jobs-editing-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const runs = [
     { title: 'Unbaked review', statuses: ['refining', 'ready'], clips: 0, review: true },
     { title: 'Earlier exports with new edits', statuses: ['refining', 'baked'], clips: 1, review: true },

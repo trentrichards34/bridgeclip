@@ -1,7 +1,7 @@
-appId: com.bridgemind.bridgeclip
-productName: BridgeClip
-artifactName: BridgeClip-${version}-${os}-${arch}.${ext}
-copyright: Copyright © 2026 BridgeMind LLC
+appId: com.wealthery.creatorclips
+productName: CreatorClips
+artifactName: CreatorClips-${version}-${os}-${arch}.${ext}
+copyright: Copyright © 2026 Wealthery. Based on BridgeClip, Copyright © 2026 BridgeMind LLC (MIT)
 
 # Disable production debug/code-injection entry points and validate app.asar.
 electronFuses:
@@ -33,6 +33,10 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: src/renderer/assets/fonts/Geist-OFL.txt
     to: Geist-OFL.txt
+  - from: src/renderer/assets/fonts/SpaceGrotesk-OFL.txt
+    to: SpaceGrotesk-OFL.txt
+  - from: src/renderer/assets/fonts/JetBrainsMono-OFL.txt
+    to: JetBrainsMono-OFL.txt
   - from: bridge
     to: bridge
     filter:
@@ -50,6 +54,12 @@ extraResources:
       - "THIRD_PARTY_NOTICES.md"
       - "!**/__pycache__"
       - "!**/*.pyc"
+  # The AI explainer skill members save to their computer and run in their own Claude
+  # (src/main/ai-video-skill.ts). Shipped whole and unchanged, dotfolders included.
+  - from: resources/ai-video-skill
+    to: ai-video-skill
+    filter:
+      - "**/*"
   - from: engine-venv
     to: engine-venv
     filter:
@@ -64,19 +74,29 @@ extraMetadata:
 
 mac:
   category: public.app-category.video
+  # The oldest macOS the bundled FFmpeg runs on (Apple silicon, built on macos-14).
+  # Release CI raises it per architecture: scripts/release/builder-config.cjs mac <arch>
+  # sets 15.0 for Intel, which is built on macos-15-intel.
+  minimumSystemVersion: "14.0"
   hardenedRuntime: true
   gatekeeperAssess: false
-  identity: "BRIDGEMIND LLC (9CBJCDR3J2)"
+  # Local builds are unsigned. Release CI signs with our Apple Developer ID certificate
+  # through scripts/release/builder-config.cjs (identity = team ID, notarize).
+  identity: null
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: CreatorClips uses your camera when you record yourself in Edit my recording, or record a reaction, take or article video in Remix.
+    NSMicrophoneUsageDescription: CreatorClips records your voice when you record yourself in Edit my recording or Remix.
   # Each native CI job stages one architecture's Python and media binaries.
   # Let the CLI architecture select these targets; an explicit arch list here
   # would override it and package incompatible resources into the other app.
   target:
     - dmg
     - zip
-  # Credentials and APPLE_TEAM_ID are supplied by the protected release job.
-  notarize: true
+  # Turned on by scripts/release/builder-config.cjs for signed release builds,
+  # with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID from CI secrets.
+  notarize: false
 
 dmg:
   sign: false
@@ -90,9 +110,9 @@ dmg:
       path: /Applications
 
 win:
+  # The publisher whose signature updates must carry is set only for signed
+  # release builds (scripts/release/builder-config.cjs, CREATORCLIPS_WIN_PUBLISHER).
   verifyUpdateCodeSignature: true
-  signtoolOptions:
-    publisherName: BRIDGEMIND LLC
   target:
     - target: nsis
       arch:
@@ -110,7 +130,7 @@ nsis:
 linux:
   # Builder otherwise expands x64 as x86_64 for AppImage and amd64 for DEB.
   # Linux currently supports x64 only; keep one stable release naming contract.
-  artifactName: BridgeClip-${version}-linux-x64.${ext}
+  artifactName: CreatorClips-${version}-linux-x64.${ext}
   executableName: bridgeclip
   category: AudioVideo
   icon: build/icon.png
@@ -119,7 +139,7 @@ linux:
       arch: [x64]
     - target: deb
       arch: [x64]
-  maintainer: BridgeMind LLC <support@bridgemind.ai>
+  maintainer: Wealthery <trent@wealthery.com>
 
 deb:
   depends:
@@ -133,9 +153,12 @@ deb:
     - libuuid1
     - libsecret-1-0
 
-# Auto-updates come from GitHub Releases: electron-updater reads
-# latest-mac.yml / latest.yml / latest-linux.yml from the published release.
+# Auto-updates come from GitHub Releases in Wealthery's PUBLIC, installers-only
+# repository (the source repository is private, and installed apps have no
+# GitHub token). electron-updater reads latest-mac.yml / latest.yml from the
+# release GitHub marks as latest. Keep in step with DEFAULT_RELEASES_REPOSITORY
+# in src/shared/release-identity.ts; CI may override both with RELEASES_REPO.
 publish:
   provider: github
-  owner: bridge-mind
-  repo: bridgeclip
+  owner: trentrichards34
+  repo: creatorclips-releases

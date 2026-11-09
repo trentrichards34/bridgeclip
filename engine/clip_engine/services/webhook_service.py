@@ -240,7 +240,7 @@ class WebhookService:
 
         default_headers = {
             "Content-Type": "application/json",
-            "User-Agent": "BridgeClip-Engine/2.0",
+            "User-Agent": "CreatorClips-Engine/2.0",
             "X-Webhook-Event": payload.event,
             "X-Job-Id": payload.job_id,
         }
@@ -248,7 +248,7 @@ class WebhookService:
         # Add HMAC signature if secret is configured
         signature = self._sign_payload(payload_json)
         if signature:
-            default_headers["X-BridgeClip-Webhook-Signature"] = signature
+            default_headers["X-CreatorClips-Webhook-Signature"] = signature
 
         if headers:
             default_headers.update(headers)

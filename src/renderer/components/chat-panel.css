@@ -1,0 +1,61 @@
+/* The chat panel on review screens (Edit my recording, Remix): the clip editor's own look is in clip-editor.css. */
+.review-chat { display:flex; flex-direction:column; gap:12px; min-width:0; }
+.review-chat-reason { font-size:11px; line-height:1.5; color:rgb(var(--warning)); padding:8px 10px; border-radius:8px; background:rgb(var(--warning) / .08); }
+.review-chat-log { display:flex; flex-direction:column; gap:10px; min-width:0; max-height:360px; overflow-y:auto; padding-right:2px; }
+.review-chat-message { font-size:13px; line-height:1.55; overflow-wrap:anywhere; min-width:0; }
+.review-chat-message > p { white-space:pre-wrap; }
+.review-chat-message.member { align-self:flex-end; max-width:85%; padding:7px 11px; border-radius:12px 12px 4px 12px; background:rgb(var(--accent) / .14); color:rgb(var(--ink)); }
+.review-chat-message.assistant { display:flex; flex-direction:column; gap:8px; color:rgb(var(--ink)); }
+.review-chat-message.error { font-size:12px; color:rgb(var(--danger)); }
+.review-chat-card { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:10px; border:1px solid rgb(255 255 255 / .08); background:rgb(0 0 0 / .18); font-size:12px; line-height:1.5; }
+.review-chat-card ul { display:flex; flex-direction:column; gap:4px; }
+.review-chat-card li { position:relative; padding-left:12px; }
+.review-chat-card li::before { content:''; position:absolute; left:2px; top:.6em; width:4px; height:4px; border-radius:50%; background:rgb(var(--accent)); }
+.review-chat-card.undone li { color:rgb(var(--ink-subtle)); text-decoration:line-through; }
+.review-chat-compose { display:flex; flex-direction:column; gap:8px; padding-top:10px; border-top:1px solid rgb(255 255 255 / .06); }
+.review-chat-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.review-chat-chips button { font-size:11px; line-height:1; padding:6px 10px; border-radius:999px; border:1px solid #ffffff15; color:rgb(var(--ink-muted)); }
+.review-chat-chips button:hover:not(:disabled) { color:rgb(var(--ink)); border-color:rgb(var(--accent) / .45); }
+.review-chat-chips button:disabled { opacity:.5; cursor:default; }
+.review-chat-input { display:flex; align-items:flex-end; gap:6px; min-width:0; }
+.review-chat-input textarea { flex:1; min-width:0; resize:none; padding:8px 10px; font-size:13px; line-height:1.5; border:1px solid #ffffff14; border-radius:8px; background:rgb(0 0 0 / .22); color:rgb(var(--ink)); }
+.review-chat-input textarea::placeholder { color:rgb(var(--ink-subtle)); }
+.review-chat-input textarea:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:1px; }
+
+/* Graphics on a review screen: the strip over the reel or the take. */
+.reel-graphics-strip { position:relative; height:44px; border-radius:8px; background:rgb(0 0 0 / .22); overflow:hidden; cursor:copy; }
+.reel-graphics-strip .blocked { position:absolute; top:0; bottom:0; background:repeating-linear-gradient(135deg, rgb(255 255 255 / .05) 0 6px, transparent 6px 12px); }
+.reel-graphics-strip .word-tick { position:absolute; bottom:0; width:1px; height:6px; background:rgb(255 255 255 / .18); }
+.reel-graphics-strip .block { position:absolute; top:12px; height:26px; border-radius:6px; padding:0 6px; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; font-size:11px; color:rgb(var(--ink)); background:rgb(var(--accent) / .35); border:1px solid rgb(var(--accent) / .7); cursor:pointer; }
+.reel-graphics-strip .block.selected { background:rgb(var(--accent) / .6); box-shadow:0 0 0 2px rgb(var(--accent) / .35); }
+.reel-graphics-strip .block.conflict { background:rgb(var(--warning) / .3); border-color:rgb(var(--warning) / .8); }
+.reel-graphics-strip .playhead { position:absolute; top:0; bottom:0; width:2px; background:rgb(255 255 255 / .85); pointer-events:none; }
+.reel-graphic-picker { display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px; }
+.reel-graphic-picker button { display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px; border-radius:8px; border:1px solid #ffffff12; font-size:11px; color:rgb(var(--ink-muted)); }
+.reel-graphic-picker button:hover:not(:disabled) { color:rgb(var(--ink)); border-color:rgb(var(--accent) / .5); }
+.reel-graphic-picker button:disabled { opacity:.5; }
+
+/* Point at the preview: the layer over a preview, its pins, the chips over the message box, and the small frame on review screens. */
+.chat-point-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
+.chat-point-layer.pointing { pointer-events:auto; cursor:crosshair; z-index:6; touch-action:none; box-shadow:inset 0 0 0 2px rgb(var(--accent)); background:rgb(var(--accent) / .06); }
+.chat-point-prompt { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:5px 10px; border-radius:999px; font-size:11px; white-space:nowrap; color:white; background:rgb(0 0 0 / .72); pointer-events:none; }
+.chat-point-pin { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; font-size:11px; font-weight:700; line-height:1; color:rgb(var(--accent-ink)); background:rgb(var(--accent)); box-shadow:0 0 0 2px white, 0 2px 6px rgb(0 0 0 / .5); pointer-events:none; }
+.chat-point-pin.at { position:absolute; transform:translate(-50%, -50%); }
+.chat-point-box { position:absolute; border:2px solid rgb(var(--accent)); border-radius:4px; background:rgb(var(--accent) / .12); box-shadow:0 0 0 1px rgb(0 0 0 / .5); pointer-events:none; }
+.chat-point-box .chat-point-pin { position:absolute; left:-10px; top:-10px; }
+.chat-point-box.drawing { border-style:dashed; }
+.chat-point-chips { display:flex; flex-wrap:wrap; gap:4px; }
+.chat-point-chips li { display:inline-flex; align-items:center; gap:5px; padding:3px 4px 3px 8px; border-radius:999px; font-size:11px; line-height:1.2; color:rgb(var(--ink)); background:rgb(var(--accent) / .16); border:1px solid rgb(var(--accent) / .45); }
+.chat-point-chips li svg { color:rgb(var(--accent)); flex-shrink:0; }
+.chat-point-chips button { display:grid; place-items:center; width:16px; height:16px; border-radius:50%; color:rgb(var(--ink-muted)); }
+.chat-point-chips button:hover, .chat-point-chips button:focus-visible { color:rgb(var(--ink)); background:rgb(255 255 255 / .1); }
+.chat-point-sent { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:4px; font-size:10.5px; color:rgb(var(--ink-muted)); }
+.chat-point-sent li { display:inline-flex; align-items:center; gap:3px; }
+.chat-point-pad { position:relative; align-self:flex-start; width:120px; aspect-ratio:9 / 16; border-radius:8px; overflow:hidden; background:#000; border:1px solid rgb(255 255 255 / .1); }
+.chat-point-pad video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.chat-point-pad-grid { position:absolute; inset:0; background:
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 33.33% 0 / 1px 100% no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 66.66% 0 / 1px 100% no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 0 33.33% / 100% 1px no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 0 66.66% / 100% 1px no-repeat, #0b0d12; }
+.chat-point-pad .chat-point-prompt { top:auto; bottom:8px; font-size:10px; white-space:normal; width:max-content; max-width:90%; text-align:center; }

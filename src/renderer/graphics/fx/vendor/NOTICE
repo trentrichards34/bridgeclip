@@ -1,0 +1,10 @@
+CreatorClips "Effects" graphics
+
+The .html files in this folder (and their .registry-item.json metadata) are from HyperFrames
+https://github.com/heygen-com/hyperframes (commit 2ed882c), Copyright 2026 HeyGen, Inc.,
+licensed under the Apache License, Version 2.0 (LICENSE in this folder).
+
+caret-swap.html is HyperFrames' port of Remocn's caret-swap (Copyright (c) 2026 Remocn, MIT License);
+that notice is kept at the top of the file.
+
+Each file starts with a notice saying what CreatorClips changed. CreatorClips is not affiliated with HeyGen.

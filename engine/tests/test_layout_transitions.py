@@ -238,6 +238,9 @@ def test_punch_in_works_when_vision_saw_the_enlarged_camera():
 
 
 def test_recorded_punch_in_keeps_face_visible_and_returns_to_split(monkeypatch):
+    # Follows a punch-in recorded in the source; the person-main default view
+    # (tested in test_screen_focus.py) is turned off to keep the split around it.
+    monkeypatch.setattr(module, "PERSON_MAIN_MAX_UPSCALE", 0)
     fixture = json.loads((Path(__file__).parent / "fixtures/presenter_punch_in.json").read_text())
     frames = observations(fixture['duration_ms'], lambda _: [])
     for frame, sample in zip(frames, fixture['samples']):

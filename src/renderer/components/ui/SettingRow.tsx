@@ -17,7 +17,7 @@ export function SettingRow({ title, description, control, bare = false, classNam
     <div
       className={cn(
         'flex items-center justify-between gap-3',
-        !bare && 'glass-tile rounded-xl px-3 py-2',
+        !bare && 'glass-tile rounded-xl px-3 py-2.5',
         className
       )}
     >

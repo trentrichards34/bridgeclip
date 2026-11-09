@@ -9,14 +9,21 @@ export const CAPTION_PRESETS = [
   { id: 'impact', name: 'Impact', description: 'Tall, two words at a time' },
   { id: 'glow', name: 'Glow', description: 'Cyan bloom, tech & gaming' },
   { id: 'boxed', name: 'Boxed', description: 'Readable on any footage' },
-  { id: 'sweep', name: 'Sweep', description: 'Colour follows the voice' },
+  { id: 'sweep', name: 'Sweep', description: 'Color follows the voice' },
   { id: 'editorial', name: 'Editorial', description: 'Serif for podcasts & stories' },
   { id: 'hype', name: 'Hype', description: 'Heavy stroke, high energy' },
   { id: 'punch', name: 'Punch', description: 'One huge word at a time' },
   { id: 'neon', name: 'Neon', description: 'Magenta bloom, music & lifestyle' },
   { id: 'headline', name: 'Headline', description: 'Word on a red news tag' },
   { id: 'paper', name: 'Paper', description: 'Dark type on a white card' },
-  { id: 'subtle', name: 'Subtle', description: 'Light touch for interviews & vlogs' }
+  { id: 'subtle', name: 'Subtle', description: 'Light touch for interviews & vlogs' },
+  { id: 'beast', name: 'Beast', description: 'Comic type, challenge energy' },
+  { id: 'bubble', name: 'Bubble', description: 'Rounded & friendly' },
+  { id: 'retro', name: 'Retro', description: 'Cream type, hard orange shadow' },
+  { id: 'lime', name: 'Lime', description: 'Word on a lime pill' },
+  { id: 'vintage', name: 'Vintage', description: 'Retro ad-style serif' },
+  { id: 'highlight_box', name: 'Highlight box', description: 'White words on a purple box' },
+  { id: 'serif_clean', name: 'Serif clean', description: 'Plain white serif, lowercase' }
 ] as const
 
 export type CaptionPresetId = (typeof CAPTION_PRESETS)[number]['id']

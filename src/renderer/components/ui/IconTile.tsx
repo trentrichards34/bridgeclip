@@ -13,18 +13,18 @@ const SIZES: Record<Size, string> = {
 
 const TONES: Record<Tone, string> = {
   neutral:
-    'text-ink bg-white/[0.08] shadow-[inset_0_1px_0_rgb(255_255_255/0.18),inset_0_0_0_1px_rgb(255_255_255/0.1),0_6px_16px_-8px_rgb(0_0_0/0.6)]',
+    'text-ink-muted bg-white/[0.06] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]',
   accent:
-    'text-accent-ink bg-accent shadow-[inset_0_1px_0_rgb(255_255_255/0.16)]',
+    'text-tool bg-tool/[0.14]',
   success:
-    'text-success bg-success/15 shadow-[inset_0_1px_0_rgb(255_255_255/0.16),inset_0_0_0_1px_rgb(var(--success)/0.35)]',
+    'text-success bg-success/[0.14]',
   warning:
-    'text-warning bg-warning/15 shadow-[inset_0_1px_0_rgb(255_255_255/0.16),inset_0_0_0_1px_rgb(var(--warning)/0.35)]',
+    'text-warning bg-warning/[0.14]',
   danger:
-    'text-danger bg-danger/15 shadow-[inset_0_1px_0_rgb(255_255_255/0.16),inset_0_0_0_1px_rgb(var(--danger)/0.38)]'
+    'text-danger bg-danger/[0.14]'
 }
 
-/** A small glass lens holding an icon. */
+/** A small tinted tile holding an icon. `accent` takes the page's tool colour. */
 export function IconTile({ children, tone = 'neutral', size = 'md', className }: {
   children: ReactNode
   tone?: Tone

@@ -12,7 +12,7 @@ interface DialogProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * Modal shell: a dimmed, softly blurred backdrop and a thick-glass panel,
+ * Modal shell: a dimmed, softly blurred backdrop and a floating card,
  * portalled to <body> so no transformed ancestor (page entry animations,
  * hover lifts) can become its containing block. Focus management and Escape
  * stay with the caller; the forwarded ref is the panel (role="dialog").
@@ -24,7 +24,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
   return createPortal(
     <div
       className={cn(
-        'no-drag fixed inset-0 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[6px] animate-fade',
+        'no-drag fixed inset-0 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[6px] animate-fade',
         layer === 'system' ? 'z-[100]' : 'z-[90]',
         className
       )}
@@ -37,7 +37,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className={cn('glass-thick flex max-h-full w-full flex-col overflow-hidden rounded-3xl animate-pop-in focus:outline-none', panelClassName)}
+        className={cn('glass-thick flex max-h-full w-full flex-col overflow-hidden rounded-[18px] animate-pop-in focus:outline-none', panelClassName)}
         {...props}
       >
         {children}
@@ -50,7 +50,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
 /** Footer bar for a dialog: actions right-aligned on a slightly darker strip. */
 export function DialogFooter({ className, children }: { className?: string; children: ReactNode }): React.JSX.Element {
   return (
-    <div className={cn('flex items-center justify-end gap-2 border-t border-white/[0.07] bg-black/20 px-4 py-3', className)}>
+    <div className={cn('flex items-center justify-end gap-2 border-t border-white/[0.07] bg-sidebar/60 px-4 py-3', className)}>
       {children}
     </div>
   )

@@ -1,4 +1,4 @@
-/** BridgeClip approval policy defaults, independent of provider confidence. */
+/** CreatorClips approval policy defaults, independent of provider confidence. */
 export const JEV_DEFAULTS = {
   jevThreshold: '0.75',
   jevSelfContainedThreshold: '0.70',

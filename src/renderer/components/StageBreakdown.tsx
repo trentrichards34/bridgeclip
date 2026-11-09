@@ -30,7 +30,7 @@ export function StageBreakdown({ stages, updatedAt, running = false }: { stages:
           {active && <><progress aria-label={`${STAGE_NAMES[stage.id]} progress`} className="stage-progress mt-2 h-1.5 w-full" max={100} {...(stage.percent !== null ? { value: stage.percent } : {})} />
             <div className="mt-1 flex justify-between text-2xs text-ink-subtle"><span>{count ?? 'Working…'}</span><span>{stage.percent == null ? 'In progress' : `${Math.floor(stage.percent)}%`}</span></div></>}
           {!running && stage.state === 'running' && <span className="text-ink-subtle">Stopped before completion</span>}
-          {['failed', 'cancelled'].includes(stage.state) && <span className="text-danger">{stage.state === 'failed' ? 'Failed' : 'Cancelled'}</span>}
+          {['failed', 'cancelled'].includes(stage.state) && <span className="text-danger">{stage.state === 'failed' ? 'Failed' : 'Canceled'}</span>}
         </div>
       </li>
     })}

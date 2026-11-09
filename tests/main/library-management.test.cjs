@@ -314,3 +314,28 @@ test('clip deletion refuses active jobs and editor operations', async () => {
     assert.ok(fs.existsSync(path.join(f.run, 'clip_00.mp4')))
   } finally { f.cleanup() }
 })
+
+test('deleting a Remix video removes its saved parts for re-editing; a video being re-made blocks changes', async () => {
+  const f = clipFixture()
+  try {
+    for (const index of ['02', '00']) {
+      fs.mkdirSync(path.join(f.run, '.edit', `clip_${index}`), { recursive: true })
+      fs.writeFileSync(path.join(f.run, '.edit', `clip_${index}`, 'presenter.mp4'), 'your recording')
+    }
+    await f.main.deleteLibraryClips(f.run, [2])
+    assert.equal(fs.existsSync(path.join(f.run, '.edit', 'clip_02')), false, 'the recording goes with the video')
+    assert.ok(fs.existsSync(path.join(f.run, '.edit', 'clip_00', 'presenter.mp4')), 'other videos keep theirs')
+    // A symlinked parts folder is refused rather than followed.
+    const outside = fs.mkdtempSync(path.join(f.dir, 'outside-'))
+    fs.rmSync(path.join(f.run, '.edit', 'clip_00'), { recursive: true })
+    fs.symlinkSync(outside, path.join(f.run, '.edit', 'clip_00'))
+    await assert.rejects(f.main.deleteLibraryClips(f.run, [0]), /unsafe file path/)
+    assert.ok(fs.existsSync(outside))
+    fs.unlinkSync(path.join(f.run, '.edit', 'clip_00'))
+    // While a video in this run is being re-made, the Library leaves it alone.
+    const realRun = fs.realpathSync(f.run)
+    f.main.setRunBusyCheck((run) => run === realRun ? 'Wait for this video to finish being re-made.' : null)
+    await assert.rejects(f.main.deleteLibraryClips(f.run, [0]), /being re-made/)
+    f.main.setRunBusyCheck(() => null)
+  } finally { f.cleanup() }
+})

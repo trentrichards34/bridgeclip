@@ -1,0 +1,19 @@
+/* Edit my recording's progress view: the current step's ring and the words heard coming in. */
+@keyframes edit-progress-ring {
+  0% { box-shadow: 0 0 0 0 rgb(var(--tool) / 0.55); }
+  100% { box-shadow: 0 0 0 9px rgb(var(--tool) / 0); }
+}
+@keyframes edit-progress-word {
+  from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@keyframes edit-progress-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.edit-progress-live { animation: edit-progress-ring 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+.edit-progress-word { display: inline-block; animation: edit-progress-word 420ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.edit-progress-sweep { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(var(--tool) / 0.18), transparent); animation: edit-progress-sweep 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .edit-progress-live, .edit-progress-word, .edit-progress-sweep { animation: none; }
+}

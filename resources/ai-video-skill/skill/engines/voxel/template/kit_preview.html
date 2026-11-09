@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>voxel kit preview</title>
+<!-- Kit preview: a contact sheet of every kit prop + the cast, pages defined in kit_preview.js (page N at ?t=N).
+     Render it with:  node tools/reel.mjs stills <project> 1 2 3 4 5 6 7 8 --only kit   (index.html?only=kit is the same page) -->
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+#stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+#c { position: absolute; inset: 0; width: 1080px; height: 1920px; display: block; }
+#fx, #hud { position: absolute; inset: 0; pointer-events: none; font-family: Figtree, Inter, Fallback; overflow: hidden; }
+#grade { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 85% at 50% 50%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.22) 100%); }
+#grain { position: absolute; inset: -50%; pointer-events: none; opacity: .10; mix-blend-mode: overlay; }
+#flash { position: absolute; inset: 0; pointer-events: none; background: #fff; opacity: 0; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/skill/node_modules/three/build/three.module.js",
+  "three/addons/": "/skill/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><filter id="whipblur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur id="whipdev" stdDeviation="0 0"/></filter></svg>
+<div id="stage">
+  <canvas id="c" width="1080" height="1920"></canvas>
+  <div id="fx"></div>
+  <div id="grade"></div>
+  <canvas id="grain" width="512" height="512"></canvas>
+  <div id="hud"></div>
+  <div id="flash"></div>
+</div>
+<script type="module">
+import { bootPreview } from '/engine/core/preview.js';
+window.READY = bootPreview();
+const q = new URLSearchParams(location.search); if (q.has('t')) window.READY.then(() => window.renderAt(parseFloat(q.get('t'))));
+window.READY.catch((e) => console.error('boot failed: ' + (e && e.stack || e)));
+</script>
+</body>
+</html>

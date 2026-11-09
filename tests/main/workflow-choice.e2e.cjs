@@ -29,7 +29,7 @@ test('each new video requires a workflow, with keyboard selection and guarded na
   const group = page.getByRole('radiogroup', { name: 'Workflow', exact: true })
   const automatic = group.getByRole('radio', { name: 'Automatic', exact: true })
   const review = group.getByRole('radio', { name: 'Review & edit', exact: true })
-  const next = page.getByRole('button', { name: 'Next: Format', exact: true })
+  const next = page.getByRole('button', { name: 'Next: Clips', exact: true })
   const steps = page.getByRole('navigation', { name: 'Create steps' })
   const shortcut = process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
   const assertSelectionMotion = async (radio) => {
@@ -59,8 +59,8 @@ test('each new video requires a workflow, with keyboard selection and guarded na
     assert.equal(await review.getAttribute('aria-checked'), 'false')
     assert.equal(await automatic.getAttribute('tabindex'), '0')
     assert.equal(await next.isDisabled(), true)
-    assert.equal(await steps.getByRole('button', { name: /Format/ }).isDisabled(), true)
-    assert.equal(await steps.getByRole('button', { name: /Review/ }).isDisabled(), true)
+    assert.equal(await steps.getByRole('button', { name: /^Step \d: More options$/ }).isDisabled(), true)
+    assert.equal(await steps.getByRole('button', { name: /^Step \d: Review$/ }).isDisabled(), true)
   }
   await assertUnselected()
   await group.getByText('Beginner friendly', { exact: true }).waitFor()
@@ -84,7 +84,7 @@ test('each new video requires a workflow, with keyboard selection and guarded na
   await page.keyboard.press(shortcut)
   assert.deepEqual(await app.evaluate(() => globalThis.workflowTest), [])
   // Tab into an unselected group without silently making a choice.
-  await steps.getByRole('button', { name: /Video/ }).focus()
+  await steps.getByRole('button', { name: /^Step \d: Workflow$/ }).focus()
   await page.keyboard.press('Tab')
   assert.equal(await automatic.evaluate((el) => el === document.activeElement), true)
   assert.equal(await automatic.getAttribute('aria-checked'), 'false')
@@ -95,10 +95,13 @@ test('each new video requires a workflow, with keyboard selection and guarded na
   await next.click()
   assert.equal(await page.getByRole('switch', { name: 'Capture framing diagnostics', exact: true }).count(), 0)
   await page.getByRole('button', { name: 'Back', exact: true }).click()
+  // Moving on folds the chosen workflow to one line; Change opens it again.
+  await steps.getByRole('button', { name: /^Step \d: Workflow$/ }).click()
   assert.equal(await review.getAttribute('aria-checked'), 'true')
   assert.equal(await review.locator('svg.workflow-illustration').evaluate((svg) => svg.getAnimations({ subtree: true }).length), 0)
   await page.getByRole('button', { name: 'Jobs', exact: true }).click()
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
+  await steps.getByRole('button', { name: /^Step \d: Workflow$/ }).click()
   assert.equal(await review.getAttribute('aria-checked'), 'true')
   await automatic.click()
   await page.keyboard.press(shortcut)
@@ -118,11 +121,11 @@ test('each new video requires a workflow, with keyboard selection and guarded na
   await page.waitForFunction(() => window.innerWidth === 720)
   if (artifacts) await page.screenshot({ path: path.join(artifacts, 'workflow-compact.png') })
   await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth, null, { timeout: 5000 })
-  // Compact windows hide inactive step labels but keep the five step buttons.
-  await steps.getByRole('button').nth(4).click()
+  // Compact windows keep every step and the generate bar pinned to the bottom.
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   await page.getByRole('button', { name: 'Find candidates', exact: true }).click()
   await steps.waitFor({ state: 'hidden' })
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Clip', exact: true }).click()
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
   assert.equal(await app.evaluate(() => globalThis.workflowTest[1].workflow), 'review')
   assert.deepEqual(errors, [])

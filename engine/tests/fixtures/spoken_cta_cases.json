@@ -1,0 +1,25 @@
+{
+  "about": "Spoken call to action cases shared by engine/tests/test_spoken_cta.py and tests/main/spoken-cta.test.cjs. Words are 300 ms apart (250 ms long); '/' is a 700 ms pause. window: the video's span in ms (default: the words' own). expect: null when no call to action is said.",
+  "cases": [
+    {"name": "click the link below, then a line", "text": "so that's how it works. click the link below to grab it", "expect": {"kind": "link", "text": "Click the link", "where": "below", "keyword": "", "lead": "Grab it"}},
+    {"name": "Travis: hit the link where you see it", "text": "and i'm not charging anybody hit the link where you see it get all the details let me show you how this thing works", "expect": {"kind": "link", "text": "Hit the link", "where": "where you see it", "keyword": "", "lead": "Get all the details"}},
+    {"name": "link in my bio, no verb", "text": "that's everything. the link is in my bio.", "expect": {"kind": "link", "text": "Link is in my bio", "where": "", "keyword": "", "lead": ""}},
+    {"name": "tap the link in my bio to get the guide", "text": "Tap the link in my bio to get the free guide.", "expect": {"kind": "link", "text": "Tap the link", "where": "in my bio", "keyword": "", "lead": "Get the free guide"}},
+    {"name": "sign up at the link below", "text": "Sign up at the link below.", "expect": {"kind": "link", "text": "Sign up", "where": "below", "keyword": "", "lead": ""}},
+    {"name": "comment a keyword", "text": "Comment GUIDE below and I'll send it to you", "expect": {"kind": "comment", "text": "Comment GUIDE", "where": "", "keyword": "GUIDE", "lead": ""}},
+    {"name": "comment the word", "text": "So comment the word AI and I will message you", "expect": {"kind": "comment", "text": "Comment the word AI", "where": "", "keyword": "AI", "lead": ""}},
+    {"name": "let me know in the comments", "text": "Let me know in the comments what you think", "expect": {"kind": "comment", "text": "Let me know in the comments", "where": "", "keyword": "", "lead": ""}},
+    {"name": "DM me a keyword", "text": "DM me SCALE for the free checklist.", "expect": {"kind": "dm", "text": "DM me SCALE", "where": "", "keyword": "SCALE", "lead": ""}},
+    {"name": "follow for more", "text": "Follow for more tips like this.", "expect": {"kind": "follow", "text": "Follow for more tips", "where": "", "keyword": "", "lead": ""}},
+    {"name": "make sure to follow me", "text": "Make sure to follow me so you don't miss part two", "expect": {"kind": "follow", "text": "Follow me", "where": "", "keyword": "", "lead": ""}},
+    {"name": "save this for later", "text": "Save this for later.", "expect": {"kind": "save", "text": "Save this for later", "where": "", "keyword": "", "lead": ""}},
+    {"name": "share this with a friend", "text": "Share this with a friend who needs it.", "expect": {"kind": "share", "text": "Share this with a friend", "where": "", "keyword": "", "lead": ""}},
+    {"name": "a link beats a follow", "text": "Follow me / and click the link below.", "expect": {"kind": "link", "text": "Click the link", "where": "below", "keyword": "", "lead": ""}},
+    {"name": "describing a click is no request", "text": "Then you click the link and it opens the dashboard.", "expect": null},
+    {"name": "a comment as a noun", "text": "I left a comment on his video yesterday.", "expect": null},
+    {"name": "we save this", "text": "We save this money every single month.", "expect": null},
+    {"name": "a link between two things", "text": "There's a link between sleep and focus.", "expect": null},
+    {"name": "only near the end", "text": "Click the link below. Then we talk about pricing for a while.", "window": [0, 120000], "expect": null},
+    {"name": "no call to action", "text": "This is how I grew my audience in one year with no ads at all.", "expect": null}
+  ]
+}

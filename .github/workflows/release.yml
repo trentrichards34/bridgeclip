@@ -1,0 +1,271 @@
+# Builds CreatorClips installers.
+#
+# - Pushing a version tag (vX.Y.Z, made by `npm run release:patch`) builds signed,
+#   notarized Mac apps (Apple silicon and Intel) and the Windows installer, then
+#   uploads them as a DRAFT release in the public releases repository. Nothing
+#   reaches members until someone clicks "Publish release" there.
+# - Running it by hand (Actions -> Release -> Run workflow) builds UNSIGNED test
+#   copies and keeps them as downloadable artifacts on the run. Nothing is published.
+#
+# Setup and secrets: docs/FIRST-RELEASE-CHECKLIST.md. Details: docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Which unsigned test builds to make
+        type: choice
+        options: [all, macos, windows]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Public, installers-only repository members download from (and the app updates from).
+  CREATORCLIPS_RELEASES_REPO: ${{ vars.RELEASES_REPO || 'trentrichards34/creatorclips-releases' }}
+  # A tag push is an official release: signed and published as a draft.
+  OFFICIAL: ${{ github.event_name == 'push' }}
+
+jobs:
+  check:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Version
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$OFFICIAL" == "true" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version. Use npm run release:patch to make the tag."
+            exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:main
+      # Includes the changelog check: the version needs a dated CHANGELOG.md section.
+      - run: npm run test:release
+
+  mac:
+    name: Mac (${{ matrix.arch }})
+    needs: check
+    if: github.event_name == 'push' || inputs.platform != 'windows'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each architecture is built natively: the bundled Python and FFmpeg are per-architecture.
+          # The app runs on the runner's macOS version or newer (Homebrew's caption libraries are built for it).
+          - arch: arm64
+            runner: macos-14
+            app: dist/mac-arm64/CreatorClips.app
+          # macos-13 (the last Intel image before it) was retired in December 2025.
+          - arch: x64
+            runner: macos-15-intel
+            app: dist/mac/CreatorClips.app
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      APP: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build tools for FFmpeg
+        run: |
+          brew install pkg-config libass
+          if [[ "$ARCH" == "x64" ]]; then brew install nasm; fi
+      - run: npm ci
+      - name: Bundle Python and FFmpeg
+        run: bash scripts/prepare-resources.sh "$ARCH"
+      - name: Build app
+        env:
+          RELEASE_SIGNING: ${{ env.OFFICIAL == 'true' && '1' || '0' }}
+          # The team ID the app trusts for updates is the team that signs it.
+          CREATORCLIPS_MAC_TEAM_ID: ${{ env.OFFICIAL == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_LINK: ${{ env.OFFICIAL == 'true' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ env.OFFICIAL == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ env.OFFICIAL == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ env.OFFICIAL == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ env.OFFICIAL == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.OFFICIAL == 'true' && 'true' || 'false' }}
+        run: |
+          npm run build
+          node scripts/release/builder-config.cjs mac "$ARCH"
+          npx electron-builder --mac "--$ARCH" --config release-mac.json --publish never
+      - name: Notarize the disk image
+        if: env.OFFICIAL == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          dmg="dist/CreatorClips-$VERSION-mac-$ARCH.dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+      # Stapling changed the DMG's bytes; updates use the ZIP. Rewrites latest-mac.yml to match.
+      - run: node scripts/release/refresh-metadata.cjs dist/latest-mac.yml
+      - name: Check the packaged app
+        run: bash scripts/verify-packaged-mac.sh "$APP" "$ARCH"
+      - name: Check signature and notarization
+        if: env.OFFICIAL == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=2 "$APP" 2>&1 | grep -x "TeamIdentifier=$APPLE_TEAM_ID"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+          xcrun stapler validate "dist/CreatorClips-$VERSION-mac-$ARCH.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          if-no-files-found: error
+          # Official builds are copied to the releases repository right away; test builds stay a week.
+          retention-days: ${{ env.OFFICIAL == 'true' && 2 || 7 }}
+          compression-level: 0
+          path: |
+            dist/CreatorClips-*-mac-${{ matrix.arch }}.dmg
+            dist/CreatorClips-*-mac-${{ matrix.arch }}.zip
+            dist/CreatorClips-*-mac-${{ matrix.arch }}.zip.blockmap
+            dist/latest-mac.yml
+
+  windows:
+    name: Windows (x64)
+    needs: check
+    if: (github.event_name == 'push' && vars.RELEASE_PLATFORMS != 'macos') || (github.event_name == 'workflow_dispatch' && inputs.platform != 'macos')
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      signed: ${{ steps.build.outputs.signed }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      # Optional HTTPS mirror of the exact FFmpeg archive pinned in scripts/release/runtime-lock.json.
+      BRIDGECLIP_FFMPEG_MIRROR: ${{ vars.FFMPEG_MIRROR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Bundle Python and FFmpeg
+        run: python scripts/release/stage-runtime.py
+      - name: Build installer
+        id: build
+        shell: bash
+        env:
+          # Signing is optional: without the Azure secrets the installer is unsigned and labeled so.
+          SIGN: ${{ env.OFFICIAL == 'true' && secrets.AZURE_CLIENT_SECRET != '' && secrets.WINDOWS_PUBLISHER_NAME != '' }}
+          WINDOWS_PUBLISHER_NAME: ${{ secrets.WINDOWS_PUBLISHER_NAME }}
+          SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          if [[ "$SIGN" == "true" ]]; then
+            export RELEASE_SIGNING=1 CREATORCLIPS_WIN_PUBLISHER="$WINDOWS_PUBLISHER_NAME"
+          else
+            # Unsigned: compile in no publisher, so this copy never tries to update itself.
+            export RELEASE_SIGNING=0 CREATORCLIPS_WIN_PUBLISHER=
+            unset AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET
+            echo "::warning::Building an UNSIGNED Windows installer (no Azure signing secrets, or a test build)."
+          fi
+          echo "signed=$SIGN" >> "$GITHUB_OUTPUT"
+          npm run build
+          node scripts/release/builder-config.cjs windows
+          npx electron-builder --win --x64 --config release-windows.json --publish never
+      - name: Check the packaged app
+        run: python scripts/release/verify-runtime.py dist/win-unpacked/resources
+      - name: Check the signature and install
+        if: steps.build.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_PUBLISHER_NAME: ${{ secrets.WINDOWS_PUBLISHER_NAME }}
+        run: ./scripts/release/verify-windows.ps1 -Installer "dist/CreatorClips-$env:VERSION-win-x64.exe" -Publisher $env:WINDOWS_PUBLISHER_NAME
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          if-no-files-found: error
+          retention-days: ${{ env.OFFICIAL == 'true' && 2 || 7 }}
+          compression-level: 0
+          path: |
+            dist/CreatorClips-*-win-x64.exe
+            dist/CreatorClips-*-win-x64.exe.blockmap
+            dist/latest.yml
+            dist/verification-windows-x64.json
+
+  publish:
+    name: Draft release
+    needs: [check, mac, windows]
+    # Mac-only releases are allowed when the RELEASE_PLATFORMS variable is "macos".
+    if: >-
+      always() && github.event_name == 'push' &&
+      needs.mac.result == 'success' &&
+      (needs.windows.result == 'success' || (needs.windows.result == 'skipped' && vars.RELEASE_PLATFORMS == 'macos'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PLATFORMS: ${{ needs.windows.result == 'success' && 'desktop' || 'macos' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Only js-yaml is needed here; skip Electron's download.
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Check and collect the files
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: node scripts/release/collect-artifacts.cjs artifacts publish "$VERSION" "$GITHUB_SHA" "$PLATFORMS"
+      - name: Release notes
+        run: |
+          flags=()
+          if [[ "$PLATFORMS" == "desktop" && "${{ needs.windows.outputs.signed }}" != "true" ]]; then flags+=(--windows-unsigned); fi
+          node scripts/release/release-notes.cjs "$VERSION" "${flags[@]}" > notes.md
+          if [[ "$PLATFORMS" == "macos" ]]; then sed -i '/Windows (64-bit)/d' notes.md; fi
+          cat notes.md
+      - name: Upload as a draft to ${{ env.CREATORCLIPS_RELEASES_REPO }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_RELEASES_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then echo "::error::Add the GH_RELEASES_TOKEN secret (see docs/FIRST-RELEASE-CHECKLIST.md)."; exit 1; fi
+          # Never replaces a release: fails if v$VERSION already exists there.
+          gh release create "v$VERSION" publish/* \
+            --repo "$CREATORCLIPS_RELEASES_REPO" \
+            --draft --latest \
+            --title "CreatorClips $VERSION" \
+            --notes-file notes.md
+          echo "### Draft ready: https://github.com/$CREATORCLIPS_RELEASES_REPO/releases" >> "$GITHUB_STEP_SUMMARY"
+          echo "Open it, check it, and click **Publish release**. Members get the update within about 4 hours." >> "$GITHUB_STEP_SUMMARY"

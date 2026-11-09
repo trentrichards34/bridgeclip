@@ -1,0 +1,8 @@
+GSAP (GreenSock Animation Platform), npm package "gsap"
+Copyright 2008-2025, GreenSock. All rights reserved.
+Subject to the terms at https://gsap.com/standard-license
+(the "Standard 'no charge' license" named in the package's package.json).
+
+The npm package ships no separate license file; this notice repeats the license header
+from its source files (for example gsap-core.js and CustomEase.js). CreatorClips bundles
+GSAP into its renderer to drive the "Effects" motion graphics (HyperFrames units).

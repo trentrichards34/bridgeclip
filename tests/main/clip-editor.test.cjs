@@ -238,6 +238,22 @@ test('editor saves only editable fields, survives reload and refuses stale revis
   } finally { f.cleanup() }
 })
 
+test('a changed hook text is reported once the save is written (so an edited recording keeps it next time)', async () => {
+  const f = setup()
+  try {
+    const heard = []
+    f.main.onEditorHookSaved((run, id, text) => heard.push([path.basename(run), id, text]))
+    const edits = (await f.main.openEditor(f.run)).project.candidates
+    const look = { look: 'white', color: '#FFFFFF', font: 'clean' }
+    edits[0].hook = { text: 'My own headline', look }
+    await f.main.saveEditor(f.run, 0, edits)
+    assert.deepEqual(heard, [['review-run', edits[0].id, 'My own headline']])
+    // Saved again unchanged: nothing new is reported.
+    await f.main.saveEditor(f.run, 1, edits)
+    assert.equal(heard.length, 1)
+  } finally { f.cleanup() }
+})
+
 test('only ready candidates render and only a completed render can mark a candidate baked', async () => {
   const f = setup()
   try {
@@ -377,18 +393,18 @@ function batchSetup() {
     child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough()
     child.stdin.end = (data) => {
       const config = JSON.parse(data)
-      workers.push({ config, write: (data) => child.stdout.write(data), close: (code) => child.emit('close', code), finish(ok = true) {
+      workers.push({ config, write: (data) => child.stdout.write(data), close: (code) => child.emit('close', code), finish(ok = true, extra = {}) {
         if (ok) {
           const file = path.join(f.run, 'editor-project.json')
           const project = JSON.parse(fs.readFileSync(file))
           assert.equal(config.revision, project.revision)
           const candidate = project.candidates.find(c => c.id === config.candidate_id)
           assert.equal(candidate.status, 'ready')
-          candidate.status = 'baked'; candidate.exports.push(project.revision)
+          candidate.status = 'baked'; candidate.exports.push(candidate.library_clip ?? project.revision)
           project.revision++
           fs.writeFileSync(file, JSON.stringify(project))
         }
-        child.stdout.write(JSON.stringify({ ok })); child.emit('close', ok ? 0 : 1)
+        child.stdout.write(JSON.stringify({ ok, ...extra })); child.emit('close', ok ? 0 : 1)
       } })
     }
     return child
@@ -442,7 +458,7 @@ for (const cancelled of [false, true]) test(`batch ${cancelled ? 'cancellation' 
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*cancelled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
+    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*canceled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
     ;(await nextWorker(f.workers, 1)).finish()
     const second = await nextWorker(f.workers, 2)
     if (cancelled) f.main.cancelEditor(f.run)
@@ -460,11 +476,143 @@ for (const cancelled of [false, true]) test(`batch ${cancelled ? 'cancellation' 
   } finally { f.cleanup() }
 })
 
+test('bakes that translate captions are estimated from the run, and their cost reaches the ledger even when the render fails', async () => {
+  const f = batchSetup()
+  try {
+    const spent = []
+    f.main.onEditorSpend(async (usd, label) => { spent.push({ usd, label }) })
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    project.candidates[1].caption_language = 'es'
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    // No translation recorded for this run yet: the clip count is known, the cost is not.
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, '', 'export-all'), { clips: 1, estimateUsd: null })
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-4', 'export'), { clips: 0, estimateUsd: null })
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-1', 'review'), { clips: 0, estimateUsd: null })
+    const output = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json')))
+    output.metrics = { api_costs: { total_estimated_cost_usd: 0.006, caption_translation: { estimated_cost_usd: 0.006, attempts: 3 } } }
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify(output))
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-1', 'export'), { clips: 1, estimateUsd: 0.002 })
+    // The render fails after the translation was paid for: the cost is still recorded.
+    const pending = f.main.runEditor(f.run, 0, 'candidate-1', 'export')
+    const rejected = assert.rejects(pending, /Rendering failed/)
+    ;(await nextWorker(f.workers, 1)).finish(false, { error: 'render_failed', cost_usd: 0.0021, model: 'test/model' })
+    await rejected
+    assert.deepEqual(spent, [{ usd: 0.0021, label: 'Editor caption translation' }])
+    const costs = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json'))).metrics.api_costs
+    assert.equal(costs.editor_caption_translation.estimated_cost_usd, 0.0021)
+    // A finished bake records what it cost too.
+    const again = f.main.runEditor(f.run, 0, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 2)).finish(true, { cost_usd: 0.0019 })
+    await again
+    assert.deepEqual(spent.at(-1), { usd: 0.0019, label: 'Editor caption translation' })
+  } finally { f.cleanup() }
+})
+
+test('a review records what its judgments cost (failed part way or not), and is estimated from earlier ones', async () => {
+  const f = batchSetup()
+  try {
+    const spent = []
+    f.main.onEditorSpend(async (usd, label) => { spent.push({ usd, label }) })
+    f.main.settings.replaceApiKey('openrouterApiKey', 'fixture-key')
+    // Nothing recorded yet: no estimate (the spending check asks for its minimum balance instead).
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), null)
+    const failed = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    const rejected = assert.rejects(failed)
+    ;(await nextWorker(f.workers, 1)).finish(false, { error: 'review_unavailable', cost_usd: 0.001 })
+    await rejected
+    const done = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    ;(await nextWorker(f.workers, 2)).finish(true, { cost_usd: 0.003 })
+    await done
+    assert.deepEqual(spent, [{ usd: 0.001, label: 'Editor review' }, { usd: 0.003, label: 'Editor review' }])
+    const costs = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json'))).metrics.api_costs
+    assert.deepEqual([costs.editor_review.estimated_cost_usd, costs.editor_review.attempts], [0.004, 2])
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), 0.002)
+    assert.equal(await f.main.editorCallEstimate(f.run, 'suggest-hooks'), null)
+  } finally { f.main.settings.replaceApiKey('openrouterApiKey', ''); f.cleanup() }
+})
+
+test('re-baking an Automatic clip keeps the call to action its Library clip has now, unless it was changed in the editor', async () => {
+  const f = batchSetup()
+  try {
+    const applied = []
+    f.main.onEditorExportCta(async (_run, ctaId, index) => { applied.push({ ctaId, index }) })
+    const captured = 'a'.repeat(16), library = 'b'.repeat(16), chosen = 'c'.repeat(16)
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    Object.assign(project.candidates[1], { library_clip: 0, cta_id: captured })
+    Object.assign(project.candidates[4], { library_clip: 1, cta_id: captured })
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    const clip = (index, cta) => ({ clip_index: index, s3_url: path.join(f.run, `clip_0${index}.mp4`), duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 50, ...(cta ? { cta: { id: cta, name: 'Offer' } } : {}) })
+    // Clip 0's call to action was changed in the Library since conversion; clip 1's was removed there.
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'review-run', editor_project: true, clips: [clip(0, library), clip(1, null)] }))
+    const pending = f.main.runEditor(f.run, 0, '', 'export-all')
+    ;(await nextWorker(f.workers, 1)).finish()
+    ;(await nextWorker(f.workers, 2)).finish()
+    await pending
+    assert.deepEqual(applied, [{ ctaId: library, index: 0 }])
+    // Changed in the editor: the editor's choice wins over the Library's.
+    const saved = (await f.main.openEditor(f.run)).project
+    saved.candidates[1] = { ...saved.candidates[1], status: 'ready', cta_id: chosen }
+    const after = await f.main.saveEditor(f.run, saved.revision, saved.candidates)
+    assert.equal(after.project.candidates[1].cta_edited, true)
+    assert.equal(after.project.candidates[4].cta_edited, undefined)
+    const rebake = f.main.runEditor(f.run, after.project.revision, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 3)).finish()
+    await rebake
+    assert.deepEqual(applied.at(-1), { ctaId: chosen, index: 0 })
+    // Once baked, the Library clip ends as the editor chose: a later change in the Library wins again.
+    const baked = (await f.main.openEditor(f.run)).project
+    assert.equal(baked.candidates[1].cta_edited, undefined)
+    const later = 'd'.repeat(16)
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'review-run', editor_project: true, clips: [clip(0, later), clip(1, null)] }))
+    baked.candidates[1] = { ...baked.candidates[1], status: 'ready' }
+    const ready = await f.main.saveEditor(f.run, baked.revision, baked.candidates)
+    const third = f.main.runEditor(f.run, ready.project.revision, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 4)).finish()
+    await third
+    assert.deepEqual(applied.at(-1), { ctaId: later, index: 0 })
+  } finally { f.cleanup() }
+})
+
+test('a Remix video whose call to action is already in its picture is never given a second one; a stale remix waits for the editor to refresh', async () => {
+  const f = batchSetup()
+  try {
+    const applied = []
+    f.main.onEditorExportCta(async (_run, ctaId, index) => { applied.push({ ctaId, index }) })
+    const cta = 'a'.repeat(16)
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    project.automatic = { omitted: [], estimated_cuts: 0, remix: true }
+    // The copy without the call to action was freed: the base video (and this clip) ends with it.
+    Object.assign(project.candidates[1], { library_clip: 0, cta_id: null, cta_in_picture: true, remix_span: [1000, 10000] })
+    Object.assign(project.candidates[4], { library_clip: 1, cta_id: cta, remix_span: [1000, 10000] })
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    const clip = (index, extra = {}) => ({ clip_index: index, s3_url: path.join(f.run, `clip_0${index}.mp4`), duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 50, cta: { id: cta, name: 'Offer' }, ...extra })
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0), clip(1)] }))
+    // Re-made in Remix since: baking waits until the editor's copy is refreshed.
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0, { editor_stale: true }), clip(1)] }))
+    await assert.rejects(f.main.runEditor(f.run, 0, '', 'export-all'), /Open the run in the editor again/)
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'remix-run', editor_project: true, clips: [clip(0), clip(1)] }))
+    const pending = f.main.runEditor(f.run, 0, '', 'export-all')
+    ;(await nextWorker(f.workers, 1)).finish()
+    ;(await nextWorker(f.workers, 2)).finish()
+    await pending
+    // Candidate 1 kept its call to action as it is (in the picture); candidate 4 is cut from the same video's end too.
+    assert.deepEqual(applied, [])
+    const saved = (await f.main.openEditor(f.run)).project
+    assert.equal(saved.candidates[1].cta_in_picture, true)
+    assert.deepEqual(saved.candidates[1].remix_span, [1000, 10000])
+    // Shared rule: only clips that reach that video's last second carry it.
+    const early = { ...saved.candidates[4], ranges: [[1000, 5000]] }
+    assert.equal(schema.ctaInPicture(saved, early), false)
+    assert.equal(schema.ctaInPicture(saved, saved.candidates[4]), true)
+    assert.equal(schema.ctaInPicture({ ...saved, automatic: { omitted: [], estimated_cuts: 0 } }, saved.candidates[4]), false)
+  } finally { f.cleanup() }
+})
+
 test('cancelling between batch clips never starts the next worker', async () => {
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, /Baked 1 of 2.*cancelled/)
+    const rejected = assert.rejects(pending, /Baked 1 of 2.*canceled/)
     ;(await nextWorker(f.workers, 1)).finish()
     f.main.cancelEditor(f.run)
     await rejected
@@ -513,7 +661,7 @@ for (const outcome of ['success', 'failure', 'cancelled', 'committed-before-exit
     await assert.rejects(f.main.replaceEditorSource(f.run, 999, replacement), /changed/)
     await assert.rejects(f.main.runEditor(f.run, 0, '', 'replace-source'), /Invalid/)
     const pending = f.main.replaceEditorSource(f.run, 0, replacement)
-    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement cancelled\. The previous source is still in use/ : /replacement stopped/)
+    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement canceled\. The previous source is still in use/ : /replacement stopped/)
     await entered
     assert.equal(config.action, 'replace-source')
     assert.equal(fs.readFileSync(path.join(f.run, `editor-source-${config.source_id}.mp4`), 'utf8'), 'higher resolution source')
@@ -614,7 +762,7 @@ test('camera scan locks edits, needs no provider key, and cancellation cleans on
   try {
     const before = fs.readFileSync(path.join(f.run, 'editor-project.json'), 'utf8')
     const pending = f.main.runEditor(f.run, 0, 'candidate-1', 'scan-cameras')
-    const rejected = assert.rejects(pending, /Camera scan cancelled\. Your edits and previous markers are saved/)
+    const rejected = assert.rejects(pending, /Camera scan canceled\. Your edits and previous markers are saved/)
     const worker = await nextWorker(f.workers, 1)
     assert.equal(worker.config.action, 'scan-cameras')
     assert.match(worker.config.preview_id, /^[a-f0-9]{32}$/)
@@ -738,6 +886,24 @@ test('progress summaries report counts without the project and refresh when the 
   } finally { f.cleanup() }
 })
 
+test('the Library clip list reads titles, statuses and lengths, refreshes when the file changes, and stays inside the library', async () => {
+  const f = setup()
+  try {
+    const first = await f.main.readEditorClips(f.run)
+    assert.equal(path.basename(first.previewPath), 'editor-preview.mp4')
+    assert.deepEqual(first.clips.map((c) => [c.title, c.status, c.startMs]), fixture.candidates.map((c) => [c.title, 'refining', c.ranges[0][0]]))
+    assert.ok(first.clips.every((c) => c.durationMs > 0 && Number.isFinite(c.score)))
+    assert.equal(JSON.stringify(first).includes('transcript'), false)
+    const project = (await f.main.openEditor(f.run)).project
+    project.candidates[1].status = 'ready'; project.candidates[1].title = 'Renamed'
+    await f.main.saveEditor(f.run, 0, project.candidates)
+    const second = await f.main.readEditorClips(f.run)
+    assert.deepEqual([second.clips[1].status, second.clips[1].title], ['ready', 'Renamed'])
+    await assert.rejects(f.main.readEditorClips(path.join(f.dir, 'elsewhere')), /./)
+    await assert.rejects(f.main.readEditorClips('relative/run'), /./)
+  } finally { f.cleanup() }
+})
+
 test('idle editor runs sweep temporary folders and unreferenced media, never the active pair', async () => {
   const f = setup()
   try {
@@ -787,4 +953,47 @@ test('editor media can be freed only when nothing is left to finish, and the pro
     await assert.rejects(f.main.saveEditor(f.run, 1, freed.project.candidates), /read-only/)
     await assert.rejects(f.main.runEditor(f.run, 1, 'candidate-2', 'export'), /read-only/)
   } finally { f.cleanup() }
+})
+
+test('editor split size, hook text and call to action are checked, kept, and only the first two need a new render', () => {
+  const c = structuredClone(fixture.candidates[0])
+  c.scenes = [{ at_ms: 0, layout: 'split', crops: [[0, 0, .5, .5], [.5, .5, .5, .5]], split: .38 }]
+  const parsed = schema.parseCandidateEdit(c, 12000)
+  assert.equal(parsed.scenes[0].split, .38)
+  // An even split is stored as absent; out of range or on a single panel is refused or dropped.
+  assert.equal('split' in schema.parseCandidateEdit({ ...c, scenes: [{ ...c.scenes[0], split: .5 }] }, 12000).scenes[0], false)
+  for (const split of [.29, .71, '0.4', NaN]) assert.throws(() => schema.parseCandidateEdit({ ...c, scenes: [{ ...c.scenes[0], split }] }, 12000))
+  assert.equal('split' in schema.parseCandidateEdit({ ...c, scenes: [{ at_ms: 0, layout: 'fill', crops: [[0, 0, .5, 1]], split: .4 }] }, 12000).scenes[0], false)
+  assert.deepEqual(schema.panelRows(parsed.scenes[0]), [[0, .38], [.38, .62]])
+  // Resizing re-fits each crop to its panel's new shape (9:16 output from a 16:9 source).
+  const scene = schema.resizeSplit({ at_ms: 0, layout: 'split', crops: [[.25, 0, .3, .5], [.5, .5, .3, .5]] }, .6, 9 / 16, 1920, 1080)
+  assert.equal(scene.split, .6)
+  scene.crops.forEach((crop, i) => {
+    const panel = (9 / 16) / (i === 0 ? .6 : .4)
+    assert.ok(Math.abs(crop[2] * 1920 / (crop[3] * 1080) - panel) < 1e-6, `panel ${i} keeps its shape`)
+    assert.ok(crop[0] >= 0 && crop[0] + crop[2] <= 1 && crop[1] >= 0 && crop[1] + crop[3] <= 1)
+  })
+  assert.equal('split' in schema.resizeSplit(scene, .5, 9 / 16, 1920, 1080), false)
+  // Smooth movement between splits needs the same size.
+  const a = { at_ms: 0, layout: 'split', crops: c.scenes[0].crops }
+  assert.equal(schema.canAnimateScene([a, { ...a, at_ms: 1000 }], 1), true)
+  assert.equal(schema.canAnimateScene([a, { ...a, at_ms: 1000, split: .4 }], 1), false)
+
+  // Hook text: null removes it; text and look are checked.
+  const look = { look: 'brand', color: '#ff8800', font: 'serif' }
+  assert.deepEqual(schema.parseCandidateEdit({ ...c, hook: { text: '  This   coach  is wrong ', look } }, 12000).hook, { text: 'This coach is wrong', look: { look: 'brand', color: '#FF8800', font: 'serif' } })
+  assert.equal(schema.parseCandidateEdit({ ...c, hook: null }, 12000).hook, null)
+  assert.equal('hook' in schema.parseCandidateEdit(c, 12000), false)
+  for (const hook of [{ text: '', look }, { text: 'x'.repeat(201), look }, { text: 'ok', look: { look: 'neon' } }, 'text']) assert.throws(() => schema.parseCandidateEdit({ ...c, hook }, 12000))
+  // Call to action: null, an id, or absent.
+  assert.equal(schema.parseCandidateEdit({ ...c, cta_id: 'a1b2c3d4e5f60718' }, 12000).cta_id, 'a1b2c3d4e5f60718')
+  assert.equal(schema.parseCandidateEdit({ ...c, cta_id: null }, 12000).cta_id, null)
+  assert.throws(() => schema.parseCandidateEdit({ ...c, cta_id: '../x' }, 12000))
+
+  // A split or hook change needs a new render; a CTA change doesn't (it's added afterward).
+  const base = { ...parsed, status: 'ready' }
+  assert.equal(schema.refineEdit(base, { hook: null }).status, 'refining')
+  assert.equal(schema.refineEdit(base, { scenes: [{ ...base.scenes[0], split: .45 }] }).status, 'refining')
+  assert.equal(schema.refineEdit(base, { cta_id: 'a1b2c3d4e5f60718' }).status, 'ready')
+  assert.equal(schema.candidateEdit({ ...base, cta_id: null, hook: null }).cta_id, null)
 })

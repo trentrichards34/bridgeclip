@@ -4,7 +4,7 @@
 
 ## Issue and scope approval
 
-Link the bug report or describe the reproducible failure. For a feature or other change, link the primary maintainer's prior approval and state the agreed scope. See the [contribution policy](https://github.com/bridge-mind/bridgeclip/blob/main/CONTRIBUTING.md).
+Link the bug report or describe the reproducible failure. For a feature or other change, link the primary maintainer's prior approval and state the agreed scope. See the [contribution policy](https://github.com/trentrichards34/bridgeclip/blob/main/CONTRIBUTING.md).
 
 ## Verification
 

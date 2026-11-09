@@ -72,4 +72,22 @@ function linkEngine(appDir) {
   }
 }
 
-module.exports = { editorTools, linkEngine }
+/** Opens an inspector tab in the clip editor: a tab on the row, or one under "More" (Framing, Transcript, Quality check). */
+async function openEditorTab(page, name) {
+  const tabs = page.locator('.editor-tabs')
+  await tabs.waitFor()
+  const direct = tabs.getByRole('button', { name, exact: true })
+  if (await direct.count()) return direct.click()
+  await tabs.getByRole('button', { name: /more tabs$/i }).click()
+  await page.getByRole('menu', { name: 'More tabs' }).getByRole('menuitemradio', { name, exact: true }).click()
+}
+
+/** Whether an inspector tab is the open one (a row tab, or the one "More" shows). */
+async function editorTabOpen(page, name) {
+  const tabs = page.locator('.editor-tabs')
+  const direct = tabs.getByRole('button', { name, exact: true })
+  if (await direct.count()) return await direct.getAttribute('aria-pressed') === 'true'
+  return await tabs.getByRole('button', { name: `${name}, more tabs`, exact: true }).count() === 1
+}
+
+module.exports = { editorTools, linkEngine, openEditorTab, editorTabOpen }

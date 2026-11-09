@@ -1,54 +1,53 @@
-# Using BridgeClip
+# Using CreatorClips
 
 [Overview](../README.md) · [Editor](editor.md) · [AI and privacy](ai-and-privacy.md)
 
-Install BridgeClip, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/bridge-mind/bridgeclip/releases) for the features in your installed version.
+Install CreatorClips, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/trentrichards34/creatorclips-releases/releases) for the features in your installed version.
 
 ## Install and update
 
-Choose your platform on [bridgeclip.ai](https://www.bridgeclip.ai) or [GitHub Releases](https://github.com/bridge-mind/bridgeclip/releases). Packages include Python, FFmpeg and yt-dlp.
+Download CreatorClips from [CreatorClips Releases](https://github.com/trentrichards34/creatorclips-releases/releases). It's Mac only for now. Packages include Python, FFmpeg and yt-dlp.
 
-- **macOS (Apple silicon or Intel):** open the matching DMG and drag BridgeClip to Applications. Official builds are Developer ID signed and notarized by Apple.
-- **Windows x64:** run the signed EXE installer.
-- **Linux x64:** install the DEB with your package manager, or make the AppImage executable before opening it. An unlocked desktop secret service is required to save API keys.
+- **macOS:** open the DMG for your Mac and drag CreatorClips to Applications. Apple silicon needs macOS 14 Sonoma or newer; Intel needs macOS 15 Sequoia or newer. Official builds are signed with our Apple Developer certificate and notarized by Apple.
+- **Linux x64 (build from source only):** install the DEB with your package manager, or make the AppImage executable before opening it. An unlocked desktop secret service is required to save API keys.
 
 See [release verification](RELEASING.md#verify-a-download) for signatures and checksums.
 
 ### Automatic updates
 
-BridgeClip keeps itself up to date. It checks [Releases](https://github.com/bridge-mind/bridgeclip/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. macOS only installs an update signed by the same developer, and every download is checked against the SHA-512 published with the release.
+CreatorClips keeps itself up to date. It checks [Releases](https://github.com/trentrichards34/creatorclips-releases/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. Only official builds, signed and notarized by Apple, update themselves: macOS installs an update only when it carries the same Developer ID signature, Windows checks the installer's publisher, and every download is checked against the SHA-512 published with the release.
 
-Copies run from source, local package builds and apps opened straight from the disk image don't update themselves; **Settings → About** says why. To turn updates off, start BridgeClip with `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
+Copies run from source, local package builds, unsigned Windows builds and apps opened straight from the disk image don't update themselves; **Settings → About** says why. To turn updates off, start CreatorClips with `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
 
 ## Create your first clips
 
 1. Add an [OpenRouter API key](https://openrouter.ai/keys) with available credit in the setup card. A saved key is never shown again; paste a new one to replace it, or choose **Remove key** in Settings.
-2. Open **Create** and use the file picker for a local video, or paste a public YouTube or completed Twitch VOD link. Dropping a local file opens the picker so you can grant access.
+2. Open **Clip** and use the file picker for a local video, or paste a public YouTube or completed Twitch VOD link. Dropping a local file opens the picker so you can grant access.
 3. Choose **Automatic** for finished exports, or **Review & edit** to adjust candidates in the [editor](editor.md).
 4. Choose format, framing, clip lengths, models and caption style, then generate.
-5. Follow progress in **Jobs**. Finished clips appear in **Library** and your output folder (by default, `~/BridgeClip`).
+5. Follow progress in **Jobs**. Finished clips appear in **Library** and your output folder (by default, `~/CreatorClips`).
 
-Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, BridgeClip asks you to configure or unlock it before saving keys.
+Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, CreatorClips asks you to configure or unlock it before saving keys.
 
 Only download or clip material you have permission to use. Remote sites may limit downloads or change access rules.
 
 ### Choose a workflow
 
-In **Create**, choose a workflow before continuing: **Automatic · Beginner friendly** finds and exports clips; **Review & edit · For advanced users** lets you choose and adjust candidates before export. Each new video starts with neither workflow selected. YouTube links show a video card with its title, channel and thumbnail, plus duration, views and upload date when available. Metadata loads in the background and never blocks clip setup.
+In **Clip**, choose a workflow before continuing: **Automatic · Beginner friendly** finds and exports clips; **Review & edit · For advanced users** lets you choose and adjust candidates before export. Each new video starts with neither workflow selected. YouTube links show a video card with its title, channel and thumbnail, plus duration, views and upload date when available. Metadata loads in the background and never blocks clip setup.
 
 **Review & edit** always uses Jev candidate reviews. For Automatic, Jev review is off by default. Reviews use OpenRouter credit; see [review behavior and costs](ai-and-privacy.md#jev-editorial-review).
 
 ### Models
 
-In **Create → Clips**, choose **Quality**, **Economy**, or **Advanced**. Advanced offers searchable OpenRouter model pickers for transcription and clip planning, with model IDs, planning prices and compatibility notes. Both selections are required and appear in Review. Advanced retries the selected models without automatically switching models. Transcription must provide word timestamps; planning must support structured output. See [model selection and transcription](transcription.md).
+In **Clip → Clips**, choose **Quality**, **Economy**, or **Advanced**. Advanced offers searchable OpenRouter model pickers for transcription and clip planning, with model IDs, planning prices and compatibility notes. Both selections are required and appear in Review. Advanced retries the selected models without automatically switching models. Transcription must provide word timestamps; planning must support structured output. See [model selection and transcription](transcription.md).
 
 ### Framing, captions and speed
 
 Smart framing follows faces and arranges screen shares with facecams shot by shot. Optional AI vision checks help with ambiguous layouts and can add OpenRouter cost. Use [Review & edit](editor.md) to adjust crops and camera changes before exporting.
 
-Choose from nine caption styles: Viral, Hormozi, Bold, Clean, Minimal, Fire, Glow, Neon and Karaoke. In **Create → Captions**, the selected style plays an animated sample showing how words appear and highlights advance. Pause or restart it to compare styles.
+Choose from nine caption styles: Viral, Hormozi, Bold, Clean, Minimal, Fire, Glow, Neon and Karaoke. In **Clip → Captions**, the selected style plays an animated sample showing how words appear and highlights advance. Pause or restart it to compare styles.
 
-In **Create → Format → Video speed**, choose **1×** (normal), **1.1×**, **1.25×**, **1.5×**, **1.75×**, or **2×** for every clip in the job. Exports preserve voice pitch and keep captions synchronized. Speed works with **Cut dead air** and appears in Review and the saved results. Clip lengths and source trim times refer to the original footage: a 60-second clip at 1.5× exports in about 40 seconds, before any dead-air cuts. The choice stays selected when you clip another video in the same session.
+In **Clip → Format → Video speed**, choose **1×** (normal), **1.1×**, **1.25×**, **1.5×**, **1.75×**, or **2×** for every clip in the job. Exports preserve voice pitch and keep captions synchronized. Speed works with **Cut dead air** and appears in Review and the saved results. Clip lengths and source trim times refer to the original footage: a 60-second clip at 1.5× exports in about 40 seconds, before any dead-air cuts. The choice stays selected when you clip another video in the same session.
 
 Existing exports stay as they are; generate a new job to change their speed.
 
@@ -56,9 +55,9 @@ See [video speed](video-speed.md) for timing and export details.
 
 ### Clip a Twitch VOD
 
-Paste a public, completed Twitch video link such as `https://www.twitch.tv/videos/1234567890` into Create, then choose your clip settings and generate. BridgeClip downloads the saved video and uses the same transcription, AI moment selection and rendering flow as other sources. Links on `twitch.tv`, `www.twitch.tv`, `m.twitch.tv` and `go.twitch.tv` are accepted and normalized to the canonical video URL.
+Paste a public, completed Twitch video link such as `https://www.twitch.tv/videos/1234567890` into Clip, then choose your clip settings and generate. CreatorClips downloads the saved video and uses the same transcription, AI moment selection and rendering flow as other sources. Links on `twitch.tv`, `www.twitch.tv`, `m.twitch.tv` and `go.twitch.tv` are accepted and normalized to the canonical video URL.
 
-Live channels, Twitch clips, collections, subscriber-only videos and deleted or expired VODs are not supported. No Twitch login or cookies are used. The original source must be at most six hours and 20 GB. BridgeClip downloads the full source before applying the optional start and end times; a link's timestamp or tracking parameters are ignored. For a longer source, trim a downloaded file before adding it. Downloads also stop after four hours or when less than 1 GB of free space would remain.
+Live channels, Twitch clips, collections, subscriber-only videos and deleted or expired VODs are not supported. No Twitch login or cookies are used. The original source must be at most six hours and 20 GB. CreatorClips downloads the full source before applying the optional start and end times; a link's timestamp or tracking parameters are ignored. For a longer source, trim a downloaded file before adding it. Downloads also stop after four hours or when less than 1 GB of free space would remain.
 
 ## Follow jobs
 
@@ -68,7 +67,7 @@ Each previous job has a three-dot menu for **Open in Library** (or **Open job** 
 
 ### Progress and cost
 
-During creation, each stage shows its own elapsed time and progress: downloaded bytes, transcription chunks, prepared candidates, rendered clips, saved files and editor-preview encoding where measurable. AI requests without measurable progress show an indeterminate bar. The overall percentage is an estimate; completed runs retain a **Processing time by stage** breakdown in the Library and editor. Each stage keeps its own color in the time breakdown. The progress page reuses the source preview from Create for YouTube and local files.
+During creation, each stage shows its own elapsed time and progress: downloaded bytes, transcription chunks, prepared candidates, rendered clips, saved files and editor-preview encoding where measurable. AI requests without measurable progress show an indeterminate bar. The overall percentage is an estimate; completed runs retain a **Processing time by stage** breakdown in the Library and editor. Each stage keeps its own color in the time breakdown. The progress page reuses the source preview from Clip for YouTube and local files.
 
 New runs show live model requests, input/output tokens and provider-reported cost; missing usage stays unknown and partial totals exclude unreported charges. **Inside frame & review** separates face sampling, camera scans, detailed face tracking, shot-layout checks and Jev review, with the current candidate and accumulated timings. These diagnostics are saved with the run and remain available in its processing-time details. See [the framing performance investigation](FRAMING_PERFORMANCE_2026-09-27.md) for the long-video decoding fix.
 
@@ -96,7 +95,7 @@ The trash action asks for confirmation before permanently deleting the run folde
 
 ## Publish and automate
 
-Connect social accounts with your own Zernio account and API key to post or schedule clips. Metadata enhancement uses your OpenRouter key. For platform-specific drafts, scheduling consent and required TikTok reviews, see [publishing and metadata](automation-metadata.md). **BridgeClip must be open for daily automations to run.**
+Connect social accounts with your own Zernio account and API key to post or schedule clips. Metadata enhancement uses your OpenRouter key. For platform-specific drafts, scheduling consent and required TikTok reviews, see [publishing and metadata](automation-metadata.md). **CreatorClips must be open for daily automations to run.**
 
 ### Organize the content bank
 
@@ -129,4 +128,4 @@ Recovery also works when local post history was removed or aged out, provided Ze
 - Open a job’s **Details** to inspect its saved transcript and edit trace, including failed runs. Inspecting saved results makes no provider calls. See [saved reviews and diagnostics](ai-and-privacy.md#inspect-saved-reviews).
 - Logs omit raw provider responses and private source details, but review logs and run files before sharing them. See [local storage and cleanup](ai-and-privacy.md#local-storage-and-cleanup).
 
-For help, use [GitHub Issues](https://github.com/bridge-mind/bridgeclip/issues) or [Discord](https://www.bridgemind.ai/discord). Report security issues using [SECURITY.md](../SECURITY.md).
+For help, use **Help → Report an Issue…** in the app: it shows a support report (never your keys) that you can check, save to a file or copy, and send to support. Report security issues using [SECURITY.md](../SECURITY.md).

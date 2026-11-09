@@ -22,7 +22,8 @@ const sharedPosts = load('shared/zernio-posts.ts')
 const posts = load('main/zernio/posts-payload.ts', {
   './client': { sanitizeProviderText: (value) => typeof value === 'string' ? value : undefined },
   '../../shared/zernio': zernio,
-  '../../shared/zernio-posts': sharedPosts
+  '../../shared/zernio-posts': sharedPosts,
+  '../../shared/zernio-extras': load('shared/zernio-extras.ts')
 })
 
 function request() {

@@ -1,21 +1,29 @@
 import { editorBusy } from './clip-editor'
 import { randomUUID } from 'crypto'
-import { closeSync, constants, type Dirent, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import { closeSync, constants, type Dirent, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, existsSync } from 'fs'
 import { readdir, rm } from 'fs/promises'
-import { basename, dirname, isAbsolute, join, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'path'
 import { DELETING_RUN_PREFIX, getJobOutput, isManuallyPosted, isRunFavorite, LIBRARY_FAVORITE_FILE, manualPostedFile, removeRunThumbnails } from './file-manager'
 import { logger } from './logger'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { parseEditorProject } from '../shared/clip-editor'
 import { dismissJob, liveJobIds } from './job-manager'
 import { loadSettings } from './settings-store'
+import { previousOutputFolders } from './library-folders'
 
 /** Only a completed, immediate child of the configured Library can be changed. */
+/** Other work that rewrites a run's clips (a Remix video being re-made): set by the IPC layer. */
+let runBusy: (path: string) => string | null = () => null
+export function setRunBusyCheck(check: (path: string) => string | null): void { runBusy = check }
+
 async function checkedRun(raw: unknown): Promise<{ check: () => string; output: JobOutput; library: string; identity: { dev: number; ino: number } }> {
   const librarySetting = loadSettings().outputDirectory
   if (typeof raw !== 'string' || !isAbsolute(raw) || raw.includes('\0')) throw new Error('Choose a run in your Library.')
   const library = realpathSync(librarySetting)
   const path = resolve(raw)
+  if (dirname(path) !== resolve(librarySetting) && previousOutputFolders().some((root) => resolve(root) === dirname(path))) {
+    throw new Error('This run is in an earlier output folder. Move it to your current output folder (Library → Earlier output folders) to change it.')
+  }
   const original = lstatSync(path)
   const canonical = realpathSync(path)
   const check = (): string => {
@@ -26,6 +34,8 @@ async function checkedRun(raw: unknown): Promise<{ check: () => string; output: 
         current.dev !== original.dev || current.ino !== original.ino) throw new Error('The Library run changed. Refresh and try again.')
     if (editorBusy(path)) throw new Error('Wait for the editor to finish before changing this run.')
     if (liveJobIds().has(basename(path))) throw new Error('Wait for this run to finish before changing it.')
+    const busy = runBusy(canonical)
+    if (busy) throw new Error(busy)
     return path
   }
   check()
@@ -161,8 +171,15 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
     if (basename(file) !== `${name}.mp4` || realpathSync(dirname(file)) !== canonical) throw new Error('The selected clip is outside its Library run.')
     include(file)
     // Sidecars written next to each clip: framing, captions and upload notes.
-    for (const suffix of ['.framing.json', '.srt', '.youtube.txt']) include(join(run, `${name}${suffix}`))
+    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json', '.original.mp4', '.words.json']) include(join(run, `${name}${suffix}`))
     include(join(run, manualPostedFile(clip.clip_index)))
+    // A Remix video's saved parts for re-editing (which can include the member's own recording).
+    const parts = join(run, '.edit', name)
+    try {
+      const stat = lstatSync(parts)
+      if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(dirname(parts)) !== join(canonical, '.edit')) throw new Error('The selected clip has an unsafe file path.')
+      files.push(parts)
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
   }
   const changes: [string, Record<string, unknown>][] = []
   if (output.editor_project) {
@@ -192,7 +209,7 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
   try {
     for (const [name, value] of changes) writeFileSync(join(staging, `new-${name}`), JSON.stringify(value), { mode: 0o600, flag: 'wx' })
     for (const file of files) {
-      const destination = join(staging, basename(file))
+      const destination = join(staging, dirname(file).endsWith(`${sep}.edit`) ? `edit-${basename(file)}` : basename(file))
       renameSync(file, destination); moved.push([file, destination])
     }
     for (const [name] of changes) {
@@ -212,4 +229,20 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
   // cleanup starts, since some deleted files may already have been removed.
   try { rmSync(staging, { recursive: true }) } catch { throw new Error('Clips were removed from the Library, but some files could not be cleaned up in the run folder.') }
   return parseJobOutput(raw)!
+}
+
+/** Add, switch or remove the call to action at the end of one clip in a finished run. */
+export async function setLibraryClipCta(outputDir: unknown, clipIndex: unknown,
+  apply: (run: string, clipIndex: number) => Promise<{ failed: number[] }>, busyFolder: string | null = null): Promise<JobOutput> {
+  if (!Number.isSafeInteger(clipIndex) || (clipIndex as number) < 0 || (clipIndex as number) > 999) throw new Error('Choose a clip from this Library run.')
+  const { check, output } = await checkedRun(outputDir)
+  const run = check()
+  // The remix being made may have just been removed (cancelled while planning): compare paths without resolving it.
+  if (busyFolder && (resolve(busyFolder) === resolve(run) || (existsSync(busyFolder) && realpathSync(busyFolder) === realpathSync(run)))) throw new Error('Wait for this remix to finish before changing its videos.')
+  if (!output.clips.some((clip) => clip.clip_index === clipIndex)) throw new Error('That clip is no longer in this run. Refresh and try again.')
+  const { failed } = await apply(run, clipIndex as number)
+  if (failed.length) throw new Error('The call to action could not be added to this clip. Try again, or choose another call to action.')
+  const updated = await getJobOutput(check(), loadSettings().outputDirectory)
+  if (!updated) throw new Error('This completed run is no longer available in your Library.')
+  return updated
 }

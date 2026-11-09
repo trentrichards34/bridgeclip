@@ -45,6 +45,8 @@ class ClipArtifact:
     layout_type: str
     summary: Optional[str] = None
     tags: list[str] = None
+    # Story headline drawn in the top bar (headline title style).
+    headline: Optional[str] = None
     # Set when the smart render failed and a letterbox fallback produced the
     # clip ("letterbox" keeps pacing cuts, "letterbox_natural" doesn't).
     render_fallback: Optional[str] = None
@@ -53,7 +55,17 @@ class ClipArtifact:
     description: Optional[str] = None
     chapters: Optional[list[dict]] = None
     subtitle_url: Optional[str] = None
+    # Local path of the clip's SRT (closed captions for uploads) and the
+    # language its captions were translated into (None: as spoken).
+    captions_srt: Optional[str] = None
+    caption_language: Optional[str] = None
+    # The language spoken in the source (a two-letter code from transcription), when known.
+    spoken_language: Optional[str] = None
     editorial: Optional[dict] = None
+    # Paid Creators framework grade: letter, criteria scores, hook evidence, fix.
+    framework: Optional[dict] = None
+    # Ready-to-post caption, set when the run has a comment-keyword call to action.
+    post_caption: Optional[str] = None
 
 
 @dataclass

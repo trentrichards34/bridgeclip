@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise BridgeClip audio extraction with the exact FFmpeg shipped to users."""
+"""Exercise CreatorClips audio extraction with the exact FFmpeg shipped to users."""
 
 import asyncio
 import os

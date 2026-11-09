@@ -1,0 +1,25 @@
+{
+  "name": "magazine-cover",
+  "title": "Magazine cover",
+  "source": "CreatorClips' own unit in the style of HyperFrames registry/components/titlecard-lockup (Apache-2.0)",
+  "variables": [
+    {
+      "id": "masthead",
+      "type": "string",
+      "label": "Masthead (one or two words)",
+      "default": ""
+    },
+    {
+      "id": "lines",
+      "type": "string",
+      "label": "Cover lines (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "cues",
+      "type": "string",
+      "label": "Comma seconds: when each cover line is said",
+      "default": ""
+    }
+  ]
+}

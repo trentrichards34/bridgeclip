@@ -96,7 +96,9 @@ def test_offcenter_subject_moves_toward_center_within_upscale_budget():
     assert 1080 / w <= MAX_UPSCALE + .01 and w < untightened[0]
     assert w / h == pytest.approx(1080 / 768, rel=.02)
     shot = ShotLayout(0, 1000, LayoutType.SCREEN_CAM, cam_box=cam, cam_face=face)
-    assert shot_views(shot, 0, 1920, 1080, 1080, 1920)[1][1] == (0, 1152, 1080, 768)
+    top_h, bottom_h = stacked_panel_heights(shot, 1080, 1920)
+    assert (top_h, bottom_h) == (1000, 920)
+    assert shot_views(shot, 0, 1920, 1080, 1080, 1920)[1][1] == (0, top_h, 1080, bottom_h)
     loose = ShotLayout(0, 1000, LayoutType.SCREEN_CAM, cam_box=cam)
     assert abs(output_face_x(shot, face) - 540) < abs(output_face_x(loose, face) - 540)
 

@@ -7,22 +7,22 @@ type CalloutTone = 'danger' | 'warning' | 'success' | 'info'
 
 const TONES: Record<CalloutTone, { box: string; icon: string; Icon: typeof Info }> = {
   danger: {
-    box: 'bg-danger/[0.07] shadow-[inset_0_0_0_1px_rgb(var(--danger)/0.26),inset_0_1px_0_rgb(255_255_255/0.05)]',
+    box: 'bg-danger/[0.07] shadow-[inset_0_0_0_1px_rgb(var(--danger)/0.26)]',
     icon: 'text-danger',
     Icon: AlertTriangle
   },
   warning: {
-    box: 'bg-warning/[0.06] shadow-[inset_0_0_0_1px_rgb(var(--warning)/0.24),inset_0_1px_0_rgb(255_255_255/0.05)]',
+    box: 'bg-warning/[0.06] shadow-[inset_0_0_0_1px_rgb(var(--warning)/0.24)]',
     icon: 'text-warning',
     Icon: TriangleAlert
   },
   success: {
-    box: 'bg-success/[0.06] shadow-[inset_0_0_0_1px_rgb(var(--success)/0.24),inset_0_1px_0_rgb(255_255_255/0.05)]',
+    box: 'bg-success/[0.06] shadow-[inset_0_0_0_1px_rgb(var(--success)/0.24)]',
     icon: 'text-success',
     Icon: Check
   },
   info: {
-    box: 'bg-white/[0.045] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1),inset_0_1px_0_rgb(255_255_255/0.06)]',
+    box: 'bg-surface/85 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]',
     icon: 'text-ink-muted',
     Icon: Info
   }
@@ -44,7 +44,7 @@ interface CalloutProps {
   'data-testid'?: string
 }
 
-/** Tinted glass strip for errors, warnings and confirmations. */
+/** Tinted strip for errors, warnings and confirmations. */
 export function Callout({
   tone = 'info',
   icon,

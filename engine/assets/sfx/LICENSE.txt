@@ -1,0 +1,68 @@
+CreatorClips built-in sound effects
+
+Members can use every sound in this folder in any video, including paid and monetized
+posts, without attribution or royalties. Each file's source and license is listed in
+manifest.json ("source", "license"). There are two kinds:
+
+1. Recorded sounds by Kenney (www.kenney.nl), released into the public domain under
+   Creative Commons Zero (CC0 1.0): https://creativecommons.org/publicdomain/zero/1.0/
+   "This content is free to use in personal, educational and commercial projects."
+   Crediting Kenney is not required; we do it here with thanks.
+
+   Packs used (files copied from kapishdima/soundcn, an MIT-licensed repository that keeps
+   Kenney's files unchanged in its assets/kenney_* folders; the packs' own License.txt,
+   where soundcn kept one, states CC0):
+     - Interface Sounds (1.0)   -> pop/ (pluck-*, select-*, glass-5), tick/ (tick-*, blip-*, tap-4),
+                                   click/, whoosh/swoosh-*
+     - Casino Audio             -> swipe/, paper/card-place-*, pop/chip-lay-*, tick/chip-tap*
+     - Impact Sounds            -> impact/ (a heavy or medium punch layered with a soft impact)
+     - RPG Audio                -> paper/book-*
+   Kenney publishes all of its game assets under CC0 (www.kenney.nl/support, "License").
+
+   License check (2026-10-23). soundcn kept the pack's own License.txt only for Interface
+   Sounds (and Digital Audio, Voiceover Pack Fighter, not used here); its text reads
+   "License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/
+   This content is free to use in personal, educational and commercial projects." For the
+   three packs without one, what was found:
+     - soundcn's own registry (public/r/*.json) lists every one of its 813 Kenney sounds,
+       Casino, Impact and RPG included, as "author": "Kenney <https://kenney.nl>",
+       "license": "CC0".
+     - Kenney's own uploads on OpenGameArt list CC0: "54 Casino sound effects (cards, dice,
+       chips)" (kenney_casino-audio.zip), https://opengameart.org/content/54-casino-sound-effects-cards-dice-chips,
+       and "50 RPG sound effects" (RPGsounds_Kenney.zip),
+       https://opengameart.org/content/50-rpg-sound-effects.
+     - The Godot Asset Library lists all three as CC0, as mirrored on GitHub by Loppansson:
+       kenney-casino-audio-for-godot (asset 7721), kenney-impact-sounds-for-godot (7723),
+       kenney-rpg-audio-for-godot (7725). Those repositories could not be opened from here, so
+       the packs' License.txt text itself was not read for Casino, Impact and RPG.
+   Every source found says CC0; no sound was changed. To close it out, download the three
+   packs from www.kenney.nl (casino-audio, impact-sounds, rpg-audio) and keep their
+   License.txt files next to this one.
+
+   Added 2026-10-28 (all Kenney, CC0 1.0, unchanged apart from the processing below; soundcn's
+   registry lists each as "license": "CC0"):
+     - Interface Sounds: whoosh/swoosh-1 (maximize_001), whoosh/swoosh-5 (maximize_005),
+       pop/select-3 (select_003), pop/select-5 (select_005), pop/glass-5 (glass_005),
+       tick/blip-7 (select_007), tick/blip-8 (select_008), tick/tap-4 (click_004),
+       click/switch-5 (switch_005), click/switch-6 (switch_006), click/toggle-1 (toggle_001),
+       click/toggle-2 (toggle_002)
+     - Casino Audio: swipe/card-slide-1, swipe/card-slide-5, swipe/card-slide-6,
+       swipe/card-shove-2, paper/card-place-1, pop/chip-lay-1, tick/chip-tap-1 (chips-collide-1)
+     - Impact Sounds: impact/punch-heavy-3 (impactPunch_heavy_003 + impactSoft_heavy_003),
+       impact/punch-medium-0, -2, -4 (impactPunch_medium_00N + impactSoft_medium_00N)
+     - RPG Audio: paper/book-place-2 (bookPlace2), paper/book-place-3 (bookPlace3)
+
+   Nothing from soundcn's "wow" folder is used: those sounds belong to Blizzard
+   Entertainment and are not free to use.
+
+2. Air sounds made for CreatorClips from shaped random noise by scripts/sfx/build_library.py
+   (whoosh/air-*, riser/air-rise-*; added 2026-10-28: whoosh/air-soft, whoosh/air-wide,
+   riser/air-rise-mid, riser/air-rise-swell). No samples, recordings or tones. Copyright (c) 2026
+   Wealthery, under the engine's MIT license (../../LICENSE), with the same permission to
+   use them in any video as above.
+
+Processing: every file was trimmed of silence, peak-normalized to -3 dBFS and encoded as
+48 kHz mono Ogg Opus; the impacts are two Kenney sounds mixed together.
+The source of every file is also in manifest.json; scripts/sfx/build_library.py rebuilds the library.
+
+THE SOUNDS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

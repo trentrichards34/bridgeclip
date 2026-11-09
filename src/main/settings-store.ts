@@ -1,11 +1,13 @@
 import { JEV_DEFAULTS, JEV_FEATURE_DEFAULTS, type JevThresholdSettings } from '../shared/jev-settings'
+import { parseSpendLimit } from '../shared/spending'
+import { DEFAULT_BROLL_AI_SETTINGS, parseBrollAiSettings } from '../shared/broll-library'
 import { app, safeStorage } from 'electron'
 import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { isAbsolute, join } from 'path'
 import { randomUUID } from 'crypto'
 
 /**
- * BridgeClip is bring-your-own-key: every provider call is made from this
+ * CreatorClips is bring-your-own-key: every provider call is made from this
  * machine with the user's own keys. Keys are encrypted with the OS keychain
  * (safeStorage) when it is available.
  */
@@ -13,6 +15,11 @@ export interface AppSettings extends JevThresholdSettings {
   openrouterApiKey: string
   /** Optional: connects social accounts for posting. Used only by the main process, never sent to the engine. */
   zernioApiKey: string
+  pexelsApiKey: string
+  /** Optional: fal.ai key for Avatar Studio. Used only by the main process, never sent to the engine. */
+  falApiKey: string
+  /** Optional (Beta): HeyGen key for realistic, lip-synced talking avatars. Used only by the main process, never sent to the engine. */
+  heygenApiKey: string
   /** Opt-in beta: Jev review of automatic clips via the existing OpenRouter key. Review & edit always uses Jev. */
   jevEnabled: string
   /** Additional OpenRouter frame observations, explicitly opt-in. */
@@ -23,15 +30,31 @@ export interface AppSettings extends JevThresholdSettings {
   pythonPath: string
   /** Names and jargon the speech-to-text should spell correctly, one per line. */
   customVocabulary: string
+  /** Instagram, TikTok, X and Facebook links: download with this browser's login ('' for none). */
+  downloadLoginBrowser: string
+  /** Monthly AI spending limit in USD ('' for none), checked before paid runs (Settings → Spending). */
+  monthlySpendLimitUsd: string
+  /** AI b-roll (Settings → AI b-roll): 'video' or 'image' (an AI image with a slow push-in). */
+  brollAiKind: string
+  /** The OpenRouter video model for AI b-roll (shared/broll-library.ts lists them). */
+  brollAiModel: string
+  /** At most this many AI shots per clip, '0' to '6'. */
+  brollAiMaxShots: string
 }
 
-export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey'
-export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings> & {
+/** Browsers whose login yt-dlp can use for social video links. */
+export const LOGIN_BROWSERS = ['', 'chrome', 'safari', 'firefox', 'edge', 'brave'] as const
+
+export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey' | 'heygenApiKey'
+export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | 'downloadLoginBrowser' | keyof JevThresholdSettings> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  pexelsConfigured: boolean
+  falConfigured: boolean
+  heygenConfigured: boolean
 }
 
-const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey'] as const
+const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey', 'pexelsApiKey', 'falApiKey', 'heygenApiKey'] as const
 type SecretKey = (typeof SECRET_KEYS)[number]
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -39,9 +62,17 @@ const DEFAULT_SETTINGS: AppSettings = {
   ...JEV_FEATURE_DEFAULTS,
   openrouterApiKey: '',
   zernioApiKey: '',
-  outputDirectory: join(app.getPath('home'), 'BridgeClip'),
+  pexelsApiKey: '',
+  falApiKey: '',
+  heygenApiKey: '',
+  outputDirectory: join(app.getPath('home'), 'CreatorClips'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
-  customVocabulary: ''
+  customVocabulary: '',
+  downloadLoginBrowser: '',
+  monthlySpendLimitUsd: '',
+  brollAiKind: DEFAULT_BROLL_AI_SETTINGS.kind,
+  brollAiModel: DEFAULT_BROLL_AI_SETTINGS.model,
+  brollAiMaxShots: String(DEFAULT_BROLL_AI_SETTINGS.maxShots)
 }
 
 const SETTINGS_VERSION = 12
@@ -59,12 +90,20 @@ interface PersistedSettings extends JevThresholdSettings {
   version: number
   openrouterApiKey: PersistedSecret
   zernioApiKey: PersistedSecret
+  pexelsApiKey: PersistedSecret
+  falApiKey?: PersistedSecret
+  heygenApiKey?: PersistedSecret
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
   outputDirectory: string
   pythonPath: string
   customVocabulary?: string
+  downloadLoginBrowser?: string
+  monthlySpendLimitUsd?: string
+  brollAiKind?: string
+  brollAiModel?: string
+  brollAiMaxShots?: string
 }
 
 function ensureDir(dir: string): string {
@@ -94,12 +133,18 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
 
     openrouterApiKey: (settings.openrouterApiKey ?? DEFAULT_SETTINGS.openrouterApiKey).trim(),
     zernioApiKey: (settings.zernioApiKey ?? DEFAULT_SETTINGS.zernioApiKey).trim(),
+    pexelsApiKey: (settings.pexelsApiKey ?? DEFAULT_SETTINGS.pexelsApiKey).trim(),
+    falApiKey: (settings.falApiKey ?? DEFAULT_SETTINGS.falApiKey).trim(),
+    heygenApiKey: (settings.heygenApiKey ?? DEFAULT_SETTINGS.heygenApiKey).trim(),
     jevEnabled: settings.jevEnabled ?? DEFAULT_SETTINGS.jevEnabled,
     jevVisualContext: settings.jevVisualContext ?? DEFAULT_SETTINGS.jevVisualContext,
     sourceContextWebResearch: settings.sourceContextWebResearch ?? DEFAULT_SETTINGS.sourceContextWebResearch,
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
-    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n')
+    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
+    downloadLoginBrowser: settings.downloadLoginBrowser ?? DEFAULT_SETTINGS.downloadLoginBrowser,
+    monthlySpendLimitUsd: (settings.monthlySpendLimitUsd ?? DEFAULT_SETTINGS.monthlySpendLimitUsd).trim(),
+    ...brollAiFields(settings)
   }
   for (const key of Object.keys(JEV_DEFAULTS) as (keyof JevThresholdSettings)[]) {
     const value = probability(normalized[key])
@@ -111,8 +156,18 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   if (!SWITCHES.includes(normalized.jevEnabled)) throw new Error('Invalid Jev review setting')
   if (!SWITCHES.includes(normalized.jevVisualContext)) throw new Error('Invalid visual context setting')
   if (!SWITCHES.includes(normalized.sourceContextWebResearch)) throw new Error('Invalid source research setting')
+  if (!(LOGIN_BROWSERS as readonly string[]).includes(normalized.downloadLoginBrowser)) throw new Error('Invalid browser login setting')
   if (!isAbsolute(normalized.outputDirectory)) throw new Error('Settings folders must be absolute paths')
+  const limit = parseSpendLimit(normalized.monthlySpendLimitUsd)
+  if (limit === undefined) throw new Error('Enter the monthly spending limit in dollars, like 25 or 12.50, or leave it empty for no limit.')
+  normalized.monthlySpendLimitUsd = limit === null ? '' : String(limit)
   return normalized
+}
+
+/** The AI b-roll fields, each one checked on its own (an unknown value falls back to its default). */
+function brollAiFields(settings: Partial<AppSettings>): Pick<AppSettings, 'brollAiKind' | 'brollAiModel' | 'brollAiMaxShots'> {
+  const parsed = parseBrollAiSettings({ kind: settings.brollAiKind, model: settings.brollAiModel, maxShots: settings.brollAiMaxShots === undefined ? undefined : Number(settings.brollAiMaxShots) })
+  return { brollAiKind: parsed.kind, brollAiModel: parsed.model, brollAiMaxShots: String(parsed.maxShots) }
 }
 
 /** A canonical probability string from 0 to 1, or null. */
@@ -206,7 +261,11 @@ export function loadSettings(): AppSettings {
       ...savedJevSettings(raw),
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
-      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary
+      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
+      downloadLoginBrowser: typeof raw.downloadLoginBrowser === 'string' && (LOGIN_BROWSERS as readonly string[]).includes(raw.downloadLoginBrowser) ? raw.downloadLoginBrowser : '',
+      // An unreadable limit is dropped rather than making the saved keys unreadable.
+      monthlySpendLimitUsd: typeof raw.monthlySpendLimitUsd === 'string' && parseSpendLimit(raw.monthlySpendLimitUsd) !== undefined ? raw.monthlySpendLimitUsd : '',
+      ...brollAiFields({ brollAiKind: typeof raw.brollAiKind === 'string' ? raw.brollAiKind : undefined, brollAiModel: typeof raw.brollAiModel === 'string' ? raw.brollAiModel : undefined, brollAiMaxShots: typeof raw.brollAiMaxShots === 'string' ? raw.brollAiMaxShots : undefined })
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -232,12 +291,20 @@ function writeSettings(settings: AppSettings): void {
 
     openrouterApiKey: encodeSecret(settings.openrouterApiKey),
     zernioApiKey: encodeSecret(settings.zernioApiKey),
+    pexelsApiKey: encodeSecret(settings.pexelsApiKey),
+    falApiKey: encodeSecret(settings.falApiKey),
+    heygenApiKey: encodeSecret(settings.heygenApiKey),
     jevEnabled: settings.jevEnabled,
     jevVisualContext: settings.jevVisualContext,
     sourceContextWebResearch: settings.sourceContextWebResearch,
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
-    customVocabulary: settings.customVocabulary
+    customVocabulary: settings.customVocabulary,
+    downloadLoginBrowser: settings.downloadLoginBrowser,
+    monthlySpendLimitUsd: settings.monthlySpendLimitUsd,
+    brollAiKind: settings.brollAiKind,
+    brollAiModel: settings.brollAiModel,
+    brollAiMaxShots: settings.brollAiMaxShots
   }
 
   let fd: number | undefined
@@ -275,13 +342,17 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     customVocabulary: settings.customVocabulary,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
     zernioConfigured: Boolean(settings.zernioApiKey),
+    pexelsConfigured: Boolean(settings.pexelsApiKey),
+    falConfigured: Boolean(settings.falApiKey),
+    heygenConfigured: Boolean(settings.heygenApiKey),
     jevEnabled: settings.jevEnabled,
     jevVisualContext: settings.jevVisualContext,
-    sourceContextWebResearch: settings.sourceContextWebResearch
+    sourceContextWebResearch: settings.sourceContextWebResearch,
+    downloadLoginBrowser: settings.downloadLoginBrowser
   }
 }
 
-export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings>): PublicSettings {
+export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings> & { downloadLoginBrowser?: string }): PublicSettings {
   const current = loadSettings()
   return publicSettings(saveSettings({
     ...current,
@@ -297,7 +368,8 @@ export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory
     customVocabulary: update.customVocabulary,
     jevEnabled: update.jevEnabled ?? current.jevEnabled,
     jevVisualContext: update.jevVisualContext ?? current.jevVisualContext,
-    sourceContextWebResearch: update.sourceContextWebResearch ?? current.sourceContextWebResearch
+    sourceContextWebResearch: update.sourceContextWebResearch ?? current.sourceContextWebResearch,
+    downloadLoginBrowser: update.downloadLoginBrowser ?? current.downloadLoginBrowser
   }))
 }
 
@@ -321,6 +393,14 @@ export function vocabularyTerms(value: string): string[] {
   return terms
 }
 
+/** Save the monthly AI spending limit ('' for none). Returns the saved limit in USD, or null. */
+export function saveSpendLimit(value: unknown): number | null {
+  const limit = parseSpendLimit(value)
+  if (limit === undefined) throw new Error('Enter the monthly spending limit in dollars, like 25 or 12.50, or leave it empty for no limit.')
+  const saved = saveSettings({ ...loadSettings(), monthlySpendLimitUsd: limit === null ? '' : String(limit) })
+  return parseSpendLimit(saved.monthlySpendLimitUsd) ?? null
+}
+
 export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
   if (!SECRET_KEYS.includes(key) || typeof value !== 'string' || value.length > 8192 || value.includes('\0')) throw new Error('Invalid API key update')
   const current = loadSettings()
@@ -330,6 +410,7 @@ export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
 export function getSettingsForBridge(settings: AppSettings): Record<string, string> {
   return {
     OPENROUTER_API_KEY: settings.openrouterApiKey,
+    ...(settings.pexelsApiKey ? { PEXELS_API_KEY: settings.pexelsApiKey } : {}),
     SOURCE_CONTEXT_WEB_RESEARCH: settings.sourceContextWebResearch !== 'off' ? 'true' : 'false',
     JEV_THRESHOLD: settings.jevThreshold,
     JEV_SELF_CONTAINED_THRESHOLD: settings.jevSelfContainedThreshold,
@@ -341,6 +422,7 @@ export function getSettingsForBridge(settings: AppSettings): Record<string, stri
     JEV_ENABLED: settings.jevEnabled === 'on' ? 'true' : 'false',
     JEV_VISUAL_CONTEXT: settings.jevVisualContext === 'on' ? 'true' : 'false',
     LOCAL_MODE: 'true',
-    LOCAL_OUTPUT_DIR: settings.outputDirectory
+    LOCAL_OUTPUT_DIR: settings.outputDirectory,
+    ...(settings.downloadLoginBrowser ? { DOWNLOAD_LOGIN_BROWSER: settings.downloadLoginBrowser } : {})
   }
 }

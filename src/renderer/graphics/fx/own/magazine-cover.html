@@ -1,0 +1,87 @@
+<!--
+  CreatorClips unit "magazine-cover": the speaker's own frame turned into a magazine cover (a big masthead word across
+  the top, two or three cover lines beside them, a thin frame), remade from HyperFrames' titlecard-lockup component in
+  its style and motion (https://github.com/heygen-com/hyperframes, registry/components/titlecard-lockup, Copyright 2026
+  HeyGen, Inc., Apache License 2.0; see ../vendor/LICENSE and ../vendor/NOTICE). It draws over the whole frame and
+  leaves the middle clear, so the live video of the speaker is the cover photo. Sized to the frame (cq units), themed by
+  the brand tokens, timed by CreatorClips' shared motion (window.__ccMotion); seek-driven.
+
+  Variables: masthead (one or two words as said), lines (two or three cover lines as said, "|"-separated),
+  cues (comma seconds: when each cover line is said).
+-->
+<template>
+  <div id="root" data-composition-id="magazine-cover" data-duration="4.5">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; overflow: hidden; font-family: var(--font-body, sans-serif); --mc-ink: #ffffff; --mc-accent: var(--brand, #22c55e); }
+      .mc-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.12) 22%, rgba(0, 0, 0, 0) 34%, rgba(0, 0, 0, 0) 70%, rgba(0, 0, 0, 0.28) 100%); }
+      .mc-frame { position: absolute; inset: 2.6cqmin; border: 0.55cqmin solid var(--mc-ink); border-radius: 1.4cqmin; opacity: 0.92; }
+      .mc-top { position: absolute; left: 0; right: 0; top: 4.6cqh; display: flex; flex-direction: column; align-items: center; }
+      .mc-masthead { font-family: "Playfair Display", serif; font-weight: 400; line-height: 0.82; letter-spacing: -0.02em; text-transform: uppercase; color: var(--mc-ink); white-space: nowrap;
+        text-shadow: 0 0.6cqmin 2.4cqmin rgba(0, 0, 0, 0.35); }
+      .mc-rule { width: 82cqw; height: 0.45cqmin; margin-top: 1.6cqmin; background: var(--mc-accent); transform-origin: 50% 50%; }
+      .mc-line { position: absolute; box-sizing: border-box; max-width: 44cqw; display: flex; flex-direction: column; gap: 1.1cqmin; }
+      .mc-line.mc-left { left: 6.2cqw; align-items: flex-start; text-align: left; }
+      .mc-line.mc-right { right: 6.2cqw; align-items: flex-end; text-align: right; }
+      .mc-bar { width: 9cqw; height: 0.9cqmin; background: var(--mc-accent); border-radius: 0.4cqmin; }
+      .mc-text { font: 900 5.8cqw/1.04 var(--font-display, sans-serif); letter-spacing: -0.01em; text-transform: uppercase; color: var(--mc-ink); overflow-wrap: normal; max-width: 100%; box-sizing: border-box;
+        text-shadow: 0 0.35cqmin 1.6cqmin rgba(0, 0, 0, 0.55), 0 0 0.4cqmin rgba(0, 0, 0, 0.35); }
+      .mc-line.mc-lead .mc-text { color: #ffffff; background: var(--mc-accent); text-shadow: none; padding: 0.5cqmin 1.6cqmin 0.3cqmin; border-radius: 0.8cqmin; font-size: 6.6cqw; box-shadow: 0 1cqmin 3cqmin rgba(0, 0, 0, 0.3); }
+      .mc-line.mc-lead .mc-bar { display: none; }
+      /* The light look: dark ink on white labels (the masthead stays white over the photo). */
+      .mc-light .mc-text { color: #0f172a; text-shadow: none; background: rgba(255, 255, 255, 0.96); padding: 0.9cqmin 1.8cqmin; border-radius: 1cqmin; box-shadow: 0 1cqmin 3cqmin rgba(15, 23, 42, 0.25); }
+      .mc-light .mc-line.mc-lead .mc-text { color: #ffffff; background: var(--mc-accent); }
+    </style>
+    <div class="mc-shade"></div><div class="mc-frame"></div>
+    <div class="mc-top"><div class="mc-masthead"></div><div class="mc-rule"></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var lines = String(vars.lines == null ? '' : vars.lines).split('|').map(words).filter(Boolean).slice(0, 3);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        var W = root.clientWidth, H = root.clientHeight;
+        var fg = getComputedStyle(root).getPropertyValue('--fg').trim();
+        // The light look (dark ink): its cover lines sit on white labels.
+        if (/^#0|rgb\(\s*1?\d\s*,/.test(fg)) root.classList.add('mc-light');
+        var mast = root.querySelector('.mc-masthead');
+        mast.textContent = words(vars.masthead);
+        // The masthead fills the cover's width (88%), no taller than a sixth of the frame.
+        mast.style.fontSize = '100px';
+        var natural = mast.scrollWidth || 1;
+        mast.style.fontSize = Math.max(24, Math.min(100 * W * 0.88 / natural, H * 0.17 / 0.82)).toFixed(1) + 'px';
+        // Cover lines beside the speaker: left, right, left, below the face, down the body.
+        var spots = [0.44, 0.555, 0.665];
+        var els = lines.map(function (text, i) {
+          var el = document.createElement('div'); el.className = 'mc-line ' + (i % 2 ? 'mc-right' : 'mc-left') + (i === 0 ? ' mc-lead' : '');
+          el.style.top = (spots[i] * 100).toFixed(1) + 'cqh';
+          var bar = document.createElement('div'); bar.className = 'mc-bar';
+          var t = document.createElement('div'); t.className = 'mc-text'; t.textContent = text;
+          el.appendChild(bar); el.appendChild(t); root.appendChild(el);
+          // A long word never breaks: the line's type shrinks until its longest word fits (and it is at most four lines).
+          var size = parseFloat(getComputedStyle(t).fontSize);
+          for (var k = 0; k < 10 && (t.scrollWidth > t.clientWidth + 1 || t.clientHeight > size * 1.1 * 4); k++) { size *= 0.9; t.style.fontSize = size.toFixed(1) + 'px'; }
+          return el;
+        });
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo('.mc-shade', { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power1.out' }, 0);
+        tl.fromTo('.mc-frame', { opacity: 0, scale: 1.04 }, { opacity: 0.92, scale: 1, duration: M.move_s * 1.5, ease: M.enter }, 0.02);
+        // The masthead lands first, from slight oversize, the rule drawing under it.
+        tl.fromTo('.mc-masthead', { opacity: 0, scale: 1.12, y: -8 }, { opacity: 1, scale: 1, y: 0, duration: M.move_s * 1.5, ease: M.enter }, 0.1);
+        tl.fromTo('.mc-rule', { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: M.enter }, 0.3);
+        var last = 0.45;
+        els.forEach(function (el, k) {
+          // Each cover line slides in from its side as it is said (else one after another).
+          var at = isFinite(cues[k]) ? Math.max(0.45, cues[k] - 0.12) : last + (k ? 0.45 : 0);
+          at = Math.max(at, last + (k ? 0.2 : 0)); last = at;
+          var dx = (k % 2 ? 1 : -1) * W * 0.06;
+          tl.fromTo(el.querySelector('.mc-bar'), { scaleX: 0, transformOrigin: k % 2 ? '100% 50%' : '0% 50%' }, { scaleX: 1, duration: M.move_s, ease: M.enter }, at);
+          tl.fromTo(el.querySelector('.mc-text'), { opacity: 0, x: dx }, { opacity: 1, x: 0, duration: M.move_s * 1.3, ease: M.enter }, at + 0.04);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['magazine-cover'] = tl;
+      })();
+    </script>
+  </div>
+</template>

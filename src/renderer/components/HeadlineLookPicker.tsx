@@ -1,0 +1,160 @@
+import { cn } from '../lib/utils'
+import {
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor,
+  highlightColors, highlightSplit, isHexColor, recommendedHookLook, setHideAfter, setTextBg,
+  type HeadlineLook
+} from '../../shared/headline-look'
+import { HideHookText } from './HideHookText'
+import { onRadioKeyDown, Segmented } from './ui/Segmented'
+
+const SAMPLE = 'He tried to humble the whole room'
+
+/** A small 9:16 frame showing the hook text in this look. */
+function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
+  const bar = headlineBarColor(look)
+  const font = HEADLINE_FONTS.find((item) => item.id === look.font) ?? HEADLINE_FONTS[0]
+  const text = font.upper ? SAMPLE.toUpperCase() : SAMPLE
+  const color = headlineTextColor(look)
+  const box = headlineTextBox(look)
+  if (look.look === 'floating' && look.textBg === 'highlight') {
+    // Key words in color: bold words on a white box, the last words in italic on a box in the color.
+    const colors = highlightColors(look)
+    const { lead, phrase } = highlightSplit(text)
+    return (
+      <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden data-text-bg="highlight">
+        <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
+        <div className="relative flex flex-col items-center px-1 pt-2.5 text-center" style={{ lineHeight: 1.1 }}>
+          <span style={{ background: colors.leadBg, color: colors.leadInk, fontFamily: font.family, fontWeight: 800, fontSize: 9, padding: '0 3px', borderRadius: 3 }}>{lead}</span>
+          <span style={{ background: colors.phraseBg, color: colors.phraseInk, fontFamily: HIGHLIGHT_PHRASE_FAMILY, fontStyle: 'italic', fontSize: 10.5, padding: '0 3px', borderRadius: 3, marginTop: 1 }}>{phrase}</span>
+        </div>
+      </div>
+    )
+  }
+  if (box) {
+    // Floating text on a box: a snug rounded box behind each line (the engine draws the same shape).
+    return (
+      <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden data-text-bg={look.textBg}>
+        <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
+        <div className="relative px-1.5 pt-3 text-center" style={{ fontFamily: font.family, fontSize: font.upper ? 8 : 7.5, fontWeight: 800, lineHeight: 1.22 }}>
+          <span style={{ color, background: box.opacity < 1 ? `rgb(0 0 0 / ${box.opacity})` : box.color, padding: `0 ${TEXT_BOX.padX}em`, borderRadius: `${TEXT_BOX.radius}em`,
+            boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{text}</span>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden>
+      <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
+      <div
+        className={cn('relative px-1.5 pb-1.5 pt-2.5 text-center leading-[1.15]', !bar && 'pt-3')}
+        style={{
+          background: bar ?? 'transparent',
+          color,
+          fontFamily: font.family,
+          fontSize: font.upper ? 8 : 7.5,
+          fontWeight: 800,
+          textShadow: bar ? undefined : '0 0 2px #000, 0 1px 3px rgb(0 0 0 / 0.8)'
+        }}
+      >
+        {look.look === 'none' ? '' : text}
+      </div>
+    </div>
+  )
+}
+
+/** The look with floating text's background (none is left out); the brand box starts from the default brand color while the color is white. */
+function withBg(value: HeadlineLook, bg: (typeof HEADLINE_TEXT_BGS)[number]['id']): HeadlineLook {
+  const look = setTextBg(value, bg)
+  return (bg === 'brand' || bg === 'highlight') && value.color.toUpperCase() === '#FFFFFF' ? { ...look, color: DEFAULT_BRAND_COLOR } : look
+}
+
+/** Choose how the hook text at the top looks: bar color or floating, and font. */
+/** `compact`: for narrow side panels (the clip editor's inspector): three tiles per row and fonts that wrap, never wider than the panel. */
+export function HeadlineLookPicker({ value, onChange, compact = false }: { value: HeadlineLook; onChange: (look: HeadlineLook) => void; compact?: boolean }): React.JSX.Element {
+  return (
+    <div className="space-y-2.5">
+      <div className={cn('grid grid-cols-3 gap-2', !compact && 'sm:grid-cols-5')} role="radiogroup" aria-label="Hook text look">
+        {HEADLINE_LOOKS.map((option) => {
+          const selected = value.look === option.id
+          const look: HeadlineLook = { ...value, look: option.id, color: option.id === 'brand' && value.look !== 'brand' && value.color === '#FFFFFF' ? DEFAULT_BRAND_COLOR : value.color }
+          return (
+            <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+              title={option.hint}
+              onClick={() => onChange(look)}
+              className={cn('glass-tile glass-tile-hover flex flex-col gap-1.5 rounded-xl p-2 text-center', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              <LookPreview look={look} />
+              <span className="block text-2xs font-medium">{option.label}</span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-2xs text-ink-subtle">{HEADLINE_LOOKS.find((item) => item.id === value.look)?.hint}</p>
+      {!(value.look === 'floating' && value.textBg === 'highlight') && (
+        <button type="button" className="text-2xs font-medium text-accent hover:underline"
+          onClick={() => onChange(setHideAfter(recommendedHookLook(value.color), value.hideAfterS))}>
+          Use the recommended hook: Key words in color
+        </button>
+      )}
+      {value.look === 'floating' && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium text-ink" id="hook-text-bg-label">Text background</p>
+          <div className={cn('grid grid-cols-3 gap-2', !compact && 'sm:grid-cols-4')} role="radiogroup" aria-labelledby="hook-text-bg-label">
+            {HEADLINE_TEXT_BGS.map((option) => {
+              const selected = headlineTextBg(value) === option.id
+              const look: HeadlineLook = withBg(value, option.id)
+              return (
+                <button key={option.id} type="button" role="radio" aria-checked={selected} aria-label={option.label} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  title={option.hint} onClick={() => onChange(look)}
+                  className={cn('glass-tile glass-tile-hover flex min-w-0 flex-col gap-1.5 rounded-xl p-2 text-center', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                  <LookPreview look={look} />
+                  <span className="block truncate text-2xs font-medium">{option.label}</span>
+                  {option.id === 'highlight' && <span className="block text-[10px] text-ink-subtle">Recommended</span>}
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-2xs text-ink-subtle">{HEADLINE_TEXT_BGS.find((item) => item.id === headlineTextBg(value))?.hint}</p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {value.look !== 'none' && compact && (
+          <div className="flex min-w-0 flex-wrap gap-1.5" role="radiogroup" aria-label="Hook text font">
+            {HEADLINE_FONTS.map((font) => {
+              const selected = value.font === font.id
+              return (
+                <button key={font.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  onClick={() => onChange({ ...value, font: font.id })}
+                  className={cn('rounded-lg px-2.5 py-1 text-xs', selected ? 'bg-white/15 text-ink' : 'bg-white/[0.04] text-ink-muted hover:text-ink')}
+                  style={{ fontFamily: font.family }}>{font.label}</button>
+              )
+            })}
+          </div>
+        )}
+        {value.look !== 'none' && !compact && <Segmented
+          label="Hook text font"
+          size="sm"
+          value={value.font}
+          options={HEADLINE_FONTS.map((font) => ({ value: font.id, label: <span style={{ fontFamily: font.family }}>{font.label}</span> }))}
+          onChange={(font) => onChange({ ...value, font })}
+        />}
+        {(value.look === 'brand' || headlineTextBg(value) === 'brand') && (
+          <label className="flex items-center gap-2 text-2xs text-ink-muted">
+            {value.look === 'brand' ? 'Bar color' : 'Box color'}
+            <input
+              type="color"
+              aria-label={value.look === 'brand' ? 'Bar color' : 'Box color'}
+              value={isHexColor(value.color) ? value.color.toLowerCase() : DEFAULT_BRAND_COLOR.toLowerCase()}
+              onChange={(event) => { if (isHexColor(event.target.value)) onChange({ ...value, color: event.target.value.toUpperCase() }) }}
+              className="h-7 w-10 cursor-pointer rounded-md border border-white/15 bg-transparent p-0.5"
+            />
+            <span className="font-mono text-ink-subtle">{value.color.toUpperCase()}</span>
+          </label>
+        )}
+      </div>
+      {value.look !== 'none' && (
+        <HideHookText compact={compact} value={value.hideAfterS} bar={headlineBarColor(value) !== null}
+          onChange={(hideAfterS) => onChange(setHideAfter(value, hideAfterS))} />
+      )}
+    </div>
+  )
+}

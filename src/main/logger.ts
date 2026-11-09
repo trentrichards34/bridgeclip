@@ -3,8 +3,8 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync 
 import { join } from 'path'
 
 // Simple structured JSON-lines logger that writes to app.getPath('logs').
-// On macOS that is ~/Library/Logs/BridgeClip/bridgeclip.log.
-// On Windows that is %APPDATA%\BridgeClip\logs\bridgeclip.log.
+// On macOS that is ~/Library/Logs/CreatorClips/bridgeclip.log.
+// On Windows that is %APPDATA%\CreatorClips\logs\bridgeclip.log.
 //
 // Why a custom logger instead of electron-log: zero new dependencies, and we
 // only need info/warn/error + bounded rotation. Good enough for diagnostics.

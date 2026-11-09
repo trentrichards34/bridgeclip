@@ -7,11 +7,21 @@ const vm = require('node:vm')
 const ts = require('typescript')
 const { fileLinksAvailable, directoryLinkType } = require('../support/symlinks.cjs')
 
+// The gameplay background library, for modules that only pass names through.
+const AVATARS_STUB = { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] }
+const AVATAR_STUDIO_STUB = { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }
+const HEYGEN_AVATAR_STUB = { TWIN_VIDEO_EXTENSIONS: ['mp4'] }
+const AVATAR_LIBRARY_STUB = { importLegacyAvatarVideos: async () => 0 }
+const SPENDING_STUB = { allowOnce() {}, assertSpendAllowed: async () => {}, friendlyIpcError: (error) => error, initSpending() {}, metered: (_kind, _label, work) => work(), meteredAvatarRender: (_fal, start) => start(), onOutOfCredits() {}, onSpendingChange() {}, openRouterBalance: async () => null, spendOverview: async () => ({}), trackAvatarStatus() {}, trackJobSnapshot() {}, trackRemixStatus() {} }
+const BACKGROUNDS_STUB = { resolveBackground: (name) => '/library/' + name, listBackgrounds: async () => [], addBackgrounds: async () => [], removeBackground: async () => [] }
+
+// Create's headline memory (hook-memory.ts): nothing saved.
+const HOOK_MEMORY_STUB = { createSourceKey: () => null, savedCreateHeadlines: () => [], rememberCreateRun() {}, rememberCreateHeadline: () => false }
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './hook-memory' ? HOOK_MEMORY_STUB : id === './spending' ? SPENDING_STUB : id === './backgrounds' ? BACKGROUNDS_STUB : id === './music' ? { audioForEngine: () => undefined } : id === './avatars' ? AVATARS_STUB : id === './avatar-studio' ? AVATAR_STUDIO_STUB : id === './heygen-avatar' ? HEYGEN_AVATAR_STUB : id === './heygen' ? { isConsentUrl: () => false } : id === './avatar-library' ? AVATAR_LIBRARY_STUB : id === './listicle' ? { onListicleStatus: () => {}, listicleRunBusy: () => null, listicleStatus: () => null, stopListicleForQuit: () => {} } : id === './broll-video' ? { onBrollVideoStatus: () => {}, onBrollVideoSpend: () => {}, brollVideoRunBusy: () => null, brollVideoStatus: () => null, stopBrollVideoForQuit: () => {} } : id === './voice-samples' ? { voiceSample: async () => new Uint8Array() } : id === './media-permissions' ? { requestMediaAccess: async () => ({ camera: true, microphone: true }), mediaAccessStatus: () => ({ camera: true, microphone: true }) } : id === './clip-zip' ? { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext } : id === './brands' ? { brandForJob: () => ({ name: '', text: '', mark: null }) } : id === './more-clips' ? { refreshReusePlan: (plan) => ({ plan }) } : id === './auto-graphics' ? { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null } : id === './reference-image' ? { addReferenceFile: async () => null, referenceBytes: async () => new Uint8Array(), referenceSupportFor: async () => ({}), referenceForRun: async () => ({ saved: '', send: null, note: null }), referencePath: () => '' } : id === './broll-library' ? { addLibraryPaths: async () => null, addBrollFromLibrary: async () => null, brollAiSettings: () => ({ kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }), brollRunEstimateUsd: () => null, brollRunFields: () => ({ fields: { broll_source: 'stock' } }), cancelIndexing: () => false, indexLibrary: async () => ({}), libraryItemFiles: async () => [], libraryView: async () => ({}), makeAiShot: async () => ({}), onIndexProgress: () => () => {}, onLibraryChange: () => () => {}, pendingShotCount: async () => 0, removeLibraryItems: async () => ({}), saveBrollAiSettings: () => ({}), updateLibraryItem: async () => ({}) } : id === './logo-library' ? { addLogoFromPicker: async () => null, listLogos: async () => [], removeLogo: async () => [], updateLogo: async () => [], logosForEngine: () => [], logosForEdit: () => [], copyLogosIntoRun: () => 0, importLogoIntoRun: () => '', logoFile: () => null } : id === './covers' ? { suggestCovers: async () => ({}), saveCover: async () => ({}), savedCover: async () => null, cancelCovers: () => {} } : id === './custom-graphics-ipc' ? { registerCustomGraphics: () => {} } : id === './motion-library' ? { libraryView: () => [], setLibraryStatus: () => [] } : id === './editor-custom-graphics' ? { EDITOR_REMAKE_ESTIMATE_USD: 0.35, LIBRARY_ADD_ESTIMATE_USD: 0.06, editorAddLibraryGraphic: async () => ({}), editorCustomInfo: async () => ({}), editorRemakeCustom: async () => ({}), editorDesignCustom: async () => ({}), editorDesignEstimate: async () => null, editorDesignInfo: async () => ({}) } : id === './ctas' ? { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), readCta: () => ({}), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] } : id === './moment-take' ? { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) } : id === './reactions' ? { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] } : id === './remix' ? { onRemixStatus: () => {}, setRemixHeygen: () => {}, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] } : id === './edit-recording' ? { onEditStatus: () => {}, onEditSpend: () => {}, editRunBusy: () => null, isEditRunFolder: () => false, editStatus: () => null, startEstimate: () => null } : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -182,12 +192,23 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './settings-store': { loadSettings: () => ({ outputDirectory: library }) },
       './file-manager': {},
       './output-storage': { measureOutputStorage: async (directory) => ({ outputDirectory: directory, bytes: 0 }) },
-      './clip-editor': {},
+      './clip-editor': { onEditorExportCta() {}, onEditorHookSaved() {}, onEditorRunLock() {}, onEditorSpend() {} }, './clip-chat': { chatEstimateUsd: () => null, chatInfo: () => ({}), chatModel: () => 'google/gemini-3.8-flash', editorChat: async () => ({ reply: '', steps: [] }), resetChat() {} }, './edit-chat': { editChatInfo: () => ({}), editRecordingChat: async () => ({ reply: '', steps: [] }), resetEditChat() {} }, './remix-chat': { remixChat: async () => ({ reply: '', steps: [] }), remixChatInfo: () => ({}), resetRemixChat() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
       './edit-inspector': { inspectEdits: async () => ({}) },
       './run-history': runHistory,
       './pipeline-runner': {},
-      './job-manager': { initJobManager() {} },
-      './job-start': {},
+      './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
+      './job-start': {}, '../shared/create-sources': { MAX_CREATE_SOURCES: 10 },
+    './logo-library': { addLogoFromPicker: async () => null, listLogos: async () => [], removeLogo: async () => [], updateLogo: async () => [], logosForEngine: () => [], logosForEdit: () => [], copyLogosIntoRun: () => 0, importLogoIntoRun: () => '', logoFile: () => null }, './sound-library': { addSoundsFromPicker: async () => ({}), listSounds: async () => ({ own: [] }), removeSound: async () => ({}), setSoundAction: async () => ({}), soundPreview: async () => ({}), soundPaletteForEngine: () => [] },'./backgrounds': {}, './ai-video-skill': { aiVideoSkillInfo: () => ({ available: true }), saveAiVideoSkill: async () => null, revealAiVideoSkill: () => false }, './music': { audioForEngine: () => undefined, addMusic: async () => ({}), listMusic: async () => ({}), musicPreview: async () => ({}), removeMusic: async () => ({}), saveMusicSettings: async () => ({}) },
+    './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
+    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './avatar-library': { importLegacyAvatarVideos: async () => 0 }, './broll-video': { BROLL_VIDEO_VOICE_EXTENSIONS: ['mp3', 'mp4'], brollVideoEstimate: async () => ({}), brollVideoRunBusy: () => null, brollVideoShots: async () => [], brollVideoSpendCheck: () => 0.01, brollVideoStatus: () => null, cancelBrollVideo: () => false, describeVoiceover: async () => null, onBrollVideoSpend: () => {}, onBrollVideoStatus: () => {}, saveBrollRecording: async () => null, startBrollVideo: async () => null, swapBrollShot: async () => [], stopBrollVideoForQuit: () => {} }, './listicle': { LISTICLE_SCRIPT_ESTIMATE_USD: 0.01, onListicleStatus: () => {}, listicleRunBusy: () => null, listicleStatus: () => null, cancelListicleRender: () => false, listicleSpendCheck: () => null, startListicleRender: async () => null, saveListicleRecording: async () => '', writeListicleScript: async () => ({}), stopListicleForQuit: () => {} },
+    './heygen-avatar': { TWIN_VIDEO_EXTENSIONS: ['mp4'] }, './heygen': { isConsentUrl: () => false },
+    './voice-samples': { voiceSample: async () => new Uint8Array() },
+    './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }), mediaAccessStatus: () => ({ camera: true, microphone: true }) },
+    './clip-zip': { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext },
+    './reference-image': { addReferenceFile: async () => null, referenceBytes: async () => new Uint8Array(), referenceSupportFor: async () => ({}), referenceForRun: async () => ({ saved: '', send: null, note: null }), referencePath: () => '' },
+    './broll-library': { addLibraryPaths: async () => null, addBrollFromLibrary: async () => null, brollAiSettings: () => ({ kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }), brollRunEstimateUsd: () => null, brollRunFields: () => ({ fields: { broll_source: 'stock' } }), cancelIndexing: () => false, indexLibrary: async () => ({}), libraryItemFiles: async () => [], libraryView: async () => ({}), makeAiShot: async () => ({}), onIndexProgress: () => () => {}, onLibraryChange: () => () => {}, pendingShotCount: async () => 0, removeLibraryItems: async () => ({}), saveBrollAiSettings: () => ({}), updateLibraryItem: async () => ({}) }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './covers': { suggestCovers: async () => ({}), saveCover: async () => ({}), savedCover: async () => null, cancelCovers: () => {} }, './auto-graphics': { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] }, './moment-take': { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) },
+    './remix': { onRemixStatus: () => {}, onRemixMomentSpend: () => {}, setRemixHeygen: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
+    './edit-recording': { onEditStatus: () => {}, onEditSpend: () => {}, editRunBusy: () => null, isEditRunFolder: () => false, editStatus: () => null, startEstimate: () => null },
       './logger': {},
       './security': security,
       './network-policy': {},
@@ -199,7 +220,10 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './zernio/posts': {},
       './automations': {},
       './library-posting': {},
-      './library-management': {}
+      './ready-to-post': { readyToPost: async () => ({ clips: [], runs: 0, unreadableRuns: 0, postingHistory: false }) },
+      './library-management': { setRunBusyCheck() {} },
+      './library-storage': { onOutputFolderChanged() {} },
+      './library-folders': { previousOutputFolders: () => [] }
     })
     ipc.registerIpcHandlers(() => window)
     assert.equal(handlers.has('framing:inspect'), false)
@@ -238,9 +262,10 @@ test('external URLs reject executable schemes and embedded credentials', () => {
   for (const url of ['file:///tmp/run', 'javascript:alert(1)', 'https://user:pass@example.com', null]) assert.equal(security.isWebUrl(url), false)
   assert.equal(security.isWebUrl('https://example.com/video'), true)
   assert.equal(security.isTrustedExternalUrl('https://example.com/video'), false)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases/releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/creatorclips-releases/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip'), false, 'the private source repository is not a member-facing link')
 })
 
 test('source video links normalize supported YouTube forms and allow only canonical browser URLs', () => {
@@ -262,6 +287,57 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   assert.equal(validateJobConfig(job).videoSpeed, 1)
   assert.equal(validateJobConfig(job).includeTitle, true)
   assert.equal(validateJobConfig({ ...job, includeTitle: false }).includeTitle, false)
+  assert.equal(validateJobConfig(job).headlineLook, undefined)
+  assert.deepEqual({ ...validateJobConfig({ ...job, headlineLook: { look: 'floating', color: '#ffffff', font: 'condensed' } }).headlineLook },
+    { look: 'floating', color: '#FFFFFF', font: 'condensed' })
+  assert.throws(() => validateJobConfig({ ...job, headlineLook: { look: 'neon' } }), /headline look/)
+  assert.equal(validateJobConfig({ ...job, ctaId: 'a1b2c3d4e5f60718' }).ctaId, 'a1b2c3d4e5f60718')
+  assert.throws(() => validateJobConfig({ ...job, ctaId: '../cta' }), /call to action/)
+  assert.throws(() => validateJobConfig({ ...job, headlineLook: { look: 'brand', color: 'javascript:1' } }), /headline look/)
+  assert.equal(validateJobConfig({ ...job, backgroundVideo: 'Minecraft parkour (2).mp4' }).backgroundVideo, 'Minecraft parkour (2).mp4')
+  assert.equal(validateJobConfig(job).backgroundVideo, undefined)
+  for (const backgroundVideo of ['../secret.mp4', '/etc/passwd', 'a/b.mp4', '.hidden.mp4', 'notes.txt', 'x..mp4', 'clip', '', 5, null]) {
+    assert.throws(() => validateJobConfig({ ...job, backgroundVideo }), /Background videos/)
+  }
+  assert.throws(() => validateJobConfig({ ...job, aspectRatio: '16:9', backgroundVideo: 'gameplay.mp4' }), /9:16/)
+  assert.equal(validateJobConfig({ ...job, broll: 'after-hook' }).broll, 'after-hook')
+  assert.equal(validateJobConfig({ ...job, aspectRatio: '16:9', broll: 'full' }).broll, 'full')
+  for (const broll of ['on', true, null, '']) assert.throws(() => validateJobConfig({ ...job, broll }), /B-roll/)
+  assert.throws(() => validateJobConfig({ ...job, broll: 'full', backgroundVideo: 'gameplay.mp4' }), /not both/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', broll: 'full' }), /Automatic/)
+  assert.equal(validateJobConfig({ ...job, hookPreview: true }).hookPreview, true)
+  for (const hookPreview of ['yes', 1, null]) assert.throws(() => validateJobConfig({ ...job, hookPreview }), /hook preview/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', hookPreview: true }), /Automatic/)
+  // Motion graphics: Auto, for Automatic runs only; Off is never sent along.
+  assert.equal(validateJobConfig({ ...job, motionGraphics: true }).motionGraphics, true)
+  assert.equal('motionGraphics' in validateJobConfig({ ...job, motionGraphics: false }), false)
+  for (const motionGraphics of ['auto', 1, null]) assert.throws(() => validateJobConfig({ ...job, motionGraphics }), /motion graphics/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', motionGraphics: true }), /Automatic/)
+  // Stage layouts ride on motion graphics, on vertical clips without a gameplay background.
+  assert.equal(validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true }).stageLayouts, true)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, stageLayouts: true }), false)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true, aspectRatio: '16:9' }), false)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true, backgroundVideo: 'gameplay.mp4' }), false)
+  for (const stageLayouts of ['on', 1, null]) assert.throws(() => validateJobConfig({ ...job, motionGraphics: true, stageLayouts }), /stage layouts/)
+  // The graphics amount (register) rides on motion graphics: teaching, story or minimal only.
+  assert.equal(validateJobConfig({ ...job, motionGraphics: true, register: 'story' }).register, 'story')
+  assert.equal('register' in validateJobConfig({ ...job, register: 'story' }), false)
+  for (const register of ['loud', 1, null]) assert.throws(() => validateJobConfig({ ...job, motionGraphics: true, register }), /graphics amount/)
+  // Skills: music (and its track) and voice cleanup; off is never sent along, a track only rides with music.
+  const audio = validateJobConfig({ ...job, music: true, musicTrack: 'calm-pad', voiceCleanup: true })
+  assert.deepEqual([audio.music, audio.musicTrack, audio.voiceCleanup], [true, 'calm-pad', true])
+  const quiet = validateJobConfig({ ...job, music: false, musicTrack: 'calm-pad', voiceCleanup: false })
+  assert.deepEqual(['music', 'musicTrack', 'voiceCleanup'].filter((key) => key in quiet), [])
+  for (const bad of [{ music: 'on' }, { voiceCleanup: 1 }, { music: true, musicTrack: '../x.mp3' }]) assert.throws(() => validateJobConfig({ ...job, ...bad }))
+  // "Say what it's for": one plain line, and a reference picture's id (never a path).
+  assert.equal(validateJobConfig({ ...job, purpose: '  Instagram reel   selling my coaching call ' }).purpose, 'Instagram reel selling my coaching call')
+  assert.equal('purpose' in validateJobConfig({ ...job, purpose: '   ' }), false)
+  assert.throws(() => validateJobConfig({ ...job, purpose: 'x'.repeat(201) }), /200 characters/)
+  assert.throws(() => validateJobConfig({ ...job, purpose: 'a {b}' }), /plain words/)
+  assert.equal(validateJobConfig({ ...job, referenceImage: 'c'.repeat(24) }).referenceImage, 'c'.repeat(24))
+  for (const referenceImage of ['/etc/passwd', '../x.png', 'C'.repeat(24), 5]) assert.throws(() => validateJobConfig({ ...job, referenceImage }), /reference image/)
+  // Main sets the picture's path itself; the renderer can't.
+  assert.equal(validateJobConfig({ ...job, referenceImagePath: '/etc/passwd' }).referenceImagePath, undefined)
   assert.equal(validateJobConfig(job).clipRequest, undefined)
   assert.equal(validateJobConfig({ ...job, clipRequest: '  the pricing debate \n' }).clipRequest, 'the pricing debate')
   assert.equal(validateJobConfig({ ...job, clipRequest: '   ' }).clipRequest, undefined)
@@ -409,7 +485,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   result = { status: 'dependency', module: 'private/secret' }
   assert.doesNotMatch((await check()).error, /private/)
   result = { status: 'dependency', module: 'clip_engine' }
-  assert.match((await check()).hint, /same BridgeClip version/)
+  assert.match((await check()).hint, /same CreatorClips version/)
   result = { status: 'model' }
   const model = await check()
   assert.match(model.hint, /face_detection_yunet_2023mar.onnx/)
@@ -428,7 +504,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   rejection = null
   result = { status: 'dependency', module: 'cv2' }
   const packaged = await check()
-  assert.match(packaged.hint, /Reinstall BridgeClip/)
+  assert.match(packaged.hint, /Reinstall CreatorClips/)
   assert.equal(packaged.repairCommand, null)
   assert.doesNotMatch(JSON.stringify(packaged), /private traceback/)
 })
@@ -437,9 +513,9 @@ test('Windows resolves the saved legacy Python default without replacing an inst
   const winProcess = Object.create(process)
   Object.defineProperty(winProcess, 'platform', { value: 'win32' })
   Object.defineProperty(winProcess, 'env', { value: { PATH: 'C:\\Python;C:\\Windows' } })
-  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\BridgeClip\\resources' })
-  const userData = 'C:\\Users\\Test\\BridgeClip'
-  const engine = 'C:\\BridgeClip\\engine'
+  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\CreatorClips\\resources' })
+  const userData = 'C:\\Users\\Test\\CreatorClips'
+  const engine = 'C:\\CreatorClips\\engine'
   const present = new Set()
   let python3Runnable = false
   let saved = null
@@ -651,6 +727,7 @@ test('pipeline preserves split JSON messages and protects the job identity', asy
   const forwarded = JSON.parse(workerInput)
   assert.equal(forwarded.video_speed, 1.5)
   assert.equal(forwarded.include_title, true)
+  assert.equal(forwarded.title_style, 'card')
   assert.equal(forwarded.clip_request, 'the pricing debate')
   assert.equal(forwarded.debug_capture, undefined)
   assert.equal(forwarded.contract_version, 3)

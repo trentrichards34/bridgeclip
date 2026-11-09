@@ -26,6 +26,7 @@ from functools import lru_cache
 from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, get_settings
+from clip_engine.services.spoken_numbers import number_spans
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,25 @@ SRT_LINE_CHARS = 42
 SRT_MAX_CUE_MS = 6000
 SRT_PAUSE_BREAK_MS = 700
 SRT_LINGER_MS = 400
+
+
+def digitize_words(words: list[TranscriptWord]) -> list[TranscriptWord]:
+    """Spoken quantities as digits ("fifteen billion" -> "15 billion"): the words of one number become one
+    caption word spanning their times, so the timing stays the words' own (see spoken_numbers)."""
+    spans = number_spans([w.word for w in words])
+    if not spans:
+        return words
+    out: list[TranscriptWord] = []
+    i = 0
+    for span in spans:
+        out.extend(words[i:span.first])
+        out.append(TranscriptWord(
+            word=span.text, start_time_ms=words[span.first].start_time_ms,
+            end_time_ms=max(w.end_time_ms for w in words[span.first:span.last + 1]),
+        ))
+        i = span.last + 1
+    out.extend(words[i:])
+    return out
 
 
 def _norm(word: str) -> str:
@@ -122,6 +142,15 @@ def _caption_font(font_name: str) -> Optional[_FontMetrics]:
     return None
 
 
+def contrast_text(hex_color: str) -> str:
+    """Black or white, whichever reads on this background color (#RRGGBB)."""
+    clean = hex_color.lstrip("#")
+    r, g, b = (int(clean[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in (r, g, b)]
+    luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return "#111111" if luminance > 0.36 else "#FFFFFF"
+
+
 ALIGNMENT_MAP = {
     "left": {"top": 7, "center": 4, "bottom": 1},
     "center": {"top": 8, "center": 5, "bottom": 2},
@@ -147,6 +176,20 @@ class _Token:
     state: str
     emphasized: bool
     karaoke_cs: int = 0
+    # The group's key word (look extras: keyword pill / accent word).
+    key: bool = False
+
+
+# Look extras: a group's key word is its punch word, else its strongest word.
+KEY_STOPWORDS = frozenset(
+    "about after again because before being could doing every going gonna great might never other really right should "
+    "since still their there these thing things think those through today under until wanna where which while would "
+    "yours actually basically literally".split()
+)
+# An accent word only goes in a group with at least this many words.
+ACCENT_MIN_WORDS = 2
+# Accent words are drawn this much bigger (a serif reads smaller than a heavy sans).
+ACCENT_SCALE = 1.15
 
 
 class CaptionGeneratorService:
@@ -155,6 +198,7 @@ class CaptionGeneratorService:
     def __init__(self):
         self.settings = get_settings()
         self._emphasis: set[str] = set()
+        self._key_terms: set[str] = set()
 
     async def generate_captions(
         self,
@@ -189,9 +233,9 @@ class CaptionGeneratorService:
                 captions never jump mid-phrase. Replaces `anchors`.
         """
         style = caption_style or self.settings.get_caption_style()
-        self._emphasis = {
-            _norm(t) for w in (emphasis_words or []) for t in w.split() if len(_norm(t)) >= 2
-        } if style.emphasis_color else set()
+        punch_words = {_norm(t) for w in (emphasis_words or []) for t in w.split() if len(_norm(t)) >= 2}
+        self._emphasis = punch_words if style.emphasis_color else set()
+        self._key_terms = punch_words
 
         relevant_segments = [
             seg for seg in transcript_segments
@@ -262,6 +306,7 @@ class CaptionGeneratorService:
             w for w in sorted(words, key=lambda w: w.start_time_ms)
             if w.end_time_ms > clip_start_ms and w.start_time_ms < clip_end_ms and w.word.strip()
         ]
+        words = digitize_words(words)
         if not words:
             return None
 
@@ -340,11 +385,13 @@ class CaptionGeneratorService:
             else:
                 all_words.extend(self._split_segment_into_words(segment))
 
-        clip_words = [
+        clip_words = digitize_words([
             w for w in all_words
             if w.end_time_ms > clip_start_ms and w.start_time_ms < clip_end_ms
-        ]
-        word_groups = self._group_words(clip_words, style.max_words_per_line)
+        ])
+        # A group is one line (or up to `max_lines` of them: the Explainer's captions build a two-line sentence as said).
+        lines = max(1, int(getattr(style, "max_lines", 1) or 1))
+        word_groups = self._group_words(clip_words, style.max_words_per_line * lines, getattr(style, "group_at_commas", True))
 
         events: list[str] = []
         for group_idx, group in enumerate(word_groups):
@@ -373,12 +420,16 @@ class CaptionGeneratorService:
             end_ms = min(clip_end_ms - clip_start_ms, segment.end_time_ms - clip_start_ms)
             if end_ms <= start_ms:
                 continue
+            shown = self._segment_words(segment.text)
             tokens = [
                 _Token(self._display_word(w, style), PAST, self._is_emphasis(w))
-                for w in segment.text.split()
+                for w in shown
             ]
+            per_line = max(1, style.max_words_per_line)
+            for i in range(0, len(shown), per_line):
+                self._mark_key(tokens[i:i + per_line], shown[i:i + per_line], style)
             segment_events = self._layered_events(tokens, start_ms, end_ms, style, entrance=False)
-            events.extend(place(segment_events, segment.text.split()) if place else segment_events)
+            events.extend(place(segment_events, shown) if place else segment_events)
         return events
 
     def _apply_anchors(
@@ -420,7 +471,7 @@ class CaptionGeneratorService:
         The height is symmetric about the \pos (twice the larger half).
         """
         wrap_w = max(1, output_width - 2 * SIDE_MARGIN)
-        pill = bool(style.highlight_box_color and not style.karaoke_fill)
+        pill = self._has_pill(style)
         gap = "  " if pill else " "
         per_line = max(1, style.max_words_per_line)
         shown = [self._display_word(w, style) for w in words if w.strip()] or [""]
@@ -493,8 +544,13 @@ class CaptionGeneratorService:
             f"{alignment},60,60,{margin_v},1"
         )
 
+        if style.line_box_color and getattr(style, "line_box_shape", "round") == "rect":
+            # The crisp box: an opaque box (BorderStyle 3) per line, its padding the plate layer's \\bord.
+            default_style += "\n" + default_style.replace("Style: Default,", "Style: Plate,", 1).replace(
+                f",1,{style.outline_width},0,{alignment},", f",3,{style.outline_width},0,{alignment},", 1)
+
         return f"""[Script Info]
-Title: BridgeClip Captions
+Title: CreatorClips Captions
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes
@@ -579,9 +635,11 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
                 )
                 for k, w in enumerate(words)
             ]
+            self._mark_key(tokens, [w.word for w in words], style)
             return self._layered_events(tokens, start, end, style, entrance=style.entrance_pop)
 
         events: list[str] = []
+        key = self._key_index([w.word for w in words], style)
         for i, current_word in enumerate(words):
             word_start = max(0, current_word.start_time_ms - clip_start_ms)
             if i < len(words) - 1:
@@ -599,6 +657,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
                 )
                 for j, w in enumerate(words)
             ]
+            self._mark_key(tokens, [w.word for w in words], style, key)
             events.extend(self._layered_events(
                 tokens, word_start, word_end, style,
                 entrance=style.entrance_pop and not events,
@@ -624,23 +683,24 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             layers.append((LAYER_SHADOW, lambda t: self._shadow_tags(t, style)))
         if style.glow_color:
             layers.append((LAYER_GLOW, lambda t: self._glow_tags(t, style)))
-        if style.highlight_box_color and not style.karaoke_fill:
+        if self._has_pill(style):
             layers.append((LAYER_PILL, lambda t: self._pill_tags(t, style)))
         layers.append((LAYER_FACE, lambda t: self._face_tags(t, style, active_ms)))
 
         lead = POP_TAGS if entrance else ""
         # The pill overhangs its word; hard spaces keep it clear of the neighbors
         # (on every event, so words don't shift as the pill moves).
-        gap = " \\h" if style.highlight_box_color and not style.karaoke_fill else " "
+        gap = " \\h" if self._has_pill(style) else " "
         start, end = self._format_ass_time(start_ms), self._format_ass_time(end_ms)
         events = []
         for layer, tags_for in layers:
             parts = []
             for t in tokens:
                 karaoke = f"\\kf{t.karaoke_cs}" if t.karaoke_cs else ""
-                parts.append(f"{{{karaoke}{tags_for(t)}}}{t.text}")
+                parts.append(f"{{{karaoke}{self._font_tags(t, style)}{tags_for(t)}}}{t.text}")
             text = "\\N".join(self._wrap_words(parts, style.max_words_per_line, gap))
-            events.append(f"Dialogue: {layer},{start},{end},Default,,0,0,0,,{{{lead}}}{text}")
+            name = "Plate" if layer == LAYER_PLATE and getattr(style, "line_box_shape", "round") == "rect" else "Default"
+            events.append(f"Dialogue: {layer},{start},{end},{name},,0,0,0,,{{{lead}}}{text}")
         return events
 
     # ------------------------------------------------------------------
@@ -659,10 +719,21 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
     def _face_tags(self, token: _Token, style: CaptionStyle, active_ms: int) -> str:
         emphasis = self._hex_to_ass(style.emphasis_color) if token.emphasized else None
+        # The key word in the accent font, in its own color (the Explainer's captions).
+        if emphasis is None and token.key and getattr(style, "accent_key_color", None) and style.accent_font and not style.keyword_pill_color:
+            emphasis = self._hex_to_ass(style.accent_key_color)
         primary = self._hex_to_ass(style.primary_color)
         highlight = self._hex_to_ass(style.highlight_color)
         alpha = self._alpha(self._visibility(token, style))
-        border = f"\\bord{style.outline_width}\\3c{self._hex_to_ass(style.outline_color)}"
+        border = f"\\bord{self._outline(token, style)}\\3c{self._hex_to_ass(style.outline_color)}"
+
+        if token.key and style.keyword_pill_color:
+            # On its pill: a contrasting color and no stroke, spoken or not.
+            on_pill = self._hex_to_ass(contrast_text(style.keyword_pill_color))
+            if style.karaoke_fill:
+                return f"\\1c{on_pill}\\2c{on_pill}\\1a&H00&\\2a&H00&\\bord0"
+            shown = self._alpha(1.0 if self._visibility(token, style) > 0 else 0.0)
+            return f"\\alpha{shown}\\bord0\\1c{on_pill}"
 
         if style.karaoke_fill:
             # \kf sweeps from SecondaryColour (unspoken) to PrimaryColour (spoken).
@@ -674,7 +745,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
         if token.state == ACTIVE:
             color = emphasis or highlight
-            if style.highlight_box_color:
+            if style.highlight_box_color and not style.keyword_pill_color:
                 # Text on the pill needs no stroke.
                 border = "\\bord0"
             if style.color_transition and active_ms >= 150:
@@ -688,11 +759,11 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
     def _shadow_tags(self, token: _Token, style: CaptionStyle) -> str:
         visibility = self._visibility(token, style)
-        if style.highlight_box_color and token.state == ACTIVE:
+        if (token.key if style.keyword_pill_color else style.highlight_box_color and token.state == ACTIVE):
             visibility *= 0.5  # the pill carries its own weight
         return (
             f"\\1a&HFF&\\3a&HFF&\\4a{self._alpha(style.shadow_opacity * visibility)}"
-            f"\\4c{self._hex_to_ass(style.shadow_color)}\\bord{style.outline_width + style.shadow_spread}"
+            f"\\4c{self._hex_to_ass(style.shadow_color)}\\bord{self._outline(token, style) + style.shadow_spread}"
             f"\\xshad0\\yshad{style.shadow_offset}\\blur{style.shadow_blur}"
         )
 
@@ -705,6 +776,17 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         )
 
     def _pill_tags(self, token: _Token, style: CaptionStyle) -> str:
+        if style.keyword_pill_color:
+            # Look extra: the pill sits on the group's key word for the whole group.
+            if not token.key:
+                return "\\alpha&HFF&\\bord0\\shad0"
+            color = self._hex_to_ass(style.keyword_pill_color)
+            # Shown whole even while the words around it are dimmed (hidden only until spoken, with "hide").
+            alpha = self._alpha(1.0 if self._visibility(token, style) > 0 else 0.0)
+            return (
+                f"\\1a{alpha}\\2a{alpha}\\3a{alpha}\\1c{color}\\2c{color}\\3c{color}"
+                f"\\shad0\\blur0.8\\bord{style.highlight_box_padding}"
+            )
         if token.state != ACTIVE:
             return "\\alpha&HFF&\\bord0\\shad0"
         color = self._hex_to_ass(style.highlight_box_color)
@@ -714,6 +796,59 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             f"\\alpha&H00&\\1c{color}\\3c{color}\\shad0\\blur0.8"
             f"\\bord{max(1, pad // 2)}\\t(0,80,\\bord{pad})"
         )
+
+    @staticmethod
+    def _outline(token: _Token, style: CaptionStyle) -> float:
+        """The stroke width: a thin serif accent word gets a lighter one, so it stays a serif."""
+        if token.key and style.accent_font and not style.keyword_pill_color:
+            return round(style.outline_width * 0.45, 1)
+        return style.outline_width
+
+    @staticmethod
+    def _has_pill(style: CaptionStyle) -> bool:
+        return bool(style.keyword_pill_color or (style.highlight_box_color and not style.karaoke_fill))
+
+    def _font_tags(self, token: _Token, style: CaptionStyle) -> str:
+        r"""Accent words switch to the italic serif; every other word switches back (overrides carry on in a line)."""
+        if not style.accent_font:
+            return ""
+        if token.key:
+            return f"\\fn{style.accent_font}\\i1\\b0\\fs{round(style.font_size * ACCENT_SCALE)}"
+        return (f"\\fn{style.font_name}\\i{1 if style.italic else 0}\\b{1 if style.bold else 0}"
+                f"\\fs{style.font_size}")
+
+    def _key_index(self, words: list[str], style: CaptionStyle) -> Optional[int]:
+        """The group's key word (look extras): its first punch word, else its strongest word (a number, else the
+        longest word of five letters or more that isn't filler), else none."""
+        if not (style.keyword_pill_color or style.accent_font):
+            return None
+        keys = [_norm(w) for w in words]
+        for i, key in enumerate(keys):
+            if key and (key in self._key_terms or key.rstrip("s") in self._key_terms):
+                return i
+        best, best_score = None, 0
+        for i, key in enumerate(keys):
+            if any(c.isdigit() for c in key):
+                score = 100 + len(key)
+            elif len(key) >= 5 and key not in KEY_STOPWORDS:
+                score = len(key)
+            else:
+                continue
+            if score > best_score:
+                best, best_score = i, score
+        return best
+
+    def _mark_key(self, tokens: list[_Token], words: list[str], style: CaptionStyle, key: Optional[int] = -1) -> None:
+        """Flag the group's key word (look extras); an accent word is drawn lowercase."""
+        index = self._key_index(words, style) if key == -1 else key
+        if index is None or index >= len(tokens):
+            return
+        if style.accent_font and not style.keyword_pill_color and len(words) < ACCENT_MIN_WORDS:
+            return
+        token = tokens[index]
+        token.key = True
+        if style.accent_font:
+            token.text = token.text.lower()
 
     def _plate_tags(self, token: _Token, style: CaptionStyle) -> str:
         # Unspoken words keep their plate so the box never changes size.
@@ -725,7 +860,24 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
     def _is_emphasis(self, word: str) -> bool:
         key = _norm(word)
-        return bool(key) and (key in self._emphasis or key.rstrip("s") in self._emphasis)
+        if bool(key) and (key in self._emphasis or key.rstrip("s") in self._emphasis):
+            return True
+        # A number shown as one word ("15 billion") is a punch word when any part of it is.
+        parts = word.split()
+        return len(parts) > 1 and any(self._is_emphasis(part) for part in parts)
+
+    @staticmethod
+    def _segment_words(text: str) -> list[str]:
+        """A segment's words without timing, its spoken quantities as digits (one word per number)."""
+        words = text.split()
+        spans = number_spans(words)
+        out: list[str] = []
+        i = 0
+        for span in spans:
+            out.extend(words[i:span.first])
+            out.append(span.text)
+            i = span.last + 1
+        return out + words[i:]
 
     # ------------------------------------------------------------------
     # Word Grouping (punctuation-aware)
@@ -735,6 +887,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         self,
         words: list[TranscriptWord],
         max_per_group: int,
+        at_commas: bool = True,
     ) -> list[WordGroup]:
         """Group words into display groups, breaking at natural pauses."""
         groups: list[WordGroup] = []
@@ -746,7 +899,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             at_limit = len(current) >= max_per_group
             stripped = word.word.strip()
             at_sentence_end = stripped and stripped[-1] in SENTENCE_END_CHARS
-            at_comma = stripped and stripped[-1] == "," and len(current) >= 2
+            at_comma = at_commas and stripped and stripped[-1] == "," and len(current) >= 2
 
             if at_limit or at_sentence_end or at_comma:
                 groups.append(WordGroup(
@@ -778,7 +931,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         text = " ".join(word.split()).replace("{", "").replace("}", "").replace("\\", "")
         if len(text) > 1 and text[-1] in ",.;:":
             text = text.rstrip(",.;:")
-        return text.upper() if style.uppercase else text
+        return text.upper() if style.uppercase else text.lower() if getattr(style, "lowercase", False) else text
 
     def _split_segment_into_words(
         self, segment: TranscriptSegment,

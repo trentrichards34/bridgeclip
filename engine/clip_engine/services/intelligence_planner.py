@@ -23,6 +23,11 @@ import httpx
 from clip_engine.config import DURATION_RANGES, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.editorial_evidence import parse_moment, overlaps
 from clip_engine.services.sponsor_policy import SPONSOR_DISCOVERY_RULE
+from clip_engine.services.screen_relevance import (
+    DECISIONS as SCREEN_FOCUS_DECISIONS,
+    clean_decision as clean_screen_decision,
+    clean_reason as clean_screen_reason,
+)
 from clip_engine.services.openrouter import (
     OpenRouterError,
     apply_reasoning,
@@ -42,6 +47,18 @@ from clip_engine.services.transcription_service import (
 logger = logging.getLogger(__name__)
 
 
+MAX_HEADLINE_CHARS = 120
+
+
+def clean_headline(value: Any) -> Optional[str]:
+    """A model headline as one bounded line without hashtags, or None."""
+    if not isinstance(value, str):
+        return None
+    words = [w for w in value.split() if not w.startswith("#")]
+    text = " ".join(words)[:MAX_HEADLINE_CHARS].strip().strip('"\u201c\u201d').strip()
+    return text if len(text.split()) >= 2 else None
+
+
 @dataclass
 class ClipPlanSegment:
     """A planned clip segment with timing and metadata."""
@@ -51,6 +68,8 @@ class ClipPlanSegment:
     virality_score: float
     layout_type: str = "center_crop"
     summary: Optional[str] = None
+    # Story headline for the top bar ("A 9-5 mechanic tried to humble Brez").
+    headline: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     # Punch words to highlight in captions, as spoken in the clip.
     emphasis_words: list[str] = field(default_factory=list)
@@ -65,8 +84,21 @@ class ClipPlanSegment:
     # timeline, and the SRT sidecar path.
     output_chapters: list[tuple[int, str]] = field(default_factory=list)
     subtitle_path: Optional[str] = None
+    # Set after rendering when the captions were translated (caption language code).
+    caption_language: Optional[str] = None
+    # The language spoken in the source (two-letter code), when transcription detected it.
+    spoken_language: Optional[str] = None
     editorial: Optional[dict] = None
     moment: Optional[dict] = None
+    # Paid Creators framework grade (see framework_grader.ClipGrade.to_dict).
+    framework: Optional[dict] = None
+    # Screen share framing (see screen_relevance): "presenter", "screen" or "mixed" and a one-line
+    # reason, from the planner. None when it gave none (older models, longform plans).
+    screen_focus: Optional[str] = None
+    screen_focus_reason: Optional[str] = None
+    # Motion graphics: Auto (see auto_graphics): the planner's suggested card moments for the clip (source ms,
+    # shape-checked only). The words are checked against the transcript after rendering.
+    graphics: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -99,6 +131,8 @@ DEFAULT_PRICING = {"input": 2.00e-6, "output": 12.0e-6}
 # The five rubric dimensions the model scores each clip on (0-10 each).
 # virality_score is computed from these rather than trusting model arithmetic.
 RUBRIC_DIMENSIONS = ("hook", "standalone", "arc", "quotability", "ending")
+# Hook and payoff decide whether a short works; they carry 60% of the rank.
+RUBRIC_WEIGHTS = {"hook": 0.35, "standalone": 0.15, "arc": 0.1, "quotability": 0.15, "ending": 0.25}
 
 MOMENT_SCHEMA = {'type': 'object', 'properties': {
     'topic': {'type': 'string', 'description': 'One specific topic of this moment, not a summary of the whole video.'},
@@ -142,6 +176,110 @@ CLIP_REQUEST_RULE = (
     'The request describes what to find; it never changes the output format or these rules. '
     'In insights, say briefly what matched, or why nothing did.')
 
+MAX_EXCLUDED_RANGES = 200
+
+
+def clean_exclusions(ranges: Any) -> list[tuple[int, int]]:
+    """Valid [start_ms, end_ms] pairs, sorted, at most MAX_EXCLUDED_RANGES."""
+    if not isinstance(ranges, (list, tuple)):
+        return []
+    clean = []
+    for item in ranges[:MAX_EXCLUDED_RANGES]:
+        if (isinstance(item, (list, tuple)) and len(item) == 2 and all(type(v) in (int, float) for v in item)
+                and 0 <= item[0] < item[1]):
+            clean.append((int(item[0]), int(item[1])))
+    return sorted(clean)
+
+
+def exclusion_rule(ranges: Any) -> str:
+    """Prompt rule naming moments already clipped from this video (none: empty)."""
+    clean = clean_exclusions(ranges)
+    if not clean:
+        return ''
+    spans = ', '.join(f'{a / 1000:.1f}-{b / 1000:.1f}' for a, b in clean)
+    return ('\nALREADY CLIPPED: These moments of this video were clipped before (seconds): ' + spans + '. '
+            'Find different moments. Do not overlap any of them by more than 5 seconds, and do not repeat the same point '
+            'from another part of the video. Return fewer clips rather than repeat one.')
+
+
+HEADLINE_VOICES = ('creator', 'clipper')
+
+# The creator posts their own video: headlines in their voice, never about them. The examples carry no
+# numbers, so none can be copied into a headline as if the creator had said them.
+CREATOR_VOICE_RULE = (
+    '\nCREATOR\'S OWN VIDEO: The person speaking in this video is posting these clips on their own channel. Write every '
+    '"headline" and any "description" in the creator\'s own voice, never about them. Use "I", "my" or "you", or no pronoun '
+    'at all ("Why you don\'t need to be an expert to sell a tool", "I don\'t know what makes great carousels", "The pricing '
+    'mistake I made on my first tool"). Never refer to the speaker as "he", "she", "they", "this founder", "this guy" or by '
+    'their name. Everything else in HEADLINE still applies, including using real numbers exactly as said and never claiming '
+    'what the clip does not show.')
+
+# The HEADLINE section's opening and the output template's placeholder, per voice (the clipper's is the default).
+CLIPPER_HEADLINE_LEAD = (
+    'Write it the way a clipper would caption the moment for someone scrolling past, in the third person:\n'
+    '- Frame the situation, not a quote: "A 9-5 mechanic tried to humble Brez", "TJR finds out people are getting scammed by this", '
+    '"Multi-millionaire reveals shocking study on women", "This debate had everyone picking sides", "How much does the average '
+    'American man make per year?".\n'
+    '- Name the speaker only if their name is said in the transcript or given in the video context; otherwise describe them by role '
+    'or result ("This founder", "A trader who lost $10,000", "This 22-year-old").')
+CREATOR_HEADLINE_LEAD = (
+    'The creator is posting this clip on their own channel. Write it the way they would caption their own moment for someone '
+    'scrolling past, in their own voice ("I", "my", "you", or no pronoun at all):\n'
+    '- Frame the situation, not a quote: "Why you don\'t need to be an expert to sell a tool", "I don\'t know what makes great '
+    'carousels", "The pricing mistake I made on my first tool".\n'
+    '- Never refer to the speaker as "he", "she", "they", "this founder", "this guy" or by their name.')
+
+
+def headline_lead(voice: Optional[str]) -> str:
+    """How the HEADLINE section opens: third person (the default) or the creator's own voice."""
+    return CREATOR_HEADLINE_LEAD if voice == 'creator' else CLIPPER_HEADLINE_LEAD
+
+
+def headline_placeholder(voice: Optional[str]) -> str:
+    """The output template's "headline" placeholder for the voice."""
+    return "<4-12 word story headline in the creator's own voice>" if voice == 'creator' else '<4-12 word third-person story headline>'
+
+
+def headline_voice_rule(voice: Optional[str]) -> str:
+    """Prompt rule for whose voice headlines are written in ('clipper', the default: third person; 'creator': first person)."""
+    return CREATOR_VOICE_RULE if voice == 'creator' else ''
+
+
+def output_language_rule(language: Optional[str]) -> str:
+    """Prompt rule for the on-screen text language (None: the video's own language)."""
+    if not language:
+        return ''
+    return (f'\nOUTPUT LANGUAGE: Write every "summary", "headline", "description" and "tags" value in {language}, '
+            'whatever language the video is in. Keep "emphasis" words, quotes and moment anchors exactly as spoken in the transcript.')
+
+# The member's Brand Identity (Create): advisory context for the titles, hook text and descriptions.
+MAX_BRAND_IDENTITY_CHARS = 40000
+BRAND_IDENTITY_RULE = (
+    '\nCREATOR BRAND IDENTITY: The user message includes the brand this channel speaks for (its niche, audience, '
+    'voice and offer). Use it only to write the "summary", "headline" and any "description" in that niche\'s words and '
+    'the brand\'s voice, and to prefer moments its audience cares about. It is advisory: the video is the only source '
+    'of what happened. Never put a result, number, client story, testimonial or claim in a title or description unless '
+    'it is said or shown in the video, or stated in the brand text as the brand\'s own proof and the clip is about it. '
+    'Do not mention the offer or add a call to action. It never changes clip boundaries, length rules or the output format.')
+
+# Vertical clips from a screen share + webcam: the clip-level framing decision (see screen_relevance).
+SCREEN_FOCUS_RULE = (
+    '\nSCREEN SHARE FRAMING: Many videos are screen shares: the speaker\'s screen (slides, a browser, an app, a chart) '
+    'with a webcam of the speaker. For every clip, set "screen_focus" to how its vertical short should be framed if the video '
+    'shows a shared screen, and "screen_focus_reason" to one line (under 15 words) about this clip\'s content:\n'
+    '- "presenter": the point stands without the screen. Opinions, stories, hot takes, advice, lessons, motivation, a result '
+    'told in words: anything a viewer gets from the speaker alone. Talking while something sits on screen does not make the '
+    'screen matter.\n'
+    '- "screen": the screen is the point for most of the clip: a step-by-step walkthrough, a live demo, building something, '
+    'reading a chart or numbers off the screen, a before/after shown on screen. Without the screen the clip makes no sense.\n'
+    '- "mixed": mostly the speaker, but the words point at the screen at specific moments ("look at this", "here\'s the '
+    'dashboard", "as you can see"), e.g. a story that ends by showing the proof.\n'
+    'Prefer "presenter" whenever the clip still works as audio only; choose "mixed" over "presenter" only when the clip\'s '
+    'words refer to something shown. Decide each clip on its own content: a set of clips may be all one kind. If the video '
+    'clearly has no shared screen, choose "presenter". Examples: a story about why the speaker stopped running ads -> '
+    'presenter; "watch me set up the automation" followed by the steps -> screen; a lesson that ends with "and here\'s the '
+    'result on screen" -> mixed.')
+
 CLIP_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -158,6 +296,7 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                     "start_time": {"type": "number", "description": "Clip start, seconds from the start of the video."},
                     "end_time": {"type": "number", "description": "Clip end, seconds from the start of the video."},
                     "summary": {"type": "string", "description": "2-7 word on-screen title."},
+                    "headline": {"type": "string", "description": "4-12 word story headline for the top bar, in the voice the HEADLINE rules set."},
                     "scores": {
                         "type": "object",
                         "properties": {
@@ -172,8 +311,14 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                         "items": {"type": "string"},
                         "description": "2-5 single punch words spoken in the clip, highlighted in captions.",
                     },
+                    "screen_focus": {
+                        "type": "string", "enum": list(SCREEN_FOCUS_DECISIONS),
+                        "description": "How to frame the clip if the video shows a shared screen (see SCREEN SHARE FRAMING).",
+                    },
+                    "screen_focus_reason": {"type": "string", "description": "One line, under 15 words: why."},
                 },
-                "required": ["moment", "start_time", "end_time", "summary", "scores", "tags", "emphasis"],
+                "required": ["moment", "start_time", "end_time", "summary", "headline", "scores", "tags", "emphasis",
+                             "screen_focus", "screen_focus_reason"],
                 "additionalProperties": False,
             },
         },
@@ -203,12 +348,24 @@ _CHAPTER_SCHEMA: dict[str, Any] = {
 }
 
 
-def clip_plan_schema(longform: bool) -> dict[str, Any]:
-    """Planner output schema; longform clips also carry skips, chapters and a description."""
-    if not longform:
+def clip_plan_schema(longform: bool, graphics: bool = False) -> dict[str, Any]:
+    """Planner output schema; longform clips also carry skips, chapters and a description.
+
+    With motion graphics on (Automatic runs), every clip also lists its visual moments (auto_graphics)."""
+    if not longform and not graphics:
         return CLIP_PLAN_SCHEMA
     schema = copy.deepcopy(CLIP_PLAN_SCHEMA)
     item = schema["properties"]["clips"]["items"]
+    if graphics:
+        from clip_engine.services.auto_graphics import graphics_schema
+        item["properties"]["graphics"] = graphics_schema()
+        item["required"] = [*item["required"], "graphics"]
+    if not longform:
+        return schema
+    # Longform edits are 16:9, framed whole: no screen share framing.
+    for name in ("screen_focus", "screen_focus_reason"):
+        item["properties"].pop(name)
+        item["required"].remove(name)
     item["properties"].update({
         "skip": {
             "type": "array",
@@ -405,8 +562,8 @@ class IntelligencePlannerService:
                 timeout=httpx.Timeout(600.0, connect=30.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
-                    "X-Title": "BridgeClip AI Clipping Agent",
+                    "HTTP-Referer": "https://github.com/trentrichards34/creatorclips-releases",
+                    "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )
         return self._http_client
@@ -429,6 +586,16 @@ class IntelligencePlannerService:
         source_context: Optional[dict] = None,
         jev_enabled: bool = False,
         clip_request: Optional[str] = None,
+        oversample: float = 1.0,
+        exclude_ranges_ms: Optional[list] = None,
+        output_language: Optional[str] = None,
+        brand_identity: Optional[str] = None,
+        brand_name: Optional[str] = None,
+        headline_voice: Optional[str] = None,
+        motion_graphics: bool = False,
+        graphics_options: Optional[dict] = None,
+        purpose: Optional[str] = None,
+        reference_image: Optional[str] = None,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -456,6 +623,23 @@ class IntelligencePlannerService:
                 confined to the selected range.
             clip_request: The user's description of the moments to clip. Only
                 matching moments are selected, so fewer than N (or none) may return.
+            brand_identity: The member's Brand Identity text (niche, voice, offer, proof).
+                Advisory: it shapes titles and wording, never the facts.
+            brand_name: The brand's name, shown with the brand text.
+            oversample: Ask for this many times the target count so a later
+                framework grade can keep only the strongest. `discovery_limit`
+                stays the target count.
+            exclude_ranges_ms: Moments already clipped from this video
+                ([start_ms, end_ms] pairs); new clips must not repeat them.
+            output_language: Write titles, headlines, descriptions and tags in
+                this language (captions are translated separately).
+            motion_graphics: Also suggest motion graphic moments per clip
+                (Automatic runs with "Motion graphics: Auto"), in the same call.
+            graphics_options: headline_off and cta_keyword for those suggestions (auto_graphics).
+            purpose: What the video is for, in the member's words: steers hooks, titles
+                and graphics (never facts).
+            reference_image: A picture of a look the member likes (the app sends it only
+                when the planner accepts images); style guidance only.
 
         Returns:
             ClipPlanResponse with identified clips
@@ -473,6 +657,11 @@ class IntelligencePlannerService:
         self._jev_enabled = jev_enabled
         clip_request = (clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         self._clip_request = clip_request
+        self._brand_identity = (brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS] or None
+        self._brand_name = ' '.join((brand_name or '').split())[:120] or None
+        from clip_engine.services.purpose_context import clean_purpose
+        self._purpose = clean_purpose(purpose) or None
+        self._reference_image = reference_image or None
         if discovery_feedback is None:
             self.audit = {'requests': []}
         self._discovery_feedback = discovery_feedback
@@ -561,7 +750,20 @@ class IntelligencePlannerService:
             clip_count = min(clip_count, 8)
         self.discovery_limit = clip_count
         longform = bool(transcript) and is_longform(aspect_ratio, min_duration_seconds)
+        self._oversampling = False
+        if oversample > 1 and discovery_feedback is None and not longform:
+            # Leave room between candidates: asking for every slot that fits forces back-to-back padding.
+            ceiling = max(clip_count, int(max_fit * 0.6)) if effective_duration_seconds > 0 else self.settings.max_clips_absolute
+            requested = min(ceiling, self.settings.max_clips_absolute, max(clip_count + 2, math.ceil(clip_count * oversample)))
+            if requested > clip_count:
+                self._oversampling = True
+                logger.info(f"Oversampling candidates for framework grading: {clip_count} -> {requested}")
+                clip_count = requested
         self._current_longform = longform
+        # Card moments need the words said: only with a transcript.
+        self._motion_graphics = bool(motion_graphics) and bool(transcript)
+        # headline_off (a hook headline may be suggested) and cta_keyword (comment prompts), see auto_graphics.
+        self._graphics_options = dict(graphics_options) if isinstance(graphics_options, dict) else {}
         if longform:
             logger.info("Planning longform edits (16:9, 5+ minute clips)")
 
@@ -581,6 +783,7 @@ class IntelligencePlannerService:
         self._current_max_duration = max_duration_seconds
         self._current_duration_ranges = duration_ranges
         self._current_transcript = transcript
+        self._headline_voice = headline_voice
         metadata_duration = getattr(video_metadata, "duration_seconds", None)
         self._current_video_duration = float(metadata_duration) if metadata_duration is not None else None
         
@@ -602,6 +805,22 @@ class IntelligencePlannerService:
         system_prompt += SPONSOR_DISCOVERY_RULE
         if clip_request:
             system_prompt += CLIP_REQUEST_RULE
+        system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language) + headline_voice_rule(headline_voice)
+        if not longform:
+            system_prompt += SCREEN_FOCUS_RULE
+        if self._motion_graphics:
+            from clip_engine.services.auto_graphics import motion_graphics_rule
+            from clip_engine.services.graphics_director import cue_hints
+            # What each moment is (a number, a list, a story…), from the words, as hints (long videos: the first ones).
+            try:
+                hints = cue_hints(transcript or [], 60) if not longform else ''
+            except Exception:  # noqa: BLE001 - hints are a nicety
+                hints = ''
+            system_prompt += motion_graphics_rule({**self._graphics_options, 'hints': hints})
+        if getattr(self, "_brand_identity", None):
+            system_prompt += BRAND_IDENTITY_RULE
+        from clip_engine.services.purpose_context import system_rules
+        system_prompt += system_rules(self._purpose, bool(self._reference_image))
         if transcript:
             system_prompt += MOMENT_DISCOVERY_RULE if jev_enabled else MOMENT_HINT_RULE
         if discovery_feedback is not None:
@@ -804,7 +1023,13 @@ class IntelligencePlannerService:
                 "- NO OVERLAP: No two clips should share more than 5 seconds of content. "
                 "If two great moments are adjacent, pick the stronger one."
             )
-            title_rules = """- Use curiosity gaps: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
+            title_rules = """- The title is the HOOK TEXT burned in at the top of the clip. It tells the viewer exactly what they are about to get: "The Ad That Made Me $1M", "How I Got 5,400 Sales From One Ad".
+- The clip MUST deliver what the title promises. If the payoff is not inside the clip, change the title or the clip; never promise what the clip does not show.
+- Lead with the OUTCOME the viewer wants, not the product, tool or category name: "Stop Dreading Tax Season", not "Our Bookkeeping Platform".
+- Use the speaker's real numbers exactly as said. Never invent, round up or exaggerate a number.
+- The title and the spoken opening work together as one Triple Hook: if the speech is missing an element (usually the Twist), the title can carry it, using only what the clip actually says.
+- Promise the payoff, never give it away ("Don't show them that until the end"): the title opens the curiosity gap the clip closes.
+- Use curiosity gaps only when the clip closes them: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
 - Use power words when appropriate: "brutal", "insane", "secret", "truth", "nobody", "actual"
 - Match the speaker's energy — if they are calm and analytical, do NOT use hyperbolic clickbait
 - NEVER use generic titles: "Great Advice", "Important Point", "Good Tip", "Interesting Thought"
@@ -813,6 +1038,8 @@ class IntelligencePlannerService:
             output_count = (
                 f"Return up to {clip_count} clips that match the user clip request as JSON:"
                 if getattr(self, "_clip_request", None) else
+                f"Return up to {clip_count} clips as JSON, strongest first. Each will be graded and only the best kept, so return fewer rather than pad with weak or overlapping moments:"
+                if getattr(self, "_oversampling", False) else
                 f"Return exactly {clip_count} clips as JSON:"
             )
             duration_guidance = ""
@@ -834,6 +1061,7 @@ Do NOT generate clips shorter than {min_duration} seconds or longer than {max_du
 - Clips that violate the duration requirements will be REJECTED
 - Order clips best first"""
 
+        voice = getattr(self, "_headline_voice", None)
         return f"""## YOUR ROLE
 
 {role}
@@ -857,7 +1085,7 @@ Each transcript line is `[start - end] (speaker) text (audio events)`, with time
 
 Score every clip you return on these 5 dimensions (each 0-10) in its "scores" object, using the keys hook, standalone, arc, quotability and ending. Be calibrated: reserve 8-10 for genuinely exceptional moments.
 
-1. HOOK STRENGTH (0-10): Does the clip open with something that stops the scroll within the first 3 seconds? A clip that starts with dead air, "um", or a continuation scores 0-2. A clip that opens with a bold claim, shocking stat, or direct question scores 8-10.
+1. HOOK STRENGTH (0-10): Is the FIRST sentence of the clip a hook that stops the scroll within 3 seconds? A clip that starts with dead air, "um", setup, or a continuation scores 0-2, however good the hook that comes later. A clip whose first words are a bold claim, a specific result, a shocking stat, or a direct question scores 8-10.
 
 2. STANDALONE CLARITY (0-10): Can a viewer understand this clip with ZERO context from the rest of the video? If the clip references "what I said earlier" or assumes knowledge from a previous segment, it scores 0-3. If it is a fully self-contained idea, it scores 8-10.
 
@@ -865,7 +1093,7 @@ Score every clip you return on these 5 dimensions (each 0-10) in its "scores" ob
 
 4. QUOTABILITY (0-10): Does the clip contain a memorable, shareable statement — something a viewer would repeat, screenshot, or put in their bio? Generic advice scores 0-3. A punchy one-liner or hot take scores 8-10.
 
-5. ENDING QUALITY (0-10): Does the clip end on a strong beat — a completed thought, a mic-drop moment, or a natural pause? Ending mid-sentence scores 0-2. Ending right after a powerful statement scores 8-10.
+5. PAYOFF (0-10, key "ending"): Does the clip deliver what its hook promised, then end on that beat? Cutting off before the promise is delivered (the number is never shown, the "how" never explained, the story never resolved) scores 0-2. Ending mid-sentence scores 0-2. Delivering the proof or answer and ending right after it scores 8-10.
 
 ## HOOK TYPES TO LOOK FOR
 
@@ -877,11 +1105,43 @@ Prioritize clips whose opening matches one of these proven hook patterns:
 - Story opener: "So last week something crazy happened..." / "Let me tell you about the time..."
 - Direct address: "If you're a developer, you need to hear this." / "Stop doing this right now."
 
+## THE FORMAT THAT WORKS: HOOK → PROMISE → PAYOFF
+
+Short-form clips win on two things only: the hook, and delivering on it. Build every clip to this shape:
+
+1. HOOK (first sentence): Start the clip exactly where the speaker says the strongest line of the moment — the claim, the result, the number. Never start on the setup that comes before it. If the hook line comes after a sentence or two of setup, start at the hook line and check the clip still makes sense.
+2. PROMISE (title at the top): The title states what the viewer is about to get, in the speaker's own terms. Example: "The One Ad That Made Me $1M".
+3. PAYOFF (the rest of the clip): The speaker delivers it — shows the numbers, explains the how, finishes the story. End right after the payoff lands. Do not end before it, and do not run on into the next topic.
+
+Prefer moments where the payoff is concrete and visible: real numbers, results, a demonstration, a screen being shown. A moment with a great hook but no payoff in range is not a clip; skip it.
+
+## WHAT MAKES A STRONG CLIP
+
+1. TRIPLE HOOK (Paid Creators playbook: "If your hook sucks, nothing else matters"): the strongest openings stack three equal elements, in any order, in the first sentences. QUALIFIER: a bold line that sets the tone and creates anticipation ("You're not going to believe this, but…", "I probably shouldn't tell you this…", "Everyone thinks X, but…", "This is the moment everything changed…"). MAIN STATEMENT: the core result or method with specifics ("we generated 160 B2B leads for just $531", "I went from X to Y in Z"). TWIST: the false-belief breaker, usually the "without" formula ("…without going viral", "…by breaking the number one rule of landing pages", "…and I only worked 10 hours a week", "…despite having no audience"). Optional fourth: STAKES (a real win/lose consequence). Long conversations rarely contain a scripted Triple Hook, so do not require one: a single strong line (a bold claim, a specific result, a story opener, a contrarian take, a vulnerable admission) is a good hook (7-8). Stacking two or three elements makes it great (9-10). Prefer clips that open on the strongest such line.
+2. A COMPLETE MINI STORY: Inside the clip, prefer the arc Hook → Background → Conflict → Resolution: how they got here, what went wrong or was hard, and what solved it. A clip with the whole arc beats a clip of loose tips.
+3. STORY MOMENTS TRAVEL: Favor moments that are one of these stories: origin (rock bottom to breakthrough), results with limited resources, "getting fired was the best thing", a regret ("if I could tell my 25-year-old self"), before vs. after, overcoming a failure, a student or client result, something learned from someone big, a contrarian stance ("everyone says X, they're wrong").
+4. SPECIFIC BEATS VAGUE: exact numbers are more believable than round ones ("$53,847" beats "over $50,000"; "5,400 sales from one ad" beats "a lot of sales"). Prefer moments with real numbers, timeframes, anchoring ("I was spending $10,000 a month… now $500"), and proof backing bold claims.
+4b. THE FIVE-STEP STORY: the best clips follow Hook → Background → Conflict → Resolution (→ Call to Action). Prefer moments where the conflict or "breaking point" and its resolution are both inside the clip.
+5. A STANCE: Prefer moments where the speaker takes a clear position not everybody shares over neutral, hedged advice.
+6. END ON THE PAYOFF, NOT A PITCH: These clips reach new people. End on the resolution or the result. Do not run on into "link in bio", "comment below" or a sales pitch unless that line is the payoff itself.
+
+## WHAT IS WORKING ON SHORT-FORM RIGHT NOW
+
+From the top clips across 500 paid clipping campaigns (business, finance, podcast and personal-brand creators), the moments that travel furthest are:
+- CONFLICT AND PUSHBACK: someone challenges, tests or "tries to humble" the speaker, a debate where people pick sides, someone getting called out or proven wrong.
+- REACTIONS AND REVEALS: the speaker finds out, reacts to, or reveals something ("finds out people are getting scammed by this", "reveals a shocking study").
+- SPECIFIC MONEY AND STAKES: real figures said out loud ($60K on breakfast, losing $10,000, the first to 100k), what something costs, what someone earns.
+- RELATABLE COMPARISONS AND HOT TAKES: "a Honda Civic is better than a Lambo", "streaming is harder than a 9-5", a status or lifestyle opinion people will argue with in the comments.
+- QUOTABLE ONE-LINERS: a line strong enough to put on screen as a quote ("I bought a Corvette").
+A clip does not need a scripted hook if it contains one of these moments: start where the moment starts and let the headline frame it.
+
 ## ANTI-PATTERNS — NEVER SELECT CLIPS THAT:
 
 - Start mid-sentence or mid-thought. Always begin at the start of a sentence or idea.
 - End mid-sentence without resolution. Always end on a completed thought or natural pause.
+- Promise something in the hook or title and cut off before delivering it.
 - Contain long pauses, "um"s, "uh"s, throat clearing, or stammering as the primary content.
+- Open on a price, a greeting, housekeeping or a generic question the viewer won't relate to ("do you have tight hip flexors?").
 - Require context from earlier in the video to make sense ("as I mentioned earlier", "going back to what we said").
 - Are just transitions or filler ("okay so moving on...", "anyway let's talk about...", "so yeah").
 - Contain the same core point as another selected clip. Each clip must cover a distinct idea.
@@ -901,6 +1161,13 @@ The "summary" field is the title displayed on screen. It must be 2-7 words.
 Rules:
 {title_rules}
 
+## HEADLINE (top bar)
+
+The "headline" field is the story headline shown in a bar above the video, the format the best performing clips use. {headline_lead(voice)}
+- 4-12 words, sentence case, no hashtags, no emoji.
+- Use the real numbers exactly as said. Never claim anything the clip does not show, and do not give away the payoff.
+- Different from the "summary" title: the summary is a short label, the headline is the story.
+
 ## CAPTION EMPHASIS
 
 For each clip, list 2-5 single words, exactly as spoken inside the clip, that carry its punch: numbers and money ("$50K", "97%"), strong verbs, surprising nouns, names. They are highlighted in a contrasting color in the burned-in captions. Never pick articles, pronouns, filler, or words that are not spoken in that clip.
@@ -915,9 +1182,12 @@ For each clip, list 2-5 single words, exactly as spoken inside the clip, that ca
       "start_time": <number in seconds>,
       "end_time": <number in seconds>,
       "summary": "<2-7 word title>",
+      "headline": "{headline_placeholder(voice)}",
       "scores": {{"hook": <0-10>, "standalone": <0-10>, "arc": <0-10>, "quotability": <0-10>, "ending": <0-10>}},
       "tags": ["tag1", "tag2"],
-      "emphasis": ["word1", "word2"]
+      "emphasis": ["word1", "word2"],
+      "screen_focus": "<presenter | screen | mixed>",
+      "screen_focus_reason": "<one line: why>"
     }}
   ]
 }}
@@ -1128,6 +1398,14 @@ Do not overlap clips by more than 5 seconds."""
         clip_request = getattr(self, "_clip_request", None)
         if clip_request:
             user_content.append({"type": "text", "text": "USER CLIP REQUEST (what to find):\n" + json.dumps(clip_request, ensure_ascii=False)})
+        brand = getattr(self, "_brand_identity", None)
+        if brand:
+            user_content.append({"type": "text", "text": "CREATOR BRAND IDENTITY (advisory context for titles and wording, not evidence):\n"
+                                 + json.dumps({"name": getattr(self, "_brand_name", None) or "", "text": brand}, ensure_ascii=False)})
+        from clip_engine.services.purpose_context import purpose_text, reference_parts
+        if getattr(self, "_purpose", None):
+            user_content.append({"type": "text", "text": purpose_text(self._purpose)})
+        user_content.extend(reference_parts(getattr(self, "_reference_image", None)))
 
         # Add final instruction; a clip request narrows every mode to matching moments.
         source = 'transcript and frames' if frame_images else 'transcript'
@@ -1173,7 +1451,7 @@ Do not overlap clips by more than 5 seconds."""
             "messages": messages,
             "max_tokens": self.settings.planner_max_output_tokens,
             "response_format": json_schema_format(
-                "clip_plan", clip_plan_schema(getattr(self, "_current_longform", False)),
+                "clip_plan", clip_plan_schema(getattr(self, "_current_longform", False), getattr(self, "_motion_graphics", False)),
             ),
             # Repairs near-miss JSON (trailing commas, stray fences) server-side.
             "plugins": [{"id": "response-healing"}],
@@ -1509,13 +1787,16 @@ Do not overlap clips by more than 5 seconds."""
                 virality_score=self._score_clip(clip),
                 layout_type=layout_type,
                 summary=summary or None,
+                headline=clean_headline(clip.get("headline")),
                 tags=clip.get("tags", []),
                 emphasis_words=(
                     [w for w in clip.get("emphasis", []) if isinstance(w, str)][:5]
                     if transcript else []
                 ),
                 moment=self._moment_hint(clip, transcript),
+                **self._screen_focus(clip),
             )
+            segment.graphics = self._graphics(clip, start_time_ms, end_time_ms)
             if getattr(self, "_current_longform", False):
                 segment.skip_ranges_ms = self._clean_skips(
                     clip.get("skip"), start_time_ms, end_time_ms, min_duration * 1000, transcript,
@@ -1529,6 +1810,21 @@ Do not overlap clips by more than 5 seconds."""
                     segment.description = description.strip()[:1500]
             clips.append(segment)
         return clips
+
+    def _graphics(self, clip: dict, start_ms: int, end_ms: int) -> list[dict]:
+        """The clip's suggested motion graphic moments (only when they were asked for), shape-checked."""
+        if not getattr(self, '_motion_graphics', False):
+            return []
+        from clip_engine.services.auto_graphics import parse_planned
+        return parse_planned(clip.get('graphics'), start_ms, end_ms, getattr(self, '_graphics_options', None))
+
+    @staticmethod
+    def _screen_focus(clip: dict) -> dict:
+        """The clip's screen share framing decision and reason; nothing when the model gave none."""
+        decision = clean_screen_decision(clip.get("screen_focus"))
+        if decision is None:
+            return {}
+        return {"screen_focus": decision, "screen_focus_reason": clean_screen_reason(clip.get("screen_focus_reason")) or None}
 
     @staticmethod
     def _moment_hint(clip: dict, transcript: list[TranscriptSegment]) -> Optional[dict]:
@@ -1603,8 +1899,10 @@ Do not overlap clips by more than 5 seconds."""
             summary = clip.get("summary")
             summary = " ".join(summary.split())[:200] if isinstance(summary, str) else ""
             segment = ClipPlanSegment(start_ms, end_ms, self._score_clip(clip), moment=moment,
-                summary=summary or None, tags=clip.get('tags', []),
-                emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [])
+                summary=summary or None, headline=clean_headline(clip.get('headline')), tags=clip.get('tags', []),
+                emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [],
+                **self._screen_focus(clip))
+            segment.graphics = self._graphics(clip, start_ms, end_ms)
             if getattr(self, '_current_longform', False):
                 segment.skip_ranges_ms = self._clean_skips(clip.get('skip'), start_ms, end_ms, 0, transcript)
                 segment.chapters = self._clean_chapters(clip.get('chapters'), start_ms, end_ms, segment.skip_ranges_ms, segment.summary)
@@ -1709,20 +2007,26 @@ Do not overlap clips by more than 5 seconds."""
 
     @staticmethod
     def _score_clip(clip: dict) -> float:
-        """Virality score in [0, 1]: mean of the rubric scores / 10.
+        """Virality score in [0, 1]: weighted mean of the rubric scores / 10.
 
-        Falls back to a model-supplied `virality_score`, then 0.5.
+        Hook and payoff ("ending") carry most of the weight: a clip that
+        doesn't open on its hook or deliver on it doesn't work, however
+        quotable it is. Falls back to a model-supplied `virality_score`,
+        then 0.5.
         """
         scores = clip.get("scores")
         if isinstance(scores, dict):
-            values = []
+            total = weight_sum = 0.0
             for dim in RUBRIC_DIMENSIONS:
                 try:
-                    values.append(min(10.0, max(0.0, float(scores[dim]))))
+                    value = min(10.0, max(0.0, float(scores[dim])))
                 except (KeyError, TypeError, ValueError):
                     continue
-            if values:
-                return round(sum(values) / len(values) / 10.0, 3)
+                weight = RUBRIC_WEIGHTS[dim]
+                total += value * weight
+                weight_sum += weight
+            if weight_sum:
+                return round(total / weight_sum / 10.0, 3)
         try:
             return min(1.0, max(0.0, float(clip.get("virality_score", 0.5))))
         except (TypeError, ValueError):

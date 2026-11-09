@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>explainer3d kit showcase</title>
+<!-- Every kit model, one posed shot per second (shot N at t = N + 0.5). Same page contract as index.html.
+     Render it:  node <skill>/engines/explainer3d/tools/showcase.mjs <project>    (stills/showcase_N.jpg + stills/showcase_sheet.jpg) -->
+<link rel="stylesheet" href="/fonts/fonts.css">
+<script type="importmap">
+{ "imports": {
+  "three": "/skill/node_modules/three/build/three.module.js",
+  "three/addons/": "/skill/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { showcase } from '/engine/tools/showcase.js';
+window.EXPLAINER3D = showcase();
+await import('/engine/core/main.js');
+</script>
+</body>
+</html>

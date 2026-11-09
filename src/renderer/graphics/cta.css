@@ -1,0 +1,60 @@
+/*
+ * Call to action (cta.ts): floating over the video, no card: a short line on a white tag, the speaker's call to action
+ * on a big glossy button in the brand color (an icon badge on its left), a pointer that taps it, and where the link is
+ * on a white tag with chevrons bouncing toward it. Sizes are multiples of --u, like every template (graphics.css).
+ */
+.mg-cta2-push { transform-origin: 50% 100%; }
+.mg-cta2 { position: relative; display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 20); max-width: var(--card-w); transform-origin: 50% 100%; }
+.mg-cta2-lead, .mg-cta2-where {
+  display: flex; align-items: center; gap: calc(var(--u) * 12); border-radius: 999px; background: var(--paper);
+  box-shadow: 0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(15, 23, 42, .22), 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .08);
+}
+.mg-cta2-lead {
+  padding: calc(var(--u) * 14) calc(var(--u) * 34) calc(var(--u) * 16);
+  font-weight: 800; font-size: calc(var(--u) * 46); line-height: 1.1; color: var(--ink); letter-spacing: -.012em; text-align: center;
+}
+.mg-cta2-stage { position: relative; display: flex; justify-content: center; }
+.mg-cta2-button {
+  position: relative; display: flex; align-items: center; gap: calc(var(--u) * 28); overflow: hidden; isolation: isolate;
+  min-height: calc(var(--u) * 156); padding: calc(var(--u) * 22) calc(var(--u) * 118) calc(var(--u) * 22) calc(var(--u) * 22);
+  border-radius: calc(var(--u) * 84); color: var(--on-accent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, .10)), var(--accent);
+  box-shadow: inset 0 calc(var(--u) * -7) 0 rgba(0, 0, 0, .16), inset 0 calc(var(--u) * 3) 0 rgba(255, 255, 255, .38),
+    0 0 0 calc(var(--u) * 8) rgba(255, 255, 255, .92), 0 0 0 calc(var(--u) * 10) rgba(var(--accent-rgb), .22),
+    0 calc(var(--u) * 26) calc(var(--u) * 54) rgba(15, 23, 42, .30), 0 calc(var(--u) * 12) calc(var(--u) * 40) rgba(var(--accent-rgb), .45);
+}
+.mg-cta2-sheen {
+  position: absolute; z-index: -1; top: -30%; bottom: -30%; left: 0; width: 42%; opacity: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, .6), rgba(255, 255, 255, 0));
+}
+.mg-cta2-badge {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: calc(var(--u) * 108); height: calc(var(--u) * 108); border-radius: 50%; background: #fff;
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 14) rgba(15, 23, 42, .2), inset 0 calc(var(--u) * -3) 0 rgba(15, 23, 42, .06);
+}
+.mg-cta2-icon { width: calc(var(--u) * 58); height: calc(var(--u) * 58); stroke: var(--accent-ink); stroke-width: 2.5; }
+.mg-cta2-label { font-size: calc(var(--u) * var(--cta2-size, 80)); line-height: 1.02; white-space: nowrap; padding-bottom: calc(var(--u) * 6); text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 6) rgba(0, 0, 0, .12); }
+.mg-cta2-label.two { white-space: normal; text-wrap: balance; max-width: calc(var(--card-w) - var(--u) * 300); line-height: 1.04; }
+.mg-cta2-ripple {
+  position: absolute; z-index: 2; left: calc(100% - var(--u) * 72); top: 66%;
+  width: calc(var(--u) * 170); height: calc(var(--u) * 170); border-radius: 50%; opacity: 0;
+  border: calc(var(--u) * 7) solid #fff; box-shadow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .6), inset 0 0 calc(var(--u) * 20) rgba(255, 255, 255, .6);
+}
+/* The fingertip (30% across, 4% down the hand's box) lands at the ripple's center, in the button's right padding. */
+.mg-cta2-hand {
+  position: absolute; z-index: 3; left: calc(100% - var(--u) * 72 - var(--u) * 140 * .3); top: calc(66% - var(--u) * 160 * .04);
+  width: calc(var(--u) * 140); height: calc(var(--u) * 160); transform-origin: 30% 4%;
+  filter: drop-shadow(0 calc(var(--u) * 12) calc(var(--u) * 16) rgba(15, 23, 42, .35));
+}
+.mg-cta2-hand-svg { width: 100%; height: 100%; overflow: visible; }
+.mg-cta2-hand-line rect { fill: #0f172a; stroke: #0f172a; stroke-width: 9; stroke-linejoin: round; }
+.mg-cta2-hand-fill rect { fill: #fff; }
+.mg-cta2-hand-crease { fill: none; stroke: #cbd5e1; stroke-width: 3; stroke-linecap: round; }
+.mg-cta2-where {
+  margin-top: calc(var(--u) * 6); padding: calc(var(--u) * 12) calc(var(--u) * 30) calc(var(--u) * 14) calc(var(--u) * 20);
+  font-weight: 800; font-size: calc(var(--u) * 42); line-height: 1; letter-spacing: -.005em; color: var(--accent-ink);
+}
+.mg-cta2-where:not(:has(.mg-cta2-where-text)) { padding: calc(var(--u) * 10) calc(var(--u) * 16); }
+.mg-cta2-chevrons { display: flex; flex-direction: column; align-items: center; justify-content: center; width: calc(var(--u) * 46); height: calc(var(--u) * 46); }
+.mg-cta2-chevron { width: calc(var(--u) * 42); height: calc(var(--u) * 42); stroke: var(--accent); stroke-width: 3.4; }
+.mg-cta2-chevron + .mg-cta2-chevron { margin-top: calc(var(--u) * -28); }

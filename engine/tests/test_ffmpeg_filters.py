@@ -84,6 +84,18 @@ def graphs():
     yield speed_video_filter(1.5, '30') + ';' + speed_audio_filter(1.5, 3000)
 
 
+def audio_finish_graphs():
+    """Voice cleanup and background music (audio_finish), with every optional stage on."""
+    from clip_engine.services import audio_finish as af
+    every = frozenset(allowlist())
+    profile = af.VoiceProfile(-42.0, -16.0, (1.0, 2.0))
+    plan = af.AudioPlan(voice_cleanup=True, keep_windows=[(2.0, 5.0)], quiet_windows=[(2.0, 5.0)])
+    yield (af.voice_graph(plan, profile, 1.0, 0.0, every) + ";" + af.music_graph(plan, 30.0, -6.0, -14.0)
+           + f";[mix]alimiter=limit={af.PEAK_LIMIT}:level=0:latency=1[a]")
+    yield f"[0:a]{af.VOICE_FORMAT}[pre];[pre]loudnorm=print_format=json[out]"
+    yield "[0:a]asplit=2[a][b];[b]afftdn=nr=12[c];[a][c]amerge=inputs=2[out]"
+
+
 def rendering_graphs(tmp_path):
     renderer = RenderingService.__new__(RenderingService)
     renderer._fonts_dir = str(tmp_path)
@@ -139,10 +151,10 @@ def test_emitted_filters_are_in_the_shipped_lgpl_build(tmp_path, monkeypatch):
     allowed = allowlist()
     assert not allowed & GPL_ONLY
     emitted = set()
-    for graph in [*graphs(), *rendering_graphs(tmp_path), *captured_commands(tmp_path, monkeypatch)]:
+    for graph in [*graphs(), *rendering_graphs(tmp_path), *captured_commands(tmp_path, monkeypatch), *audio_finish_graphs()]:
         emitted.update(filter_names(graph))
     # Guard the parser itself: these must be seen, or the check is vacuous.
-    assert {'scale', 'crop', 'trim', 'concat', 'overlay', 'ass', 'loudnorm', 'atempo', 'select'} <= emitted
+    assert {'scale', 'crop', 'trim', 'concat', 'overlay', 'ass', 'loudnorm', 'atempo', 'select', 'afftdn', 'sidechaincompress'} <= emitted
     assert emitted <= allowed, f'Not in the shipped LGPL FFmpeg: {sorted(emitted - allowed)}'
 
 

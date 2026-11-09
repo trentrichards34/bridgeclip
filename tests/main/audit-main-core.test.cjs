@@ -6,6 +6,8 @@ const os = require('node:os')
 const vm = require('node:vm')
 const ts = require('typescript')
 
+const SPENDING_STUB = { allowOnce() {}, assertSpendAllowed: async () => {}, friendlyIpcError: (error) => error, initSpending() {}, metered: (_kind, _label, work) => work(), meteredAvatarRender: (_fal, start) => start(), onOutOfCredits() {}, onSpendingChange() {}, openRouterBalance: async () => null, spendOverview: async () => ({}), trackAvatarStatus() {}, trackJobSnapshot() {}, trackRemixStatus() {} }
+
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
@@ -41,8 +43,24 @@ function ipcWithLibrary(library) {
     './file-manager': {},
     './run-history': {},
     './pipeline-runner': {},
-    './job-manager': { initJobManager() {} },
-    './job-start': {},
+    './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
+    './spending': SPENDING_STUB,
+    '../shared/spending': { friendlyCreditError: (text) => text },
+    '../shared/avatars': {}, '../shared/heygen': { HEYGEN_PRICES: { avatarCreation: 1 } },
+    './job-start': {}, '../shared/create-sources': { MAX_CREATE_SOURCES: 10 },
+    './logo-library': { addLogoFromPicker: async () => null, listLogos: async () => [], removeLogo: async () => [], updateLogo: async () => [], logosForEngine: () => [], logosForEdit: () => [], copyLogosIntoRun: () => 0, importLogoIntoRun: () => '', logoFile: () => null }, './sound-library': { addSoundsFromPicker: async () => ({}), listSounds: async () => ({ own: [] }), removeSound: async () => ({}), setSoundAction: async () => ({}), soundPreview: async () => ({}), soundPaletteForEngine: () => [] },'./backgrounds': {}, './ai-video-skill': { aiVideoSkillInfo: () => ({ available: true }), saveAiVideoSkill: async () => null, revealAiVideoSkill: () => false }, './music': { audioForEngine: () => undefined, addMusic: async () => ({}), listMusic: async () => ({}), musicPreview: async () => ({}), removeMusic: async () => ({}), saveMusicSettings: async () => ({}) },
+    './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
+    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './heygen-avatar': { TWIN_VIDEO_EXTENSIONS: ['mp4'] }, './heygen': { isConsentUrl: () => false }, './avatar-library': { importLegacyAvatarVideos: async () => 0 }, './broll-video': { BROLL_VIDEO_VOICE_EXTENSIONS: ['mp3', 'mp4'], brollVideoEstimate: async () => ({}), brollVideoRunBusy: () => null, brollVideoShots: async () => [], brollVideoSpendCheck: () => 0.01, brollVideoStatus: () => null, cancelBrollVideo: () => false, describeVoiceover: async () => null, onBrollVideoSpend: () => {}, onBrollVideoStatus: () => {}, saveBrollRecording: async () => null, startBrollVideo: async () => null, swapBrollShot: async () => [], stopBrollVideoForQuit: () => {} }, './listicle': { LISTICLE_SCRIPT_ESTIMATE_USD: 0.01, onListicleStatus: () => {}, listicleRunBusy: () => null, listicleStatus: () => null, cancelListicleRender: () => false, listicleSpendCheck: () => null, startListicleRender: async () => null, saveListicleRecording: async () => '', writeListicleScript: async () => ({}), stopListicleForQuit: () => {} },
+    './voice-samples': { voiceSample: async () => new Uint8Array() },
+    './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }), mediaAccessStatus: () => ({ camera: true, microphone: true }) },
+    './clip-zip': { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext },
+    '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'], REMIX_IMAGE_EXTENSIONS: ['png'] },
+    '../shared/react-templates': { BROLL_VIDEO_EXTENSIONS: ['mp4'], BROLL_IMAGE_EXTENSIONS: ['png'], BROLL_PLAN_ESTIMATE_USD: 0.02 },
+    '../shared/brand-kit': { LOGO_EXTENSIONS: ['png', 'jpg', 'jpeg', 'webp'] },
+    '../shared/purpose': { REFERENCE_EXTENSIONS: ['png', 'jpg', 'jpeg', 'webp'] }, './reference-image': { addReferenceFile: async () => null, referenceBytes: async () => new Uint8Array(), referenceSupportFor: async () => ({}), referenceForRun: async () => ({ saved: '', send: null, note: null }), referencePath: () => '' },
+    '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, '../shared/logos': { LOGO_IMAGE_EXTENSIONS: ['png'] }, '../shared/library-summary': { buildLibrarySummary: async () => ({ runs: 0, counts: { refining: 0, ready: 0, exported: 0 }, clips: [], truncated: false }) }, '../shared/remix-layouts': { PROOF_EXTENSIONS: ['png'], SCREEN_EXTENSIONS: ['mp4'] }, '../shared/broll-library': { BROLL_LIBRARY_VIDEO_EXTENSIONS: ['mp4'], BROLL_LIBRARY_IMAGE_EXTENSIONS: ['png'], INDEX_ESTIMATE_PER_SHOT_USD: 0.002, aiShotEstimateUsd: () => 0.1, isBrollSource: () => false }, './broll-library': { addLibraryPaths: async () => null, addBrollFromLibrary: async () => null, brollAiSettings: () => ({ kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }), brollRunEstimateUsd: () => null, brollRunFields: () => ({ fields: { broll_source: 'stock' } }), cancelIndexing: () => false, indexLibrary: async () => ({}), libraryItemFiles: async () => [], libraryView: async () => ({}), makeAiShot: async () => ({}), onIndexProgress: () => () => {}, onLibraryChange: () => () => {}, pendingShotCount: async () => 0, removeLibraryItems: async () => ({}), saveBrollAiSettings: () => ({}), updateLibraryItem: async () => ({}) }, './custom-graphics-ipc': { registerCustomGraphics: () => {} }, './motion-library': { libraryView: () => [], setLibraryStatus: () => [] }, './editor-custom-graphics': { EDITOR_REMAKE_ESTIMATE_USD: 0.35, LIBRARY_ADD_ESTIMATE_USD: 0.06, editorAddLibraryGraphic: async () => ({}), editorCustomInfo: async () => ({}), editorRemakeCustom: async () => ({}), editorDesignCustom: async () => ({}), editorDesignEstimate: async () => null, editorDesignInfo: async () => ({}) }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './covers': { suggestCovers: async () => ({}), saveCover: async () => ({}), savedCover: async () => null, cancelCovers: () => {} }, './auto-graphics': { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] }, './moment-take': { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) }, '../shared/moment-take': { parseMomentRanges: () => [] }, '../shared/edit-recording': { EDIT_MAX_SOURCES: 5, EDIT_VIDEO_EXTENSIONS: ['mp4'], IDEAS_ESTIMATE_USD: 0.02 }, '../shared/combine-clips': { COMBINE_MAX_CLIPS: 30 },
+    './remix': { onRemixStatus: () => {}, onRemixMomentSpend: () => {}, setRemixHeygen: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
+    './edit-recording': { onEditStatus: () => {}, onEditSpend: () => {}, editRunBusy: () => null, isEditRunFolder: () => false, editStatus: () => null, startEstimate: () => null },
     './logger': {},
     './security': security,
     './network-policy': {},
@@ -52,12 +70,15 @@ function ipcWithLibrary(library) {
     './zernio/service': {},
     './zernio/posts': {},
     './automations': {},
-    './clip-editor': {},
+    './clip-editor': { onEditorExportCta() {}, onEditorHookSaved() {}, onEditorRunLock() {}, onEditorSpend() {} }, './clip-chat': { chatEstimateUsd: () => null, chatInfo: () => ({}), chatModel: () => 'google/gemini-3.8-flash', editorChat: async () => ({ reply: '', steps: [] }), resetChat() {} }, './edit-chat': { editChatInfo: () => ({}), editRecordingChat: async () => ({ reply: '', steps: [] }), resetEditChat() {} }, './remix-chat': { remixChat: async () => ({ reply: '', steps: [] }), remixChatInfo: () => ({}), resetRemixChat() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
     './output-storage': {},
     './edit-inspector': {},
     './youtube-preview': {},
     './library-posting': {},
-    './library-management': {}
+    './ready-to-post': { readyToPost: async () => ({ clips: [], runs: 0, unreadableRuns: 0, postingHistory: false }) },
+    './library-management': { setRunBusyCheck() {} },
+    './library-storage': { onOutputFolderChanged() {} },
+    './library-folders': { previousOutputFolders: () => [] }
   })
   ipc.registerIpcHandlers(() => window)
   const event = { sender: contents, senderFrame: frame }
