@@ -121,6 +121,16 @@ Read [AI, costs and privacy](docs/ai-and-privacy.md) for provider data flows, re
 | Connect Claude, ChatGPT or OpenRouter and chat with CreatorClips | [Assistant](docs/assistant.md) |
 | Build, test or package the app | [Development](docs/development.md) · [Releasing](docs/RELEASING.md) |
 
+## Run it from source on a Mac (before the first release)
+
+Open Terminal, paste this line and press Return. It installs what CreatorClips needs, downloads the app to `~/CreatorClips-app`, builds its video engine once (about 5–10 minutes) and opens it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trentrichards34/bridgeclip/feat/avatar-studio/scripts/setup-mac.sh | bash
+```
+
+It also puts **Open CreatorClips** on your Desktop: double-click it any time to update to the newest version and open the app. Keep its Terminal window open while you use CreatorClips. Requires macOS 14 Sonoma or newer on Apple silicon, or macOS 15 Sequoia or newer on Intel.
+
 ## Develop
 
 The app uses Electron and React with a Python clipping engine. Development requires **Node.js 22**, **Python 3.12**, and **FFmpeg with the libass-backed `ass` filter**. Provider keys are needed for live jobs, not tests.
