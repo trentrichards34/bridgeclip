@@ -6,6 +6,10 @@ set -euo pipefail
 # dependencies are shipped as dylibs so the app works without Homebrew.
 output_dir="${1:-engine-bin}"
 queue=("$output_dir/ffmpeg" "$output_dir/ffprobe")
+# Where each queued file was copied from, so @rpath/@loader_path references
+# (newer Homebrew bottles such as brotli use them) resolve beside the original.
+source_dirs=("$output_dir" "$output_dir")
+brew_lib="$(brew --prefix)/lib"
 notices_dir="$output_dir/THIRD_PARTY_LICENSES"
 mkdir -p "$notices_dir"
 : > "$output_dir/BUNDLED_LIBRARIES.txt"
@@ -19,18 +23,33 @@ fi
 
 for ((index=0; index<${#queue[@]}; index++)); do
   target="${queue[$index]}"
+  target_source_dir="${source_dirs[$index]}"
   while IFS= read -r dependency; do
     [[ -n "$dependency" ]] || continue
     name="$(basename "$dependency")"
     bundled="$output_dir/$name"
+    [[ "$dependency" == "@loader_path/$name" && -f "$bundled" ]] && continue
+    case "$dependency" in
+      @rpath/*|@loader_path/*)
+        if [[ -f "$target_source_dir/$name" ]]; then
+          dependency_source="$target_source_dir/$name"
+        elif [[ -f "$brew_lib/$name" ]]; then
+          dependency_source="$brew_lib/$name"
+        else
+          echo "Cannot find $name for $(basename "$target")" >&2
+          exit 1
+        fi
+        ;;
+      *) dependency_source="$dependency" ;;
+    esac
     if [[ ! -f "$bundled" ]]; then
-      cp -L "$dependency" "$bundled"
+      cp -L "$dependency_source" "$bundled"
       chmod u+w "$bundled"
       install_name_tool -id "@loader_path/$name" "$bundled"
-      queue+=("$bundled")
-
       cellar_root="$(brew --cellar)"
-      resolved="$(realpath "$dependency")"
+      resolved="$(realpath "$dependency_source")"
+      queue+=("$bundled")
+      source_dirs+=("$(dirname "$resolved")")
       [[ "$resolved" == "$cellar_root/"* ]] || {
         echo "Bundled library is outside Homebrew Cellar: $dependency" >&2
         exit 1
@@ -64,7 +83,7 @@ for ((index=0; index<${#queue[@]}; index++)); do
       fi
     fi
     install_name_tool -change "$dependency" "@loader_path/$name" "$target"
-  done < <(otool -L "$target" | awk 'NR > 1 { print $1 }' | grep -E '^/(opt/homebrew|usr/local)/' || true)
+  done < <(otool -L "$target" | awk 'NR > 1 { print $1 }' | grep -E '^(/(opt/homebrew|usr/local)/|@rpath/|@loader_path/)' || true)
 done
 
 for target in "${queue[@]}"; do

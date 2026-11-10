@@ -71,8 +71,11 @@ if [[ "$(cat "$lock_stamp" 2>/dev/null)" != "$lock_sha" ]]; then
 fi
 
 say "6/7  FFmpeg with captions (first time only, about 5-10 minutes)"
-if [[ ! -x engine-bin/ffmpeg || ! -x engine-bin/ffprobe ]]; then
+# The stamp is written only after a build passes every check, so a build that stopped partway is redone.
+if [[ ! -f engine-bin/.build-complete || ! -x engine-bin/ffmpeg || ! -x engine-bin/ffprobe ]]; then
+  rm -rf engine-bin
   bash scripts/build-ffmpeg-mac.sh engine-bin
+  touch engine-bin/.build-complete
 fi
 
 say "7/7  App packages"
